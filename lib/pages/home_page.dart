@@ -21,7 +21,10 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _tab = 0;
-  bool _barsVisible = true;
+  /// 顶栏/底栏可见比例 0..1,随首页滚动 1:1 伸缩(滑一点露一点)
+  double _barFrac = 1.0;
+  /// 顶栏可伸缩部分的高度(不含状态栏区域)
+  static const double _barFlex = 104.0;
 
   static const _channels = [
     ('hot', '热门', '/api/bff/home-feed-v1'),
@@ -29,22 +32,22 @@ class _HomePageState extends State<HomePage> {
   ];
   int _channel = 0;
 
-  void _setBars(bool visible) {
-    // 只有首页顶栏参与滚动隐藏;其它 Tab 仅保留状态栏背景
+  /// 首页滚动时按滚动增量伸缩顶栏(只有首页参与;其它 Tab 保持完整)
+  void _onFeedScroll(ScrollUpdateNotification n) {
     if (_tab != 0) return;
-    if (_barsVisible != visible) {
-      setState(() => _barsVisible = visible);
-    }
+    final delta = n.scrollDelta ?? 0.0;
+    // 忽略启动时的初始滚动通知(位置为 0 却带正向 delta,会导致顶栏被瞬间收起)
+    if (delta > 0 && n.metrics.pixels <= 0) return;
+    final frac = (_barFrac - delta / _barFlex).clamp(0.0, 1.0);
+    if (frac != _barFrac) setState(() => _barFrac = frac);
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final padTop = MediaQuery.of(context).padding.top;
-    final showFullBar = _tab == 0 && _barsVisible;
-    final double barHeight = _tab == 0
-        ? (showFullBar ? 104.0 + padTop : 0.0)
-        : padTop;
+    final double barHeight =
+        _tab == 0 ? padTop + _barFlex * _barFrac : padTop;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: isDark
           ? const SystemUiOverlayStyle(
@@ -60,11 +63,10 @@ class _HomePageState extends State<HomePage> {
       child: Scaffold(
       body: Column(
         children: [
-          // 顶栏:仅首页显示(搜索框 + 头像 + 频道胶囊);其它 Tab 只留状态栏背景
+          // 顶栏:仅首页显示(搜索框 + 头像 + 频道胶囊),高度随滚动 1:1 伸缩;
+          // 其它 Tab 只留状态栏背景
           ClipRect(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOut,
+            child: Container(
               width: double.infinity,
               height: barHeight,
               color: _tab == 0
@@ -74,10 +76,9 @@ class _HomePageState extends State<HomePage> {
                   : (Theme.of(context).brightness == Brightness.dark
                       ? const Color(0xFF121316)
                       : const Color(0xFFF6F7FB)),
-              // 用不可滚动的 ScrollView 吸收高度动画中间帧的约束,避免溢出警告
-              child: !showFullBar
-                  ? const SizedBox.shrink()
-                  : SingleChildScrollView(
+              // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告;
+              // 内容自底部被裁剪,形成"伸缩"效果
+              child: SingleChildScrollView(
                       physics: const NeverScrollableScrollPhysics(),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -141,7 +142,7 @@ class _HomePageState extends State<HomePage> {
                                   GestureDetector(
                                     onTap: () => setState(() {
                                       _tab = 3;
-                                      _barsVisible = true;
+                                      _barFrac = 1.0;
                                     }),
                                     child: Container(
                                       padding: const EdgeInsets.all(2),
@@ -242,15 +243,8 @@ class _HomePageState extends State<HomePage> {
           Expanded(
               child: NotificationListener<ScrollNotification>(
                 onNotification: (n) {
-                  // 下滑隐藏,上滑显示(内容滚动超过阈值才隐藏,避免启动抖动)
-                  if (n is ScrollUpdateNotification) {
-                    final d = n.scrollDelta ?? 0;
-                    if (d > 0 && n.metrics.pixels > 60) {
-                      _setBars(false);
-                    } else if (d < -6) {
-                      _setBars(true);
-                    }
-                  }
+                  // 顶栏随滚动 1:1 伸缩:下滑收起、上滑露出
+                  if (n is ScrollUpdateNotification) _onFeedScroll(n);
                   return false;
                 },
                 child: IndexedStack(
@@ -270,12 +264,9 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       bottomNavigationBar: ClipRect(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-          height: _barsVisible
-              ? 64 + MediaQuery.of(context).padding.bottom
-              : 0,
+        // 底栏随顶栏一起 1:1 伸缩(仅首页;切 Tab 时重置为完整显示)
+        child: SizedBox(
+          height: (64 + MediaQuery.of(context).padding.bottom) * _barFrac,
           child: SingleChildScrollView(
             physics: const NeverScrollableScrollPhysics(),
             child: NavigationBar(
@@ -283,7 +274,7 @@ class _HomePageState extends State<HomePage> {
             onDestinationSelected: (i) {
               setState(() {
                 _tab = i;
-                _barsVisible = true;
+                _barFrac = 1.0;
               });
             },
             destinations: const [
