@@ -37,6 +37,8 @@ class LKClient {
         'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36 LKFlutter/0.1',
     'Origin': 'https://www.lightnovel.fun',
     'Referer': 'https://www.lightnovel.fun/',
+    // iOS 上避免复用可能挂起的 keep-alive 连接
+    'Connection': 'close',
   };
 
   /// 自动附加 security_key(登录态接口用)

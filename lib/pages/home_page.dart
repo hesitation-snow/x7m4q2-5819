@@ -30,6 +30,8 @@ class _HomePageState extends State<HomePage> {
   int _channel = 0;
 
   void _setBars(bool visible) {
+    // 只有首页顶栏参与滚动隐藏;其它 Tab 仅保留状态栏背景
+    if (_tab != 0) return;
     if (_barsVisible != visible) {
       setState(() => _barsVisible = visible);
     }
@@ -38,6 +40,11 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final padTop = MediaQuery.of(context).padding.top;
+    final showFullBar = _tab == 0 && _barsVisible;
+    final double barHeight = _tab == 0
+        ? (showFullBar ? 104.0 + padTop : 0.0)
+        : padTop;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: isDark
           ? const SystemUiOverlayStyle(
@@ -53,84 +60,123 @@ class _HomePageState extends State<HomePage> {
       child: Scaffold(
       body: Column(
         children: [
-          // 顶栏(搜索框 + 通知 + 频道胶囊):一起随滚动隐藏
+          // 顶栏:仅首页显示(搜索框 + 头像 + 频道胶囊);其它 Tab 只留状态栏背景
           ClipRect(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOut,
-              height: _barsVisible
-                  ? 104 + MediaQuery.of(context).padding.top
-                  : 0,
-              color: Theme.of(context).brightness == Brightness.dark
-                  ? const Color(0xFF1B1C21)
-                  : Colors.white,
-              child: Column(
-                children: [
-                  SafeArea(
-                    bottom: false,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      child: Row(
+              width: double.infinity,
+              height: barHeight,
+              color: _tab == 0
+                  ? (Theme.of(context).brightness == Brightness.dark
+                      ? const Color(0xFF1B1C21)
+                      : Colors.white)
+                  : (Theme.of(context).brightness == Brightness.dark
+                      ? const Color(0xFF121316)
+                      : const Color(0xFFF6F7FB)),
+              // 用不可滚动的 ScrollView 吸收高度动画中间帧的约束,避免溢出警告
+              child: !showFullBar
+                  ? const SizedBox.shrink()
+                  : SingleChildScrollView(
+                      physics: const NeverScrollableScrollPhysics(),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Expanded(
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(20),
-                              onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) => const SearchPage())),
-                              child: Container(
-                                height: 40,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 14),
-                                alignment: Alignment.centerLeft,
-                                decoration: BoxDecoration(
-                                  color:
-                                      Theme.of(context).brightness ==
-                                              Brightness.dark
-                                          ? const Color(0xFF1E2025)
-                                          : Colors.grey.shade100,
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.search_rounded,
-                                        size: 19,
-                                        color: Colors.grey.shade500),
-                                    const SizedBox(width: 8),
-                                    Flexible(
-                                      child: Text(
-                                        '搜索书名 / 作者',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                            fontSize: 13.5,
-                                            color: Colors.grey.shade500),
+                          SafeArea(
+                            bottom: false,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(20),
+                                      onTap: () => Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                              builder: (_) =>
+                                                  const SearchPage())),
+                                      child: Container(
+                                        height: 40,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 14),
+                                        alignment: Alignment.centerLeft,
+                                        decoration: BoxDecoration(
+                                          color: Theme.of(context)
+                                                      .brightness ==
+                                                  Brightness.dark
+                                              ? const Color(0xFF1E2025)
+                                              : Colors.grey.shade100,
+                                          borderRadius:
+                                              BorderRadius.circular(20),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.search_rounded,
+                                                size: 19,
+                                                color:
+                                                    Colors.grey.shade500),
+                                            const SizedBox(width: 8),
+                                            Flexible(
+                                              child: Text(
+                                                '搜索书名 / 作者',
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                    fontSize: 13.5,
+                                                    color: Colors
+                                                        .grey.shade500),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  // LK 用户头像:点击跳转"我的"
+                                  GestureDetector(
+                                    onTap: () => setState(() {
+                                      _tab = 3;
+                                      _barsVisible = true;
+                                    }),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                            color: isDark
+                                                ? Colors.white54
+                                                : Colors.indigo.shade200,
+                                            width: 1.6),
+                                      ),
+                                      child: CircleAvatar(
+                                        radius: 15,
+                                        backgroundColor:
+                                            Colors.indigo.shade100,
+                                        backgroundImage: LKClient.shared
+                                                .session.avatar.isNotEmpty
+                                            ? NetworkImage(LKClient.shared
+                                                .session.avatar)
+                                            : null,
+                                        child: LKClient.shared
+                                                .session.avatar.isNotEmpty
+                                            ? null
+                                            : const Icon(Icons.person,
+                                                size: 18,
+                                                color: Colors.indigo),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
-                          const SizedBox(width: 4),
-                          IconButton(
-                            tooltip: '消息中心 / 私信',
-                            icon: const Icon(
-                                Icons.notifications_none_rounded),
-                            onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => const MessagesPage())),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // 频道胶囊(热门/最新),随顶栏一起隐藏
-                  SizedBox(
+                          // 频道胶囊(热门/最新),随顶栏一起隐藏
+                          SizedBox(
                     height: 40,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
@@ -190,6 +236,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ],
               ),
+              ),
             ),
           ),
           Expanded(
@@ -229,7 +276,9 @@ class _HomePageState extends State<HomePage> {
           height: _barsVisible
               ? 64 + MediaQuery.of(context).padding.bottom
               : 0,
-          child: NavigationBar(
+          child: SingleChildScrollView(
+            physics: const NeverScrollableScrollPhysics(),
+            child: NavigationBar(
             selectedIndex: _tab,
             onDestinationSelected: (i) {
               setState(() {
@@ -255,6 +304,7 @@ class _HomePageState extends State<HomePage> {
                   selectedIcon: Icon(Icons.person),
                   label: '我的'),
             ],
+            ),
           ),
         ),
       ),
@@ -297,7 +347,10 @@ class _FeedTabState extends State<FeedTab> {
 
   Future<void> _load(int page, bool append) async {
     if (_loading) return;
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final items = widget.path == '/api/bff/home-feed-v1'
           ? await LKApi.homeFeed(widget.channelCode, page)
@@ -326,8 +379,13 @@ class _FeedTabState extends State<FeedTab> {
   Widget build(BuildContext context) {
     return Expanded(
       child: _error != null && _items.isEmpty
-          ? Center(child: Text(_error!, style: const TextStyle(color: Colors.grey)))
-          : GridView.builder(
+          ? _feedHint(icon: Icons.wifi_off_rounded, text: _error!, onRetry: () => _load(1, false))
+          : (_items.isEmpty && !_loading)
+              ? _feedHint(
+                  icon: Icons.inbox_outlined,
+                  text: '没有获取到内容,请点击重试',
+                  onRetry: () => _load(1, false))
+              : GridView.builder(
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
@@ -354,6 +412,35 @@ class _FeedTabState extends State<FeedTab> {
                     );
                   },
                 ),
+    );
+  }
+
+  /// 首页信息流的错误/空状态提示(带重试)
+  Widget _feedHint(
+      {required IconData icon,
+      required String text,
+      required VoidCallback onRetry}) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 44, color: Colors.grey.shade400),
+            const SizedBox(height: 12),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.grey, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.tonal(
+              onPressed: onRetry,
+              child: const Text('重试'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -669,6 +756,22 @@ class MyTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // 右上角:通知入口(消息中心/私信)
+        Align(
+          alignment: Alignment.centerRight,
+          child: IconButton(
+            tooltip: '消息中心 / 私信',
+            icon: Icon(
+              Icons.notifications_none_rounded,
+              color: Theme.of(context).brightness == Brightness.dark
+                  ? Colors.grey.shade300
+                  : const Color(0xFF263238),
+            ),
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const MessagesPage())),
+          ),
+        ),
         // 头部卡片
         Container(
           padding: const EdgeInsets.all(16),

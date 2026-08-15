@@ -193,8 +193,8 @@ class _DynamicPageState extends State<DynamicPage> {
         body: _feedBody(),
       );
     }
-    return SafeArea(
-      child: Column(children: [
+    // 内嵌模式:状态栏区域由 HomePage 的状态栏背景条负责,这里不再加 SafeArea
+    return Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
           child: Row(children: [
@@ -214,8 +214,7 @@ class _DynamicPageState extends State<DynamicPage> {
           ]),
         ),
         Expanded(child: _feedBody()),
-      ]),
-    );
+      ]);
   }
 
   String _eventLabel(String e) {
