@@ -381,11 +381,13 @@ class _FeedTabState extends State<FeedTab> {
     // release 模式会抛类型转换异常导致整个信息流区域空白),直接返回即可。
     return _error != null && _items.isEmpty
         ? _feedHint(icon: Icons.wifi_off_rounded, text: _error!, onRetry: () => _load(1, false))
-        : (_items.isEmpty && !_loading)
-            ? _feedHint(
-                icon: Icons.inbox_outlined,
-                text: '没有获取到内容,请点击重试',
-                onRetry: () => _load(1, false))
+        : _items.isEmpty
+            ? (_loading
+                ? const Center(child: CircularProgressIndicator())
+                : _feedHint(
+                    icon: Icons.inbox_outlined,
+                    text: '没有获取到内容,请点击重试',
+                    onRetry: () => _load(1, false)))
             : GridView.builder(
                 padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
