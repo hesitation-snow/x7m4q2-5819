@@ -32,22 +32,34 @@ class _HomePageState extends State<HomePage> {
   ];
   int _channel = 0;
 
-  /// 首页滚动时按滚动增量伸缩顶栏(只有首页参与;其它 Tab 保持完整)
-  void _onFeedScroll(ScrollUpdateNotification n) {
+  /// 首页滚动时顶栏向上滑出(参考 PiliPlus):
+  /// 把拖动增量让渡给顶栏,并用 correctBy 抵消内容自身的滚动,
+  /// 视觉上顶栏和内容一起向上移动、顶栏从顶部滑出,而不是原地被内容覆盖。
+  void _onFeedScroll(ScrollNotification n) {
     if (_tab != 0) return;
-    final delta = n.scrollDelta ?? 0.0;
-    // 忽略启动时的初始滚动通知(位置为 0 却带正向 delta,会导致顶栏被瞬间收起)
-    if (delta > 0 && n.metrics.pixels <= 0) return;
-    final frac = (_barFrac - delta / _barFlex).clamp(0.0, 1.0);
-    if (frac != _barFrac) setState(() => _barFrac = frac);
+    if (n is ScrollUpdateNotification) {
+      // 只响应手指拖动;惯性滚动/程序修正产生的通知不参与
+      if (n.dragDetails == null) return;
+      if (n.metrics.axis == Axis.horizontal) return;
+      final delta = n.scrollDelta ?? 0.0;
+      if (delta == 0) return;
+      final newFrac = (_barFrac - delta / _barFlex).clamp(0.0, 1.0);
+      final diff = newFrac - _barFrac;
+      if (diff == 0) return;
+      setState(() => _barFrac = newFrac);
+      // 顶栏吸收的这部分位移从滚动位置里抵消,内容保持跟手
+      Scrollable.of(n.context!).position.correctBy(diff * _barFlex);
+    } else if (n is OverscrollNotification) {
+      // 顶部下拉回弹:让顶栏跟随露出
+      final newFrac = (_barFrac - n.overscroll / _barFlex).clamp(0.0, 1.0);
+      if (newFrac != _barFrac) setState(() => _barFrac = newFrac);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final padTop = MediaQuery.of(context).padding.top;
-    final double barHeight =
-        _tab == 0 ? padTop + _barFlex * _barFrac : padTop;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: isDark
           ? const SystemUiOverlayStyle(
@@ -63,33 +75,42 @@ class _HomePageState extends State<HomePage> {
       child: Scaffold(
       body: Column(
         children: [
-          // 顶栏:仅首页显示(搜索框 + 头像 + 频道胶囊),高度随滚动 1:1 伸缩;
-          // 其它 Tab 只留状态栏背景
-          ClipRect(
-            child: Container(
-              width: double.infinity,
-              height: barHeight,
+          // 顶栏:状态栏条固定,搜索框+头像+频道胶囊随滚动向上滑出
+          // (参考 PiliPlus 的让渡式收合);其它 Tab 只留状态栏背景
+          SizedBox(
+            height: padTop,
+            width: double.infinity,
+            child: ColoredBox(
               color: _tab == 0
-                  ? (Theme.of(context).brightness == Brightness.dark
-                      ? const Color(0xFF1B1C21)
-                      : Colors.white)
-                  : (Theme.of(context).brightness == Brightness.dark
+                  ? (isDark ? const Color(0xFF1B1C21) : Colors.white)
+                  : (isDark
                       ? const Color(0xFF121316)
                       : const Color(0xFFF6F7FB)),
-              // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告;
-              // 内容自底部被裁剪,形成"伸缩"效果
-              child: SingleChildScrollView(
+            ),
+          ),
+          SizedBox(
+            height: _tab == 0 ? _barFlex * _barFrac : 0.0,
+            child: Stack(
+              clipBehavior: Clip.hardEdge,
+              children: [
+                Positioned(
+                  top: _tab == 0 ? -_barFlex * (1.0 - _barFrac) : 0.0,
+                  left: 0,
+                  right: 0,
+                  height: _barFlex,
+                  child: ColoredBox(
+                    color: isDark ? const Color(0xFF1B1C21) : Colors.white,
+                    // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告
+                    child: SingleChildScrollView(
                       physics: const NeverScrollableScrollPhysics(),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          SafeArea(
-                            bottom: false,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 8),
-                              child: Row(
-                                children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            child: Row(
+                              children: [
                                   Expanded(
                                     child: InkWell(
                                       borderRadius: BorderRadius.circular(20),
@@ -175,8 +196,7 @@ class _HomePageState extends State<HomePage> {
                                 ],
                               ),
                             ),
-                          ),
-                          // 频道胶囊(热门/最新),随顶栏一起隐藏
+                          // 频道胶囊(热门/最新),随顶栏一起滑出
                           SizedBox(
                     height: 40,
                     child: ListView.separated(
@@ -237,14 +257,17 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ],
               ),
-              ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           Expanded(
               child: NotificationListener<ScrollNotification>(
                 onNotification: (n) {
-                  // 顶栏随滚动 1:1 伸缩:下滑收起、上滑露出
-                  if (n is ScrollUpdateNotification) _onFeedScroll(n);
+                  // 顶栏随滚动向上滑出(拖动增量让渡给顶栏)
+                  _onFeedScroll(n);
                   return false;
                 },
                 child: IndexedStack(
