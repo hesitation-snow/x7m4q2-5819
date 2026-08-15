@@ -96,8 +96,15 @@ class LKApi {
     return _bookList(d);
   }
 
-  static List<LKBook> _bookList(Map<String, dynamic> d) =>
-      ((d['list'] as List?) ?? const []).map((e) => LKBook.fromJson(e as Map<String, dynamic>)).toList();
+  static List<LKBook> _bookList(Map<String, dynamic> d) {
+    final list = d['list'];
+    if (list == null) {
+      throw LKException(-1, '接口未返回列表(字段: ${d.keys.join(', ')})');
+    }
+    return (list as List)
+        .map((e) => LKBook.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
 
   // ==================== 阅读 ====================
 
