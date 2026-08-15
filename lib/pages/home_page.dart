@@ -377,42 +377,42 @@ class _FeedTabState extends State<FeedTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: _error != null && _items.isEmpty
-          ? _feedHint(icon: Icons.wifi_off_rounded, text: _error!, onRetry: () => _load(1, false))
-          : (_items.isEmpty && !_loading)
-              ? _feedHint(
-                  icon: Icons.inbox_outlined,
-                  text: '没有获取到内容,请点击重试',
-                  onRetry: () => _load(1, false))
-              : GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 12,
-                    childAspectRatio: 0.56,
-                  ),
-                  itemCount: _items.length + (_hasMore ? 1 : 0),
-                  itemBuilder: (_, i) {
-                    if (i >= _items.length) {
-                      // 触底加载更多(延迟到帧后,避免 build 期间 setState)
-                      WidgetsBinding.instance
-                          .addPostFrameCallback((_) => _load(_page + 1, true));
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    final book = _items[i];
-                    return BookGridCard(
-                      book: book,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => BookDetailPage(bookId: book.bookId)),
-                      ),
-                    );
-                  },
+    // 注意:IndexedStack 的子组件不能包 Expanded(非法 ParentDataWidget,
+    // release 模式会抛类型转换异常导致整个信息流区域空白),直接返回即可。
+    return _error != null && _items.isEmpty
+        ? _feedHint(icon: Icons.wifi_off_rounded, text: _error!, onRetry: () => _load(1, false))
+        : (_items.isEmpty && !_loading)
+            ? _feedHint(
+                icon: Icons.inbox_outlined,
+                text: '没有获取到内容,请点击重试',
+                onRetry: () => _load(1, false))
+            : GridView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: 0.56,
                 ),
-    );
+                itemCount: _items.length + (_hasMore ? 1 : 0),
+                itemBuilder: (_, i) {
+                  if (i >= _items.length) {
+                    // 触底加载更多(延迟到帧后,避免 build 期间 setState)
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) => _load(_page + 1, true));
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final book = _items[i];
+                  return BookGridCard(
+                    book: book,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => BookDetailPage(bookId: book.bookId)),
+                    ),
+                  );
+                },
+              );
   }
 
   /// 首页信息流的错误/空状态提示(带重试)
