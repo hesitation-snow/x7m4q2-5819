@@ -31,6 +31,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
   bool _fabVisible = true;
   double _lastOffset = 0;
 
+  /// 目录中当前就地展开的卷;展开后章节列表直接显示在卷卡片下方
+  int? _expandedVolumeId;
+  final Map<int, List<dynamic>> _volumeChapters = {};
+  final Map<int, String> _volumeErrors = {};
+
   @override
   void initState() {
     super.initState();
@@ -378,48 +383,142 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   Widget _volumeCard(dynamic v) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final expanded = _expandedVolumeId == v.volumeId;
+    final chs = _volumeChapters[v.volumeId];
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: isDark ? const Color(0xFF1E2025) : Colors.white,
         borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (_) => ChaptersPage(
-                      bookId: _book.bookId,
-                      volumeId: v.volumeId,
-                      volumeTitle: v.title,
-                      bookTitle: _book.title,
-                    )),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(children: [
-              Expanded(
-                child: Text(v.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 14, fontWeight: FontWeight.w600)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              onTap: () => _toggleVolume(v),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                child: Row(children: [
+                  Expanded(
+                    child: Text(v.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
+                  ),
+                  if (_hasHistory && _latestChapterId > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text('读到 $_latestChapterTitle',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.indigo.shade400)),
+                    ),
+                  Icon(
+                      expanded
+                          ? Icons.keyboard_arrow_down_rounded
+                          : Icons.chevron_right_rounded,
+                      color: Colors.grey.shade400),
+                ]),
               ),
-              if (_hasHistory && _latestChapterId > 0)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Text('读到 $_latestChapterTitle',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 11, color: Colors.indigo.shade400)),
-                ),
-              Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
-            ]),
-          ),
+            ),
+            if (expanded) ..._chapterRows(v, chs),
+          ],
         ),
       ),
     );
+  }
+
+  /// 点击卷:就地展开/收起章节列表(首次展开时加载)
+  Future<void> _toggleVolume(dynamic v) async {
+    final id = v.volumeId as int;
+    if (_expandedVolumeId == id) {
+      setState(() => _expandedVolumeId = null);
+      return;
+    }
+    setState(() {
+      _expandedVolumeId = id;
+      _volumeErrors.remove(id);
+    });
+    if (_volumeChapters.containsKey(id)) return;
+    try {
+      final chs = await LKApi.chapters(_book.bookId, id, 1);
+      if (!mounted) return;
+      setState(() => _volumeChapters[id] = chs);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _volumeErrors[id] = e.toString());
+    }
+  }
+
+  List<Widget> _chapterRows(dynamic v, List<dynamic>? chs) {
+    if (chs == null) {
+      if (_volumeErrors[v.volumeId] != null) {
+        return [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 2, 14, 14),
+            child: Text('章节加载失败,请收起后重试',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+          ),
+        ];
+      }
+      return const [
+        Padding(
+          padding: EdgeInsets.fromLTRB(14, 2, 14, 14),
+          child: Center(
+            child: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+      ];
+    }
+    return chs
+        .map((c) => InkWell(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => ReaderPage(
+                          bookId: _book.bookId,
+                          bookTitle: _book.title,
+                          chapterId: c.chapterId,
+                          chapterTitle: c.title,
+                          volumeId: v.volumeId,
+                        )),
+              ),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(children: [
+                  Expanded(
+                    child: Text(c.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13.5)),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    c.wordCount >= 10000
+                        ? '${(c.wordCount / 10000).toStringAsFixed(1)}万字'
+                        : '${c.wordCount}字',
+                    style: TextStyle(
+                        fontSize: 11, color: Colors.grey.shade500),
+                  ),
+                  if (c.locked && !c.unlocked)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 6),
+                      child:
+                          Icon(Icons.lock_outline, size: 14, color: Colors.grey),
+                    ),
+                ]),
+              ),
+            ))
+        .toList();
   }
 }
 
@@ -476,8 +575,8 @@ class _ChaptersPageState extends State<ChaptersPage> {
               itemBuilder: (_, i) {
                 final c = _chapters[i];
                 return ListTile(
-                  title: Text(
-                      '${c.chapterNo > 0 ? '第${c.chapterNo}章 ' : ''}${c.title}'),
+                  // 网站标题本身已含"第X章",不再重复拼接
+                  title: Text(c.title),
                   subtitle: Text(c.wordCount >= 10000
                       ? '${(c.wordCount / 10000).toStringAsFixed(1)}万字'
                       : '${c.wordCount}字'),
