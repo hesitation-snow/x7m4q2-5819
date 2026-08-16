@@ -9,7 +9,6 @@ import 'channel_page.dart';
 import 'dm_chat_page.dart';
 import 'dynamic_page.dart';
 import 'login_page.dart';
-import 'reader_page.dart';
 import 'search_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -653,16 +652,11 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
         itemBuilder: (_, i) {
           final h = _items[i];
           return InkWell(
+            // 历史项点击进详情页(详情页有"继续阅读"按钮),长按删除
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(
-                  builder: (_) => ReaderPage(
-                        bookId: h.bookId,
-                        bookTitle: h.title,
-                        chapterId: h.chapterId,
-                        chapterTitle: h.chapterTitle,
-                        volumeId: h.volumeId,
-                      )),
+                  builder: (_) => BookDetailPage(bookId: h.bookId)),
             ),
             onLongPress: () async {
               try {
@@ -684,13 +678,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                        builder: (_) => ReaderPage(
-                              bookId: h.bookId,
-                              bookTitle: h.title,
-                              chapterId: h.chapterId,
-                              chapterTitle: h.chapterTitle,
-                              volumeId: h.volumeId,
-                            )),
+                        builder: (_) => BookDetailPage(bookId: h.bookId)),
                   ),
                   onLongPress: () async {
                     try {
