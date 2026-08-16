@@ -167,6 +167,35 @@ class LKParagraph {
       );
 }
 
+/// 评论表情(单个)
+class LKEmojiItem {
+  final String id;
+  final String code; // 如 {:neko3:} 或原生 emoji 字符
+  final String url; // 图片地址(原生 emoji 时为空字符串)
+  LKEmojiItem({this.id = '', this.code = '', this.url = ''});
+  bool get isImage => url.startsWith('http');
+  factory LKEmojiItem.fromJson(Map<String, dynamic> j) => LKEmojiItem(
+        id: (j['id'] as num?)?.toString() ?? '',
+        code: (j['code'] as String?) ?? '',
+        url: (j['url'] as String?) ?? '',
+      );
+}
+
+/// 评论表情分组
+class LKEmojiGroup {
+  final String name;
+  final String icon; // 分组图标(网络图)
+  final List<LKEmojiItem> items;
+  LKEmojiGroup({this.name = '', this.icon = '', this.items = const []});
+  factory LKEmojiGroup.fromJson(Map<String, dynamic> j) => LKEmojiGroup(
+        name: (j['name'] as String?) ?? '',
+        icon: (j['icon'] as String?) ?? '',
+        items: ((j['items'] as List?) ?? const [])
+            .map((e) => LKEmojiItem.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
 class LKComment {
   final int commentId;
   final String nickname;

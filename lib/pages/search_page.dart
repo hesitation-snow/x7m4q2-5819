@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
+import '../api/models.dart';
 import '../widgets/common.dart';
 import 'book_detail_page.dart';
 
@@ -431,18 +432,44 @@ class _CommentsPageState extends State<CommentsPage> {
   bool _loading = true;
   final _input = TextEditingController();
 
+  /// 表情包(code → 图片地址),评论渲染与表情面板共用
+  final Map<String, String> _emojiUrl = {};
+  List<LKEmojiGroup> _emojiGroups = [];
+
   bool get _isVolume => widget.volumeId > 0;
+
+  /// api.lightnovel.fun/static/... 会 500,统一换 static 域
+  static String _fixEmojiUrl(String u) =>
+      u.replaceFirst('api.lightnovel.fun/static/', 'static.lightnovel.fun/');
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadEmojis();
   }
 
   @override
   void dispose() {
     _input.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadEmojis() async {
+    try {
+      final groups = await LKApi.commentEmojis();
+      if (!mounted) return;
+      final map = <String, String>{};
+      for (final g in groups) {
+        for (final it in g.items) {
+          if (it.isImage) map[it.code] = _fixEmojiUrl(it.url);
+        }
+      }
+      setState(() {
+        _emojiGroups = groups;
+        _emojiUrl.addAll(map);
+      });
+    } catch (_) {}
   }
 
   Future<void> _load() async {
@@ -475,6 +502,67 @@ class _CommentsPageState extends State<CommentsPage> {
     } catch (e) {
       if (mounted) showLkError(context, e);
     }
+  }
+
+  /// 渲染评论内容:把 {:code:} 替换为表情图片
+  Widget _renderContent(String content) {
+    final spans = <InlineSpan>[];
+    final re = RegExp(r'\{:[^:]+:\}');
+    var pos = 0;
+    for (final m in re.allMatches(content)) {
+      if (m.start > pos) {
+        spans.add(TextSpan(text: content.substring(pos, m.start)));
+      }
+      final code = m.group(0)!;
+      final url = _emojiUrl[code];
+      if (url != null) {
+        spans.add(WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 1),
+            child: Image.network(
+              url,
+              width: 24,
+              height: 24,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => Text(code,
+                  style: const TextStyle(fontSize: 12)),
+            ),
+          ),
+        ));
+      } else {
+        spans.add(TextSpan(text: code));
+      }
+      pos = m.end;
+    }
+    if (pos < content.length) {
+      spans.add(TextSpan(text: content.substring(pos)));
+    }
+    return Text.rich(TextSpan(children: spans));
+  }
+
+  /// 表情面板:分组 + 网格,点击插入代码/字符
+  void _showEmojiPanel() {
+    if (_emojiGroups.isEmpty) {
+      showLkError(context, '表情加载中,请稍后再试');
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _EmojiPanel(
+        groups: _emojiGroups,
+        onPick: (code) {
+          final sel = _input.selection;
+          final text = _input.text;
+          final start = sel.isValid ? sel.start : text.length;
+          final end = sel.isValid ? sel.end : text.length;
+          _input.text = text.replaceRange(start, end, code);
+          _input.selection =
+              TextSelection.collapsed(offset: start + code.length);
+        },
+      ),
+    );
   }
 
   @override
@@ -511,7 +599,7 @@ class _CommentsPageState extends State<CommentsPage> {
                               style: TextStyle(
                                   fontSize: 13,
                                   color: Colors.indigo.shade400)),
-                          subtitle: Text(c.content),
+                          subtitle: _renderContent(c.content),
                           trailing: Text('赞 ${c.likeCount}',
                               style: TextStyle(
                                   fontSize: 11,
@@ -538,6 +626,11 @@ class _CommentsPageState extends State<CommentsPage> {
         child: Padding(
           padding: const EdgeInsets.all(8),
           child: Row(children: [
+            IconButton(
+              tooltip: '表情',
+              icon: const Icon(Icons.emoji_emotions_outlined),
+              onPressed: _showEmojiPanel,
+            ),
             Expanded(
               child: TextField(
                 controller: _input,
@@ -551,6 +644,100 @@ class _CommentsPageState extends State<CommentsPage> {
             FilledButton(onPressed: _publish, child: const Text('发布')),
           ]),
         ),
+      ),
+    );
+  }
+}
+
+/// 评论表情选择面板(分组页签 + 网格)
+class _EmojiPanel extends StatefulWidget {
+  final List<LKEmojiGroup> groups;
+  final void Function(String code) onPick;
+  const _EmojiPanel({required this.groups, required this.onPick});
+
+  @override
+  State<_EmojiPanel> createState() => _EmojiPanelState();
+}
+
+class _EmojiPanelState extends State<_EmojiPanel> {
+  int _tab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = widget.groups[_tab];
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return SafeArea(
+      child: SizedBox(
+        height: 320,
+        child: Column(children: [
+          SizedBox(
+            height: 44,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              itemCount: widget.groups.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 6),
+              itemBuilder: (_, i) {
+                final sel = i == _tab;
+                return GestureDetector(
+                  onTap: () => setState(() => _tab = i),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: sel
+                          ? Theme.of(context).colorScheme.primary
+                          : (isDark
+                              ? const Color(0xFF2A2C33)
+                              : Colors.grey.shade100),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      widget.groups[i].name,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: sel ? Colors.white : Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          Expanded(
+            child: GridView.builder(
+              padding: const EdgeInsets.all(10),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 8,
+                mainAxisSpacing: 6,
+                crossAxisSpacing: 6,
+              ),
+              itemCount: g.items.length,
+              itemBuilder: (_, i) {
+                final it = g.items[i];
+                return InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => widget.onPick(it.isImage ? it.code : it.code),
+                  child: it.isImage
+                      ? Image.network(
+                          it.url.replaceFirst('api.lightnovel.fun/static/',
+                              'static.lightnovel.fun/'),
+                          width: 32,
+                          height: 32,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => const Icon(
+                              Icons.broken_image_outlined,
+                              size: 20,
+                              color: Colors.grey),
+                        )
+                      : Center(
+                          child: Text(it.code,
+                              style: const TextStyle(fontSize: 22))),
+                );
+              },
+            ),
+          ),
+        ]),
       ),
     );
   }

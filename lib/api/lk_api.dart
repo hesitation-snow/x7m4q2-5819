@@ -166,6 +166,14 @@ class LKApi {
     return _commentList(d);
   }
 
+  /// 评论表情包列表
+  static Future<List<LKEmojiGroup>> commentEmojis() async {
+    final d = await client.post('/api/bff/comment-emoji-list-v1', {});
+    return ((d['list'] as List?) ?? const [])
+        .map((e) => LKEmojiGroup.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   static Future<void> publishBookComment(int bookId, String content,
           {int volumeId = 0}) =>
       client.post('/api/discuss/publish-book-comment', client.authed({
