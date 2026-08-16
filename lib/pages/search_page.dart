@@ -431,6 +431,8 @@ class _CommentsPageState extends State<CommentsPage> {
   String? _error;
   bool _loading = true;
   final _input = TextEditingController();
+  final _focus = FocusNode();
+  bool _showEmoji = false;
 
   /// 表情包(code → 图片地址),评论渲染与表情面板共用
   final Map<String, String> _emojiUrl = {};
@@ -452,6 +454,7 @@ class _CommentsPageState extends State<CommentsPage> {
   @override
   void dispose() {
     _input.dispose();
+    _focus.dispose();
     super.dispose();
   }
 
@@ -544,28 +547,30 @@ class _CommentsPageState extends State<CommentsPage> {
     return Text.rich(TextSpan(children: spans));
   }
 
-  /// 表情面板:分组 + 网格,点击插入代码/字符
-  void _showEmojiPanel() {
+  /// 切换 键盘 ↔ 表情面板(表情面板与输入框在同一底部区域)
+  void _toggleEmoji() {
     if (_emojiGroups.isEmpty) {
       showLkError(context, '表情加载中,请稍后再试');
       return;
     }
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _EmojiPanel(
-        groups: _emojiGroups,
-        onPick: (code) {
-          final sel = _input.selection;
-          final text = _input.text;
-          final start = sel.isValid ? sel.start : text.length;
-          final end = sel.isValid ? sel.end : text.length;
-          _input.text = text.replaceRange(start, end, code);
-          _input.selection =
-              TextSelection.collapsed(offset: start + code.length);
-        },
-      ),
-    );
+    if (_showEmoji) {
+      // 切回键盘
+      setState(() => _showEmoji = false);
+      _focus.requestFocus();
+    } else {
+      // 收起键盘,显示表情面板
+      _focus.unfocus();
+      setState(() => _showEmoji = true);
+    }
+  }
+
+  void _pickEmoji(String code) {
+    final sel = _input.selection;
+    final text = _input.text;
+    final start = sel.isValid ? sel.start : text.length;
+    final end = sel.isValid ? sel.end : text.length;
+    _input.text = text.replaceRange(start, end, code);
+    _input.selection = TextSelection.collapsed(offset: start + code.length);
   }
 
   @override
@@ -616,8 +621,7 @@ class _CommentsPageState extends State<CommentsPage> {
     );
   }
 
-  /// 输入行:自己读取键盘 inset,配合 AnimatedPadding 平滑跟随键盘,
-  /// 动画期间只有这一块重建,列表不受影响
+  /// 底部输入区:输入行 + 内嵌表情面板(与输入框同屏,键盘↔面板切换)
   Widget _inputBar() {
     final inset = MediaQuery.of(context).viewInsets.bottom;
     return AnimatedPadding(
@@ -626,27 +630,41 @@ class _CommentsPageState extends State<CommentsPage> {
       padding: EdgeInsets.only(bottom: inset),
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(children: [
-            IconButton(
-              tooltip: '表情',
-              icon: const Icon(Icons.emoji_emotions_outlined),
-              onPressed: _showEmojiPanel,
-            ),
-            Expanded(
-              child: TextField(
-                controller: _input,
-                decoration: InputDecoration(
-                    hintText: _isVolume ? '写下本卷评论…' : '写下你的书评…',
-                    isDense: true,
-                    border: const OutlineInputBorder()),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(children: [
+              IconButton(
+                tooltip: _showEmoji ? '键盘' : '表情',
+                icon: Icon(_showEmoji
+                    ? Icons.keyboard_alt_outlined
+                    : Icons.emoji_emotions_outlined),
+                onPressed: _toggleEmoji,
               ),
+              Expanded(
+                child: TextField(
+                  controller: _input,
+                  focusNode: _focus,
+                  onTap: () {
+                    // 点输入框:收起表情面板,弹键盘
+                    if (_showEmoji) setState(() => _showEmoji = false);
+                  },
+                  decoration: InputDecoration(
+                      hintText: _isVolume ? '写下本卷评论…' : '写下你的书评…',
+                      isDense: true,
+                      border: const OutlineInputBorder()),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(onPressed: _publish, child: const Text('发布')),
+            ]),
+          ),
+          if (_showEmoji)
+            SizedBox(
+              height: 260,
+              child: _EmojiPanel(groups: _emojiGroups, onPick: _pickEmoji),
             ),
-            const SizedBox(width: 8),
-            FilledButton(onPressed: _publish, child: const Text('发布')),
-          ]),
-        ),
+        ]),
       ),
     );
   }
@@ -669,79 +687,74 @@ class _EmojiPanelState extends State<_EmojiPanel> {
   Widget build(BuildContext context) {
     final g = widget.groups[_tab];
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return SafeArea(
-      child: SizedBox(
-        height: 320,
-        child: Column(children: [
-          SizedBox(
-            height: 44,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              itemCount: widget.groups.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 6),
-              itemBuilder: (_, i) {
-                final sel = i == _tab;
-                return GestureDetector(
-                  onTap: () => setState(() => _tab = i),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: sel
-                          ? Theme.of(context).colorScheme.primary
-                          : (isDark
-                              ? const Color(0xFF2A2C33)
-                              : Colors.grey.shade100),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Text(
-                      widget.groups[i].name,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: sel ? Colors.white : Colors.grey.shade700,
-                      ),
-                    ),
+    return Column(children: [
+      SizedBox(
+        height: 44,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          itemCount: widget.groups.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 6),
+          itemBuilder: (_, i) {
+            final sel = i == _tab;
+            return GestureDetector(
+              onTap: () => setState(() => _tab = i),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: sel
+                      ? Theme.of(context).colorScheme.primary
+                      : (isDark
+                          ? const Color(0xFF2A2C33)
+                          : Colors.grey.shade100),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  widget.groups[i].name,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: sel ? Colors.white : Colors.grey.shade700,
                   ),
-                );
-              },
-            ),
-          ),
-          Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.all(10),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 8,
-                mainAxisSpacing: 6,
-                crossAxisSpacing: 6,
+                ),
               ),
-              itemCount: g.items.length,
-              itemBuilder: (_, i) {
-                final it = g.items[i];
-                return InkWell(
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: () => widget.onPick(it.isImage ? it.code : it.code),
-                  child: it.isImage
-                      ? Image.network(
-                          it.url.replaceFirst('api.lightnovel.fun/static/',
-                              'static.lightnovel.fun/'),
-                          width: 32,
-                          height: 32,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => const Icon(
-                              Icons.broken_image_outlined,
-                              size: 20,
-                              color: Colors.grey),
-                        )
-                      : Center(
-                          child: Text(it.code,
-                              style: const TextStyle(fontSize: 22))),
-                );
-              },
-            ),
-          ),
-        ]),
+            );
+          },
+        ),
       ),
-    );
+      Expanded(
+        child: GridView.builder(
+          padding: const EdgeInsets.all(10),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 8,
+            mainAxisSpacing: 6,
+            crossAxisSpacing: 6,
+          ),
+          itemCount: g.items.length,
+          itemBuilder: (_, i) {
+            final it = g.items[i];
+            return InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => widget.onPick(it.code),
+              child: it.isImage
+                  ? Image.network(
+                      it.url.replaceFirst('api.lightnovel.fun/static/',
+                          'static.lightnovel.fun/'),
+                      width: 32,
+                      height: 32,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                          Icons.broken_image_outlined,
+                          size: 20,
+                          color: Colors.grey),
+                    )
+                  : Center(
+                      child:
+                          Text(it.code, style: const TextStyle(fontSize: 22))),
+            );
+          },
+        ),
+      ),
+    ]);
   }
 }
