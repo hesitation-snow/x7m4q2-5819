@@ -65,6 +65,7 @@ class _ReaderPageState extends State<ReaderPage> {
   double _mt = 56, _mb = 70, _ml = 20, _mr = 20;
   bool _indicators = true;
   bool _traditional = false;
+  bool _simplified = false;
 
   /// 缓存的章节详情(切换简繁时本地重解析,不重新请求)
   dynamic _detail;
@@ -118,7 +119,8 @@ class _ReaderPageState extends State<ReaderPage> {
     final mr = await ReaderPrefs.marginRight();
     final ind = await ReaderPrefs.showIndicators();
     final trad = await ReaderPrefs.traditional();
-    final tradChanged = _traditional != trad;
+    final simp = await ReaderPrefs.simplified();
+    final tradChanged = _traditional != trad || _simplified != simp;
     if (!mounted) return;
     setState(() {
       _fontSize = fontSize;
@@ -138,6 +140,7 @@ class _ReaderPageState extends State<ReaderPage> {
       _mr = mr;
       _indicators = ind;
       _traditional = trad;
+      _simplified = simp;
     });
     // 偏好到达后,若章节已加载且简繁状态有变化,则本地重解析
     if (tradChanged && _detail != null) {
@@ -239,6 +242,8 @@ class _ReaderPageState extends State<ReaderPage> {
       // 简繁转换(整章一次转换;OpenCC 不影响 HTML 标签/实体)
       if (_traditional) {
         html = await ChineseConverter.convert(html, S2T());
+      } else if (_simplified) {
+        html = await ChineseConverter.convert(html, T2S());
       }
       final blocks = <_BodyBlock>[];
       final imgRe = RegExp(r'<img[^>]*src="([^"]+)"[^>]*>');
@@ -254,6 +259,8 @@ class _ReaderPageState extends State<ReaderPage> {
     var text = (d.bodyText ?? '') as String;
     if (_traditional) {
       text = await ChineseConverter.convert(text, S2T());
+    } else if (_simplified) {
+      text = await ChineseConverter.convert(text, T2S());
     }
     return [_BodyBlock.text(text)];
   }
@@ -445,11 +452,30 @@ class _ReaderPageState extends State<ReaderPage> {
                           setState(() => _indicators = v);
                           ReaderPrefs.setShowIndicators(v);
                         }),
-                        _switchTile(scheme, Icons.translate_rounded, '繁体显示',
+                        _switchTile(scheme, Icons.translate_rounded, '繁体显示(简→繁)',
                             _traditional, (v) async {
                           setSheet(() {});
-                          setState(() => _traditional = v);
+                          setState(() {
+                            _traditional = v;
+                            if (v) _simplified = false;
+                          });
                           ReaderPrefs.setTraditional(v);
+                          if (v) ReaderPrefs.setSimplified(false);
+                          if (_detail != null) {
+                            _blocks = await _parseBlocks(_detail);
+                            if (mounted) setState(() {});
+                          }
+                        }),
+                        _switchTile(
+                            scheme, Icons.translate_rounded, '简体显示(繁→简)',
+                            _simplified, (v) async {
+                          setSheet(() {});
+                          setState(() {
+                            _simplified = v;
+                            if (v) _traditional = false;
+                          });
+                          ReaderPrefs.setSimplified(v);
+                          if (v) ReaderPrefs.setTraditional(false);
                           if (_detail != null) {
                             _blocks = await _parseBlocks(_detail);
                             if (mounted) setState(() {});

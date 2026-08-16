@@ -118,4 +118,9 @@ class ReaderPrefs {
       (await _p()).getBool('r_trad') ?? false;
   static Future<void> setTraditional(bool v) async =>
       (await _p()).setBool('r_trad', v);
+
+  static Future<bool> simplified() async =>
+      (await _p()).getBool('r_simp') ?? false;
+  static Future<void> setSimplified(bool v) async =>
+      (await _p()).setBool('r_simp', v);
 }
