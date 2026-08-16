@@ -155,11 +155,29 @@ class LKApi {
     return _commentList(d);
   }
 
-  static Future<void> publishBookComment(int bookId, String content) =>
+  /// 本卷评论(volume_id 定位卷;0 则为整书评论)
+  static Future<List<LKComment>> volumeComments(
+      int bookId, int volumeId, int page) async {
+    final d = await client.post('/api/new-content-read/get-book-comments', {
+      'book_id': bookId, 'page': page, 'pageSize': 20,
+      'rating_filter': 'all', 'include_user_interactions': 1,
+      'volume_id': volumeId, 'chapter_id': 0,
+    });
+    return _commentList(d);
+  }
+
+  static Future<void> publishBookComment(int bookId, String content,
+          {int volumeId = 0}) =>
       client.post('/api/discuss/publish-book-comment', client.authed({
-        'scope': 'book', 'book_id': bookId, 'volume_id': 0, 'chapter_id': 0,
-        'root_comment_id': 0, 'reply_comment_id': 0, 'content': content,
-        'rating_stars': 0, 'read_duration_seconds': 0,
+        'scope': volumeId > 0 ? 'volume' : 'book',
+        'book_id': bookId,
+        'volume_id': volumeId,
+        'chapter_id': 0,
+        'root_comment_id': 0,
+        'reply_comment_id': 0,
+        'content': content,
+        'rating_stars': 0,
+        'read_duration_seconds': 0,
       }));
 
   static Future<void> likeBookComment(int bookId, int commentId, bool like) =>

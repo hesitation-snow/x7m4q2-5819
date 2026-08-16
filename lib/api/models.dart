@@ -123,11 +123,20 @@ class LKChapterDetail {
       if (prev != null && prev['body_text'] is String) body = prev['body_text'] as String;
     }
     final nav = j['navigation'] as Map<String, dynamic>?;
+    // prev_chapter 可能是数组;next_chapter 可能是对象、也可能是数组(服务端形态不一)
     final prevList = nav?['prev_chapter'] as List?;
     final prev0 = (prevList != null && prevList.isNotEmpty)
         ? prevList.first as Map<String, dynamic>
         : null;
-    final next = nav?['next_chapter'] as Map<String, dynamic>?;
+    final nextRaw = nav?['next_chapter'];
+    Map<String, dynamic>? next;
+    if (nextRaw is Map<String, dynamic>) {
+      next = nextRaw;
+    } else if (nextRaw is List &&
+        nextRaw.isNotEmpty &&
+        nextRaw.first is Map<String, dynamic>) {
+      next = nextRaw.first as Map<String, dynamic>;
+    }
     return LKChapterDetail(
       chapterId: (j['chapter_id'] as num?)?.toInt() ?? 0,
       title: (j['title'] as String?) ?? '',

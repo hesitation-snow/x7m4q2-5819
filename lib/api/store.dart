@@ -113,4 +113,9 @@ class ReaderPrefs {
       (await _p()).getBool('r_ind') ?? true;
   static Future<void> setShowIndicators(bool v) async =>
       (await _p()).setBool('r_ind', v);
+
+  static Future<bool> traditional() async =>
+      (await _p()).getBool('r_trad') ?? false;
+  static Future<void> setTraditional(bool v) async =>
+      (await _p()).setBool('r_trad', v);
 }

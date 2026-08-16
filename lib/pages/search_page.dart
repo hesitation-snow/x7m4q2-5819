@@ -407,12 +407,17 @@ class _ShelfPageState extends State<ShelfPage> {
   }
 }
 
-/// 书评
+/// 书评 / 本卷评论
 class CommentsPage extends StatefulWidget {
   final int bookId;
   final String bookTitle;
+  /// 0 = 整书评论;>0 = 本卷评论
+  final int volumeId;
   const CommentsPage(
-      {super.key, required this.bookId, required this.bookTitle});
+      {super.key,
+      required this.bookId,
+      required this.bookTitle,
+      this.volumeId = 0});
 
   @override
   State<CommentsPage> createState() => _CommentsPageState();
@@ -422,6 +427,8 @@ class _CommentsPageState extends State<CommentsPage> {
   List<dynamic> _comments = [];
   String? _error;
   final _input = TextEditingController();
+
+  bool get _isVolume => widget.volumeId > 0;
 
   @override
   void initState() {
@@ -437,7 +444,9 @@ class _CommentsPageState extends State<CommentsPage> {
 
   Future<void> _load() async {
     try {
-      final cs = await LKApi.bookComments(widget.bookId, 1);
+      final cs = _isVolume
+          ? await LKApi.volumeComments(widget.bookId, widget.volumeId, 1)
+          : await LKApi.bookComments(widget.bookId, 1);
       if (!mounted) return;
       setState(() => _comments = cs);
     } catch (e) {
@@ -449,7 +458,12 @@ class _CommentsPageState extends State<CommentsPage> {
     final content = _input.text.trim();
     if (content.isEmpty) return;
     try {
-      await LKApi.publishBookComment(widget.bookId, content);
+      if (_isVolume) {
+        await LKApi.publishBookComment(widget.bookId, content,
+            volumeId: widget.volumeId);
+      } else {
+        await LKApi.publishBookComment(widget.bookId, content);
+      }
       _input.clear();
       _load();
     } catch (e) {
@@ -460,12 +474,15 @@ class _CommentsPageState extends State<CommentsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('书评 · ${widget.bookTitle}')),
+      appBar: AppBar(
+          title: Text(_isVolume
+              ? '本卷评论 · ${widget.bookTitle}'
+              : '书评 · ${widget.bookTitle}')),
       body: Column(children: [
         Expanded(
           child: _comments.isEmpty
               ? Center(
-                  child: Text(_error ?? '还没有书评,来抢沙发',
+                  child: Text(_error ?? (_isVolume ? '本卷还没有评论' : '还没有书评,来抢沙发'),
                       style: const TextStyle(color: Colors.grey)))
               : ListView.builder(
                   itemCount: _comments.length,
@@ -492,10 +509,10 @@ class _CommentsPageState extends State<CommentsPage> {
               Expanded(
                 child: TextField(
                   controller: _input,
-                  decoration: const InputDecoration(
-                      hintText: '写下你的书评…',
+                  decoration: InputDecoration(
+                      hintText: _isVolume ? '写下本卷评论…' : '写下你的书评…',
                       isDense: true,
-                      border: OutlineInputBorder()),
+                      border: const OutlineInputBorder()),
                 ),
               ),
               const SizedBox(width: 8),

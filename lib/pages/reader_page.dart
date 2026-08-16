@@ -1,12 +1,14 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
+import 'search_page.dart';
 
 /// 正文块:文本或插画
 class _BodyBlock {
@@ -62,6 +64,10 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _autoMargin = true;
   double _mt = 56, _mb = 70, _ml = 20, _mr = 20;
   bool _indicators = true;
+  bool _traditional = false;
+
+  /// 缓存的章节详情(切换简繁时本地重解析,不重新请求)
+  dynamic _detail;
 
   final _sc = ScrollController();
   double _progress = 0;
@@ -111,6 +117,8 @@ class _ReaderPageState extends State<ReaderPage> {
     final ml = await ReaderPrefs.marginLeft();
     final mr = await ReaderPrefs.marginRight();
     final ind = await ReaderPrefs.showIndicators();
+    final trad = await ReaderPrefs.traditional();
+    final tradChanged = _traditional != trad;
     if (!mounted) return;
     setState(() {
       _fontSize = fontSize;
@@ -129,7 +137,13 @@ class _ReaderPageState extends State<ReaderPage> {
       _ml = ml;
       _mr = mr;
       _indicators = ind;
+      _traditional = trad;
     });
+    // 偏好到达后,若章节已加载且简繁状态有变化,则本地重解析
+    if (tradChanged && _detail != null) {
+      _blocks = await _parseBlocks(_detail);
+      if (mounted) setState(() {});
+    }
     WakelockPlus.toggle(enable: _keepOn);
     _applyImmersive();
   }
@@ -154,9 +168,12 @@ class _ReaderPageState extends State<ReaderPage> {
     try {
       final d = await LKApi.chapterDetail(widget.bookId, widget.chapterId);
       if (!mounted) return;
+      _detail = d;
+      final blocks = await _parseBlocks(d);
+      if (!mounted) return;
       setState(() {
         _title = d.title.isEmpty ? _title : d.title;
-        _blocks = _parseBlocks(d);
+        _blocks = blocks;
         _locked = d.locked;
         _unlocked = d.unlocked;
         _prevId = d.prevChapterId;
@@ -170,6 +187,10 @@ class _ReaderPageState extends State<ReaderPage> {
               widget.bookId, widget.volumeId, widget.chapterId, 5);
         } catch (_) {}
       }
+      // 服务端 navigation 经常缺失,兜底:按卷内章节列表自己算前后章
+      if (_prevId == null || _nextId == null) {
+        _resolveAdjacent();
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _blocks = [_BodyBlock.text('加载失败: $e')]);
@@ -179,9 +200,46 @@ class _ReaderPageState extends State<ReaderPage> {
     }
   }
 
-  List<_BodyBlock> _parseBlocks(dynamic d) {
-    final html = d.bodyHtml as String?;
+  /// 拉取本章所在卷的全部章节(翻页直到找齐或页尾)
+  Future<List<dynamic>> _allChapters() async {
+    final all = <dynamic>[];
+    for (var p = 1; p <= 10; p++) {
+      final page =
+          await LKApi.chapters(widget.bookId, widget.volumeId, p);
+      if (page.isEmpty) break;
+      all.addAll(page);
+      if (page.length < 50) break;
+      if (all.any((c) => c.chapterId == widget.chapterId)) break;
+    }
+    return all;
+  }
+
+  /// 客户端计算前后章(卷内):服务端 navigation 缺失时兜底
+  Future<void> _resolveAdjacent() async {
+    try {
+      final chs = await _allChapters();
+      if (!mounted) return;
+      final idx = chs.indexWhere((c) => c.chapterId == widget.chapterId);
+      if (idx < 0) return;
+      if (_prevId == null && idx > 0) {
+        _prevId = chs[idx - 1].chapterId;
+        _prevTitle = chs[idx - 1].title;
+      }
+      if (_nextId == null && idx < chs.length - 1) {
+        _nextId = chs[idx + 1].chapterId;
+        _nextTitle = chs[idx + 1].title;
+      }
+      setState(() {});
+    } catch (_) {}
+  }
+
+  Future<List<_BodyBlock>> _parseBlocks(dynamic d) async {
+    var html = d.bodyHtml as String?;
     if (html != null && html.isNotEmpty) {
+      // 简繁转换(整章一次转换;OpenCC 不影响 HTML 标签/实体)
+      if (_traditional) {
+        html = await ChineseConverter.convert(html, S2T());
+      }
       final blocks = <_BodyBlock>[];
       final imgRe = RegExp(r'<img[^>]*src="([^"]+)"[^>]*>');
       var pos = 0;
@@ -193,7 +251,11 @@ class _ReaderPageState extends State<ReaderPage> {
       _addTextBlocks(blocks, html.substring(pos));
       if (blocks.isNotEmpty) return blocks;
     }
-    return [_BodyBlock.text(d.bodyText ?? '')];
+    var text = (d.bodyText ?? '') as String;
+    if (_traditional) {
+      text = await ChineseConverter.convert(text, S2T());
+    }
+    return [_BodyBlock.text(text)];
   }
 
   void _addTextBlocks(List<_BodyBlock> blocks, String seg) {
@@ -383,6 +445,16 @@ class _ReaderPageState extends State<ReaderPage> {
                           setState(() => _indicators = v);
                           ReaderPrefs.setShowIndicators(v);
                         }),
+                        _switchTile(scheme, Icons.translate_rounded, '繁体显示',
+                            _traditional, (v) async {
+                          setSheet(() {});
+                          setState(() => _traditional = v);
+                          ReaderPrefs.setTraditional(v);
+                          if (_detail != null) {
+                            _blocks = await _parseBlocks(_detail);
+                            if (mounted) setState(() {});
+                          }
+                        }),
                         const SizedBox(height: 6),
                         Text('字号',
                             style: TextStyle(
@@ -471,7 +543,6 @@ class _ReaderPageState extends State<ReaderPage> {
                           setState(() => _volTurn = v);
                           ReaderPrefs.setVolumeTurnPage(v);
                         }),
-                        _aaTile(scheme, Icons.menu_rounded, '目录', () {}),
                         _aaTile(scheme, Icons.format_quote_rounded, '段评',
                             () {
                           Navigator.pop(sheetCtx);
@@ -591,6 +662,83 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  // ==================== 章末导航 / 目录 / 本卷评论 ====================
+
+  /// 章末的 上一章/下一章(首章只显下一章,末章只显上一章)
+  Widget _chapterEndNav() {
+    final style = OutlinedButton.styleFrom(
+      foregroundColor: _textColor,
+      side: BorderSide(color: _textColor.withValues(alpha: 0.35), width: 1),
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    );
+    Widget btn(IconData icon, String label, String? title, VoidCallback onTap) {
+      return Expanded(
+        child: OutlinedButton.icon(
+          style: style,
+          onPressed: onTap,
+          icon: Icon(icon, size: 18),
+          label: Text(
+            title == null || title.isEmpty ? label : '$label\n$title',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 24),
+      child: Row(children: [
+        if (_prevId != null)
+          btn(Icons.chevron_left_rounded, '上一章', _prevTitle,
+              () => _open(_prevId!, _prevTitle ?? '')),
+        if (_prevId != null && _nextId != null) const SizedBox(width: 12),
+        if (_nextId != null)
+          btn(Icons.chevron_right_rounded, '下一章', _nextTitle,
+              () => _open(_nextId!, _nextTitle ?? '')),
+      ]),
+    );
+  }
+
+  void _openVolumeComments() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (_) => CommentsPage(
+                bookId: widget.bookId,
+                bookTitle: widget.bookTitle,
+                volumeId: widget.volumeId,
+              )),
+    );
+  }
+
+  void _showCatalog() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF1E2025)
+          : Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.7,
+        child: _CatalogSheet(
+          bookId: widget.bookId,
+          volumeId: widget.volumeId,
+          currentChapterId: widget.chapterId,
+          onPick: (chapterId, title) {
+            Navigator.pop(context);
+            _open(chapterId, title);
+          },
+        ),
+      ),
+    );
+  }
+
   // ==================== 界面 ====================
 
   EdgeInsets get _bodyPadding {
@@ -604,6 +752,9 @@ class _ReaderPageState extends State<ReaderPage> {
   Widget build(BuildContext context) {
     final lockedBody = _locked && !_unlocked && _blocks.length == 1;
     final barColor = _bgColor.withValues(alpha: 0.96);
+    final padTop = MediaQuery.of(context).padding.top;
+    // 未隐藏状态栏时,整个正文视口从状态栏下方开始(滚动时文本也不会进入状态栏区域)
+    final viewTopPadding = _hideBar ? 0.0 : padTop;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -646,11 +797,21 @@ class _ReaderPageState extends State<ReaderPage> {
                             }
                             return false;
                           },
-                          child: ListView.builder(
-                            controller: _sc,
-                            padding: _bodyPadding,
-                            itemCount: _blocks.length,
-                            itemBuilder: (_, i) {
+                          // 视口整体避开状态栏:未隐藏状态栏时文本永远不会滚进状态栏区域
+                          child: Padding(
+                            padding: EdgeInsets.only(top: viewTopPadding),
+                            child: ListView.builder(
+                              controller: _sc,
+                              padding: _bodyPadding,
+                              itemCount: _blocks.length + 1,
+                              itemBuilder: (_, i) {
+                                if (i >= _blocks.length) {
+                                  // 章末:上一章/下一章(首章只显下一章,末章只显上一章)
+                                  if (lockedBody || _loading) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return _chapterEndNav();
+                                }
                               final b = _blocks[i];
                               if (b.image != null) {
                                 return Padding(
@@ -703,10 +864,11 @@ class _ReaderPageState extends State<ReaderPage> {
                             },
                           ),
                         ),
+                      ),
                 ),
                 if (_indicators && !_chrome && !_loading)
                   Positioned(
-                    top: 6,
+                    top: _hideBar ? 6.0 : padTop + 6,
                     left: 0,
                     right: 0,
                     child: Center(
@@ -761,7 +923,18 @@ class _ReaderPageState extends State<ReaderPage> {
                                   color: _textColor),
                             ),
                           ),
-                          const SizedBox(width: 48),
+                          IconButton(
+                            tooltip: '目录',
+                            icon: Icon(Icons.menu_book_rounded,
+                                size: 22, color: _textColor),
+                            onPressed: _showCatalog,
+                          ),
+                          IconButton(
+                            tooltip: '本卷评论',
+                            icon: Icon(Icons.chat_bubble_outline_rounded,
+                                size: 22, color: _textColor),
+                            onPressed: _openVolumeComments,
+                          ),
                         ],
                       ),
                     ),
@@ -804,6 +977,167 @@ class _ReaderPageState extends State<ReaderPage> {
         ),
       ),
     );
+  }
+}
+
+/// 阅读器目录弹层:卷就地展开章节,点章节跳转
+class _CatalogSheet extends StatefulWidget {
+  final int bookId;
+  final int volumeId;
+  final int currentChapterId;
+  final void Function(int chapterId, String title) onPick;
+  const _CatalogSheet(
+      {required this.bookId,
+      required this.volumeId,
+      required this.currentChapterId,
+      required this.onPick});
+
+  @override
+  State<_CatalogSheet> createState() => _CatalogSheetState();
+}
+
+class _CatalogSheetState extends State<_CatalogSheet> {
+  List<dynamic> _volumes = [];
+  String? _error;
+  int? _expanded;
+  final Map<int, List<dynamic>> _chapters = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVolumes();
+  }
+
+  Future<void> _loadVolumes() async {
+    try {
+      final vs = await LKApi.volumes(widget.bookId, 1);
+      if (!mounted) return;
+      setState(() => _volumes = vs);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  Future<void> _toggle(int vid) async {
+    if (_expanded == vid) {
+      setState(() => _expanded = null);
+      return;
+    }
+    setState(() => _expanded = vid);
+    if (_chapters.containsKey(vid)) return;
+    try {
+      final cs = await LKApi.chapters(widget.bookId, vid, 1);
+      if (!mounted) return;
+      setState(() => _chapters[vid] = cs);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(children: [
+          const Text('目录',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const Spacer(),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭')),
+        ]),
+      ),
+      Expanded(
+        child: _error != null && _volumes.isEmpty
+            ? Center(
+                child:
+                    Text(_error!, style: const TextStyle(color: Colors.grey)))
+            : ListView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                itemCount: _volumes.length,
+                itemBuilder: (_, i) {
+                  final v = _volumes[i];
+                  final vid = v.volumeId as int;
+                  final expanded = _expanded == vid;
+                  final chs = _chapters[vid];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Material(
+                      color: isDark
+                          ? const Color(0xFF2A2C33)
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(12),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(children: [
+                        InkWell(
+                          onTap: () => _toggle(vid),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            child: Row(children: [
+                              Icon(
+                                  expanded
+                                      ? Icons.keyboard_arrow_down_rounded
+                                      : Icons.chevron_right_rounded,
+                                  size: 20,
+                                  color: Colors.grey.shade500),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(v.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontSize: 13.5,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                            ]),
+                          ),
+                        ),
+                        if (expanded && chs == null)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 12),
+                            child: Center(
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2),
+                              ),
+                            ),
+                          ),
+                        if (expanded && chs != null)
+                          ...chs.map((c) => InkWell(
+                                onTap: () =>
+                                    widget.onPick(c.chapterId, c.title),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 10),
+                                  color: c.chapterId ==
+                                          widget.currentChapterId
+                                      ? scheme.primary.withValues(alpha: 0.12)
+                                      : Colors.transparent,
+                                  child: Text(c.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          fontSize: 13,
+                                          color: c.chapterId ==
+                                                  widget.currentChapterId
+                                              ? scheme.primary
+                                              : null)),
+                                ),
+                              )),
+                      ]),
+                    ),
+                  );
+                },
+              ),
+      ),
+    ]);
   }
 }
 
