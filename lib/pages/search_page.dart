@@ -433,6 +433,8 @@ class _CommentsPageState extends State<CommentsPage> {
   final _input = TextEditingController();
   final _focus = FocusNode();
   bool _showEmoji = false;
+  /// 记忆的键盘高度(表情面板替换键盘区域时保持输入行位置)
+  double _lastKeyboardH = 0;
 
   /// 表情包(code → 图片地址),评论渲染与表情面板共用
   final Map<String, String> _emojiUrl = {};
@@ -621,17 +623,40 @@ class _CommentsPageState extends State<CommentsPage> {
     );
   }
 
-  /// 底部输入区:输入行 + 内嵌表情面板(与输入框同屏,键盘↔面板切换)
+  /// 底部输入区:PiliPlus 式交互 —— 输入行位置在键盘/面板切换时保持不变,
+  /// 键盘区域直接变成表情面板
   Widget _inputBar() {
     final inset = MediaQuery.of(context).viewInsets.bottom;
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOutCubic,
-      padding: EdgeInsets.only(bottom: inset),
-      child: SafeArea(
-        top: false,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Padding(
+    // 记忆键盘高度:切到表情面板时,面板占据原键盘区域,输入行不动
+    if (inset > 0 && inset > _lastKeyboardH) _lastKeyboardH = inset;
+    final panelH = _showEmoji
+        ? (_lastKeyboardH > 0 ? _lastKeyboardH : 300.0)
+        : 0.0;
+    final bottomPad = _showEmoji ? panelH : inset;
+    return Stack(children: [
+      if (_showEmoji)
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: panelH,
+          child: Material(
+            color: Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF1E2025)
+                : Colors.white,
+            child: SafeArea(
+              top: false,
+              child: _EmojiPanel(groups: _emojiGroups, onPick: _pickEmoji),
+            ),
+          ),
+        ),
+      AnimatedPadding(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        padding: EdgeInsets.only(bottom: bottomPad),
+        child: SafeArea(
+          top: false,
+          child: Padding(
             padding: const EdgeInsets.all(8),
             child: Row(children: [
               IconButton(
@@ -659,14 +684,9 @@ class _CommentsPageState extends State<CommentsPage> {
               FilledButton(onPressed: _publish, child: const Text('发布')),
             ]),
           ),
-          if (_showEmoji)
-            SizedBox(
-              height: 260,
-              child: _EmojiPanel(groups: _emojiGroups, onPick: _pickEmoji),
-            ),
-        ]),
+        ),
       ),
-    );
+    ]);
   }
 }
 
