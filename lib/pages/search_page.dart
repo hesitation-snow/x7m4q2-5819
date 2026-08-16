@@ -480,6 +480,8 @@ class _CommentsPageState extends State<CommentsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // 键盘 inset 只由输入行处理:动画期间评论列表不重建,交互更流畅
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
           title: Text(_isVolume
               ? '本卷评论 · ${widget.bookTitle}'
@@ -518,27 +520,38 @@ class _CommentsPageState extends State<CommentsPage> {
                       },
                     ),
         ),
-        // 输入行在 body 内:键盘弹出时 Scaffold 自动收缩 body,输入行随之上移
-        SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: _input,
-                  decoration: InputDecoration(
-                      hintText: _isVolume ? '写下本卷评论…' : '写下你的书评…',
-                      isDense: true,
-                      border: const OutlineInputBorder()),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(onPressed: _publish, child: const Text('发布')),
-            ]),
-          ),
-        ),
+        _inputBar(),
       ]),
+    );
+  }
+
+  /// 输入行:自己读取键盘 inset,配合 AnimatedPadding 平滑跟随键盘,
+  /// 动画期间只有这一块重建,列表不受影响
+  Widget _inputBar() {
+    final inset = MediaQuery.of(context).viewInsets.bottom;
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      padding: EdgeInsets.only(bottom: inset),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _input,
+                decoration: InputDecoration(
+                    hintText: _isVolume ? '写下本卷评论…' : '写下你的书评…',
+                    isDense: true,
+                    border: const OutlineInputBorder()),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(onPressed: _publish, child: const Text('发布')),
+          ]),
+        ),
+      ),
     );
   }
 }
