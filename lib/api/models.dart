@@ -174,11 +174,15 @@ class LKEmojiItem {
   final String url; // 图片地址(原生 emoji 时为空字符串)
   LKEmojiItem({this.id = '', this.code = '', this.url = ''});
   bool get isImage => url.startsWith('http');
-  factory LKEmojiItem.fromJson(Map<String, dynamic> j) => LKEmojiItem(
-        id: (j['id'] as num?)?.toString() ?? '',
-        code: (j['code'] as String?) ?? '',
-        url: (j['url'] as String?) ?? '',
-      );
+  factory LKEmojiItem.fromJson(Map<String, dynamic> j) {
+    // id 可能是数字或字符串("13")
+    final rawId = j['id'];
+    return LKEmojiItem(
+      id: rawId is num ? rawId.toString() : (rawId as String? ?? ''),
+      code: (j['code'] as String?) ?? '',
+      url: (j['url'] as String?) ?? '',
+    );
+  }
 }
 
 /// 评论表情分组
