@@ -25,6 +25,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   bool _inShelf = false;
   int _latestChapterId = 0;
   String _latestChapterTitle = '';
+  int _latestVolumeId = 0;
   bool _hasHistory = false;
   String? _error;
   final _scroll = ScrollController();
@@ -77,6 +78,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
             _latestChapterId = (st['latest_chapter_id'] as num?)?.toInt() ?? 0;
             _latestChapterTitle =
                 (st['latest_chapter_title'] as String?) ?? '';
+            final h = (st['history'] as Map<String, dynamic>?) ??
+                const <String, dynamic>{};
+            _latestVolumeId = (h['volume_id'] as num?)?.toInt() ?? 0;
           });
         } catch (_) {}
       }
@@ -409,7 +413,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         style: const TextStyle(
                             fontSize: 14, fontWeight: FontWeight.w600)),
                   ),
-                  if (_hasHistory && _latestChapterId > 0)
+                  if (_hasHistory &&
+                      _latestChapterId > 0 &&
+                      v.volumeId == _latestVolumeId)
                     Flexible(
                       child: Padding(
                         padding: const EdgeInsets.only(right: 8),
