@@ -435,6 +435,8 @@ class _CommentsPageState extends State<CommentsPage> {
   bool _showEmoji = false;
   /// 记忆的键盘高度(表情面板替换键盘区域时保持输入行位置)
   double _lastKeyboardH = 0;
+  /// 从表情面板切回键盘的动画期间为 true:输入行保持不动,等键盘完全升起
+  bool _keyboardReturning = false;
 
   /// 表情包(code → 图片地址),评论渲染与表情面板共用
   final Map<String, String> _emojiUrl = {};
@@ -556,7 +558,8 @@ class _CommentsPageState extends State<CommentsPage> {
       return;
     }
     if (_showEmoji) {
-      // 切回键盘
+      // 切回键盘:输入行保持不动,键盘在原位置升起
+      _keyboardReturning = true;
       setState(() => _showEmoji = false);
       _focus.requestFocus();
     } else {
@@ -632,7 +635,20 @@ class _CommentsPageState extends State<CommentsPage> {
     final panelH = _showEmoji
         ? (_lastKeyboardH > 0 ? _lastKeyboardH : 300.0)
         : 0.0;
-    final bottomPad = _showEmoji ? panelH : inset;
+    // 切回键盘的动画期间:bottomPad 保持键盘高度,输入行不动;
+    // 键盘完全升起(inset 到位)后恢复正常跟随
+    final double bottomPad;
+    if (_showEmoji) {
+      bottomPad = panelH;
+    } else if (_keyboardReturning) {
+      bottomPad = _lastKeyboardH;
+      if (inset >= _lastKeyboardH - 1) {
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => _keyboardReturning = false);
+      }
+    } else {
+      bottomPad = inset;
+    }
     return Stack(children: [
       if (_showEmoji)
         Positioned(
@@ -671,8 +687,11 @@ class _CommentsPageState extends State<CommentsPage> {
                   controller: _input,
                   focusNode: _focus,
                   onTap: () {
-                    // 点输入框:收起表情面板,弹键盘
-                    if (_showEmoji) setState(() => _showEmoji = false);
+                    // 点输入框:收起表情面板,弹键盘(输入行保持不动)
+                    if (_showEmoji) {
+                      _keyboardReturning = true;
+                      setState(() => _showEmoji = false);
+                    }
                   },
                   decoration: InputDecoration(
                       hintText: _isVolume ? '写下本卷评论…' : '写下你的书评…',
