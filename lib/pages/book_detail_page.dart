@@ -25,7 +25,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
   bool _inShelf = false;
   int _latestChapterId = 0;
   String _latestChapterTitle = '';
-  int _latestVolumeId = 0;
   bool _hasHistory = false;
   String? _error;
   final _scroll = ScrollController();
@@ -78,9 +77,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
             _latestChapterId = (st['latest_chapter_id'] as num?)?.toInt() ?? 0;
             _latestChapterTitle =
                 (st['latest_chapter_title'] as String?) ?? '';
-            final h = (st['history'] as Map<String, dynamic>?) ??
-                const <String, dynamic>{};
-            _latestVolumeId = (h['volume_id'] as num?)?.toInt() ?? 0;
           });
         } catch (_) {}
       }
@@ -143,8 +139,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
     }
   }
 
-  String get _fabLabel =>
-      _hasHistory && _latestChapterId > 0 ? '继续阅读' : '开始阅读';
+  String get _fabLabel {
+    if (_hasHistory && _latestChapterId > 0) {
+      return _latestChapterTitle.isEmpty
+          ? '继续阅读'
+          : '继续阅读 · $_latestChapterTitle';
+    }
+    return '开始阅读';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -363,7 +365,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
           child: FloatingActionButton.extended(
             onPressed: _fabVisible ? _openReading : null,
             icon: const Icon(Icons.menu_book_rounded),
-            label: Text(_fabLabel),
+            label: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 220),
+              child: Text(_fabLabel,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
           ),
         ),
       ),
@@ -413,20 +419,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         style: const TextStyle(
                             fontSize: 14, fontWeight: FontWeight.w600)),
                   ),
-                  if (_hasHistory &&
-                      _latestChapterId > 0 &&
-                      v.volumeId == _latestVolumeId)
-                    Flexible(
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Text('读到 $_latestChapterTitle',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.indigo.shade400)),
-                      ),
-                    ),
                   Icon(
                       expanded
                           ? Icons.keyboard_arrow_down_rounded
