@@ -410,14 +410,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
                             fontSize: 14, fontWeight: FontWeight.w600)),
                   ),
                   if (_hasHistory && _latestChapterId > 0)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Text('读到 $_latestChapterTitle',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.indigo.shade400)),
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text('读到 $_latestChapterTitle',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.indigo.shade400)),
+                      ),
                     ),
                   Icon(
                       expanded
