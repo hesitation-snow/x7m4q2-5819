@@ -188,10 +188,15 @@ class LKApi {
         'read_duration_seconds': 0,
       }));
 
-  static Future<void> likeBookComment(int bookId, int commentId, bool like) =>
+  static Future<void> likeBookComment(int bookId, int commentId, bool like,
+          {int volumeId = 0}) =>
       client.post('/api/discuss/like-book-comment', client.authed({
-        'scope': 'book', 'book_id': bookId, 'volume_id': 0, 'chapter_id': 0,
-        'comment_id': commentId, 'root_comment_id': 0,
+        'scope': volumeId > 0 ? 'volume' : 'book',
+        'book_id': bookId,
+        'volume_id': volumeId,
+        'chapter_id': 0,
+        'comment_id': commentId,
+        'root_comment_id': 0,
         'act': like ? 'like' : 'unlike',
       }));
 

@@ -101,13 +101,14 @@ class LKChapterDetail {
   final String? bodyHtml;
   final bool locked;
   final bool unlocked;
+  final int coinPrice;
   final int? prevChapterId;
   final String? prevTitle;
   final int? nextChapterId;
   final String? nextTitle;
   LKChapterDetail({
     this.chapterId = 0, this.title = '', this.bookTitle = '', this.bodyText = '',
-    this.bodyHtml, this.locked = false, this.unlocked = false,
+    this.bodyHtml, this.locked = false, this.unlocked = false, this.coinPrice = 0,
     this.prevChapterId, this.prevTitle, this.nextChapterId, this.nextTitle,
   });
   factory LKChapterDetail.fromJson(Map<String, dynamic> j) {
@@ -145,6 +146,7 @@ class LKChapterDetail {
       bodyHtml: html,
       locked: (j['locked'] as num?)?.toInt() == 1,
       unlocked: (j['unlocked'] as num?)?.toInt() == 1,
+      coinPrice: (j['coin_price'] as num?)?.toInt() ?? 0,
       prevChapterId: prev0 != null ? (prev0['chapter_id'] as num?)?.toInt() : null,
       prevTitle: prev0 != null ? (prev0['title'] as String?) : null,
       nextChapterId: next != null ? (next['chapter_id'] as num?)?.toInt() : null,
@@ -207,13 +209,16 @@ class LKComment {
   final String content;
   final int likeCount;
   final String time;
+  final bool liked;
   LKComment({
     this.commentId = 0, this.nickname = '', this.avatar = '', this.content = '',
-    this.likeCount = 0, this.time = '',
+    this.likeCount = 0, this.time = '', this.liked = false,
   });
   factory LKComment.fromJson(Map<String, dynamic> j) {
     final author = (j['author'] as Map<String, dynamic>?) ??
         (j['user'] as Map<String, dynamic>?) ??
+        const <String, dynamic>{};
+    final inter = (j['interaction_state'] as Map<String, dynamic>?) ??
         const <String, dynamic>{};
     return LKComment(
       commentId: (j['comment_id'] as num?)?.toInt() ?? 0,
@@ -222,6 +227,8 @@ class LKComment {
       content: (j['content'] as String?) ?? (j['content_text'] as String?) ?? '',
       likeCount: (j['like_count'] as num?)?.toInt() ?? 0,
       time: (j['publish_time'] as String?) ?? (j['created_at'] as String?) ?? '',
+      liked: (j['liked'] as num?)?.toInt() == 1 ||
+          (inter['liked'] as num?)?.toInt() == 1,
     );
   }
 }

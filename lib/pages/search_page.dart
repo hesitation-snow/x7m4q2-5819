@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/lk_api.dart';
 import '../api/models.dart';
@@ -578,6 +579,61 @@ class _CommentsPageState extends State<CommentsPage> {
     _input.selection = TextSelection.collapsed(offset: start + code.length);
   }
 
+  /// 点赞/取消点赞(乐观更新,失败回滚)
+  Future<void> _toggleLike(dynamic c) async {
+    final wasLiked = c.liked as bool;
+    final idx = _comments.indexOf(c);
+    if (idx < 0) return;
+    setState(() {
+      _comments[idx] = LKComment(
+        commentId: c.commentId,
+        nickname: c.nickname,
+        avatar: c.avatar,
+        content: c.content,
+        time: c.time,
+        likeCount: (c.likeCount as int) + (wasLiked ? -1 : 1),
+        liked: !wasLiked,
+      );
+    });
+    try {
+      await LKApi.likeBookComment(widget.bookId, c.commentId, !wasLiked,
+          volumeId: widget.volumeId);
+    } catch (e) {
+      // 失败回滚
+      if (!mounted) return;
+      setState(() => _comments[idx] = c);
+      showLkError(context, e);
+    }
+  }
+
+  Widget _likeButton(dynamic c) {
+    final liked = c.liked as bool;
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Text('${c.likeCount}',
+          style: TextStyle(
+              fontSize: 11,
+              color: liked ? Colors.redAccent : Colors.grey.shade500)),
+      IconButton(
+        visualDensity: VisualDensity.compact,
+        icon: Icon(
+          liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          size: 18,
+          color: liked ? Colors.redAccent : Colors.grey.shade500,
+        ),
+        onPressed: () => _toggleLike(c),
+      ),
+    ]);
+  }
+
+  /// 长按复制评论
+  Future<void> _copyComment(dynamic c) async {
+    // 去掉表情代码,复制纯文本
+    final text = (c.content as String)
+        .replaceAll(RegExp(r'\{:[^:]+:\}|\[[a-zA-Z]+:\d+\]'), '');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) showLkError(context, '已复制评论');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -613,10 +669,8 @@ class _CommentsPageState extends State<CommentsPage> {
                                   fontSize: 13,
                                   color: Colors.indigo.shade400)),
                           subtitle: _renderContent(c.content),
-                          trailing: Text('赞 ${c.likeCount}',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey.shade500)),
+                          trailing: _likeButton(c),
+                          onLongPress: () => _copyComment(c),
                         );
                       },
                     ),

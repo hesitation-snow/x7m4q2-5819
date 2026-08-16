@@ -300,8 +300,30 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _unlock() async {
+    // 付费解锁确认(显示轻币价格)
+    final price = _detail != null ? (_detail as dynamic).coinPrice as int : 0;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('解锁本章'),
+        content: Text(price > 0
+            ? '本章需要 $price 轻币解锁,是否继续?'
+            : '是否解锁本章?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('解锁')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
     try {
       await LKApi.unlockChapter(widget.chapterId);
+      if (!mounted) return;
+      showLkError(context, '解锁成功');
       _load();
     } catch (e) {
       if (mounted) showLkError(context, e);
