@@ -428,6 +428,7 @@ class CommentsPage extends StatefulWidget {
 class _CommentsPageState extends State<CommentsPage> {
   List<dynamic> _comments = [];
   String? _error;
+  bool _loading = true;
   final _input = TextEditingController();
 
   bool get _isVolume => widget.volumeId > 0;
@@ -445,6 +446,7 @@ class _CommentsPageState extends State<CommentsPage> {
   }
 
   Future<void> _load() async {
+    setState(() => _loading = true);
     try {
       final cs = _isVolume
           ? await LKApi.volumeComments(widget.bookId, widget.volumeId, 1)
@@ -453,6 +455,8 @@ class _CommentsPageState extends State<CommentsPage> {
       setState(() => _comments = cs);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -480,13 +484,15 @@ class _CommentsPageState extends State<CommentsPage> {
           title: Text(_isVolume
               ? '本卷评论 · ${widget.bookTitle}'
               : '书评 · ${widget.bookTitle}')),
-      body: _comments.isEmpty
-          ? Center(
-              child: Text(
-                  _error ??
-                      (_isVolume ? '本卷还没有评论' : '还没有书评,来抢沙发'),
-                  style: const TextStyle(color: Colors.grey)))
-          : ListView.builder(
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _comments.isEmpty
+              ? Center(
+                  child: Text(
+                      _error ??
+                          (_isVolume ? '本卷还没有评论' : '还没有书评,来抢沙发'),
+                      style: const TextStyle(color: Colors.grey)))
+              : ListView.builder(
               padding: EdgeInsets.only(
                   bottom: MediaQuery.of(context).padding.bottom),
               itemCount: _comments.length,
