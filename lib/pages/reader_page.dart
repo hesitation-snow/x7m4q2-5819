@@ -753,8 +753,9 @@ class _ReaderPageState extends State<ReaderPage> {
     final lockedBody = _locked && !_unlocked && _blocks.length == 1;
     final barColor = _bgColor.withValues(alpha: 0.96);
     final padTop = MediaQuery.of(context).padding.top;
-    // 未隐藏状态栏时,整个正文视口从状态栏下方开始(滚动时文本也不会进入状态栏区域)
+    // 未隐藏系统栏时:顶部避开状态栏、底部避开手势导航条
     final viewTopPadding = _hideBar ? 0.0 : padTop;
+    final viewBottomPadding = _hideBar ? 0.0 : MediaQuery.of(context).padding.bottom;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -797,9 +798,10 @@ class _ReaderPageState extends State<ReaderPage> {
                             }
                             return false;
                           },
-                          // 视口整体避开状态栏:未隐藏状态栏时文本永远不会滚进状态栏区域
+                          // 视口整体避开系统栏:未隐藏时文本/章末按钮都不会进入状态栏与手势条区域
                           child: Padding(
-                            padding: EdgeInsets.only(top: viewTopPadding),
+                            padding: EdgeInsets.only(
+                                top: viewTopPadding, bottom: viewBottomPadding),
                             child: ListView.builder(
                               controller: _sc,
                               padding: _bodyPadding,
@@ -1056,7 +1058,8 @@ class _CatalogSheetState extends State<_CatalogSheet> {
                 child:
                     Text(_error!, style: const TextStyle(color: Colors.grey)))
             : ListView.builder(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                padding: EdgeInsets.fromLTRB(12, 0, 12,
+                    12 + MediaQuery.of(context).padding.bottom),
                 itemCount: _volumes.length,
                 itemBuilder: (_, i) {
                   final v = _volumes[i];
@@ -1198,8 +1201,9 @@ class _ParagraphCommentsSheetState extends State<_ParagraphCommentsSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom +
+              MediaQuery.of(context).padding.bottom),
       child: SizedBox(
         height: 420,
         child: Column(children: [

@@ -61,7 +61,8 @@ class _ChannelPageState extends State<ChannelPage> {
       body: _error != null && _items.isEmpty
           ? Center(child: Text(_error!, style: const TextStyle(color: Colors.grey)))
           : GridView.builder(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              padding: EdgeInsets.fromLTRB(12, 8, 12,
+                  12 + MediaQuery.of(context).padding.bottom),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
                 crossAxisSpacing: 10,
@@ -127,7 +128,8 @@ class _RankPageState extends State<RankPage> {
           : RefreshIndicator(
               onRefresh: _load,
               child: GridView.builder(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                padding: EdgeInsets.fromLTRB(12, 8, 12,
+                    12 + MediaQuery.of(context).padding.bottom),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
                   crossAxisSpacing: 10,

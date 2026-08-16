@@ -255,7 +255,8 @@ class _SearchPageState extends State<SearchPage> {
                         ),
                       )
                     : GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                        padding: EdgeInsets.fromLTRB(12, 4, 12,
+                            12 + MediaQuery.of(context).padding.bottom),
                         gridDelegate:
                             const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
@@ -382,7 +383,8 @@ class _ShelfPageState extends State<ShelfPage> {
           : RefreshIndicator(
               onRefresh: _load,
               child: GridView.builder(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                padding: EdgeInsets.fromLTRB(12, 8, 12,
+                    12 + MediaQuery.of(context).padding.bottom),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
                   crossAxisSpacing: 10,

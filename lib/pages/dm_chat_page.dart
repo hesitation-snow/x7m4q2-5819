@@ -174,7 +174,8 @@ class _WelfarePageState extends State<WelfarePage> {
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16).copyWith(
+              bottom: 16 + MediaQuery.of(context).padding.bottom),
           children: [
             if (_error != null) Text(_error!, style: const TextStyle(color: Colors.grey)),
             Text('💰 金币: ${wallet['coin'] ?? wallet['coins'] ?? 0}',
@@ -260,7 +261,9 @@ class _SettingsPageState extends State<SettingsPage> {
     };
     return Scaffold(
       appBar: AppBar(title: const Text('设置与资料')),
-      body: ListView(children: [
+      body: ListView(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
+        children: [
         ListTile(
           leading: const Icon(Icons.dark_mode_outlined),
           title: const Text('深色模式'),

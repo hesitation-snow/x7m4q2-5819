@@ -391,6 +391,8 @@ class _MessagesPageState extends State<MessagesPage> {
               ? Center(child: Text(_error!, style: const TextStyle(color: Colors.grey)))
               : _tab == 4
                   ? ListView.builder(
+                      padding: EdgeInsets.only(
+                          bottom: MediaQuery.of(context).padding.bottom),
                       itemCount: _convs.length,
                       itemBuilder: (_, i) {
                         final c = _convs[i];

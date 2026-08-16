@@ -341,7 +341,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
                             ]),
                             const SizedBox(height: 8),
                             ..._volumes.map((v) => _volumeCard(v)),
-                            const SizedBox(height: 90),
+                            SizedBox(
+                                height: 90 +
+                                    MediaQuery.of(context).padding.bottom),
                           ],
                         ),
                       ),
@@ -570,6 +572,8 @@ class _ChaptersPageState extends State<ChaptersPage> {
               child:
                   Text(_error!, style: const TextStyle(color: Colors.grey)))
           : ListView.separated(
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).padding.bottom),
               itemCount: _chapters.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (_, i) {
