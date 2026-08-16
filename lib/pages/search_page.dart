@@ -484,53 +484,61 @@ class _CommentsPageState extends State<CommentsPage> {
           title: Text(_isVolume
               ? '本卷评论 · ${widget.bookTitle}'
               : '书评 · ${widget.bookTitle}')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _comments.isEmpty
-              ? Center(
-                  child: Text(
-                      _error ??
-                          (_isVolume ? '本卷还没有评论' : '还没有书评,来抢沙发'),
-                      style: const TextStyle(color: Colors.grey)))
-              : ListView.builder(
-              padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).padding.bottom),
-              itemCount: _comments.length,
-              itemBuilder: (_, i) {
-                final c = _comments[i];
-                return ListTile(
-                  leading: CircleAvatar(
-                      backgroundImage: c.avatar.isNotEmpty
-                          ? NetworkImage(c.avatar)
-                          : null),
-                  title: Text(c.nickname,
-                      style: TextStyle(
-                          fontSize: 13, color: Colors.indigo.shade400)),
-                  subtitle: Text(c.content),
-                  trailing: Text('赞 ${c.likeCount}',
-                      style: TextStyle(
-                          fontSize: 11, color: Colors.grey.shade500)),
-                );
-              },
-            ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(children: [
-            Expanded(
-              child: TextField(
-                controller: _input,
-                decoration: InputDecoration(
-                    hintText: _isVolume ? '写下本卷评论…' : '写下你的书评…',
-                    isDense: true,
-                    border: const OutlineInputBorder()),
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(onPressed: _publish, child: const Text('发布')),
-          ]),
+      body: Column(children: [
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _comments.isEmpty
+                  ? Center(
+                      child: Text(
+                          _error ??
+                              (_isVolume ? '本卷还没有评论' : '还没有书评,来抢沙发'),
+                          style: const TextStyle(color: Colors.grey)))
+                  : ListView.builder(
+                      padding: EdgeInsets.only(
+                          bottom: MediaQuery.of(context).padding.bottom),
+                      itemCount: _comments.length,
+                      itemBuilder: (_, i) {
+                        final c = _comments[i];
+                        return ListTile(
+                          leading: CircleAvatar(
+                              backgroundImage: c.avatar.isNotEmpty
+                                  ? NetworkImage(c.avatar)
+                                  : null),
+                          title: Text(c.nickname,
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.indigo.shade400)),
+                          subtitle: Text(c.content),
+                          trailing: Text('赞 ${c.likeCount}',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade500)),
+                        );
+                      },
+                    ),
         ),
-      ),
+        // 输入行在 body 内:键盘弹出时 Scaffold 自动收缩 body,输入行随之上移
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: _input,
+                  decoration: InputDecoration(
+                      hintText: _isVolume ? '写下本卷评论…' : '写下你的书评…',
+                      isDense: true,
+                      border: const OutlineInputBorder()),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(onPressed: _publish, child: const Text('发布')),
+            ]),
+          ),
+        ),
+      ]),
     );
   }
 }
