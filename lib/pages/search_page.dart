@@ -462,7 +462,10 @@ class _CommentsPageState extends State<CommentsPage> {
       final map = <String, String>{};
       for (final g in groups) {
         for (final it in g.items) {
-          if (it.isImage) map[it.code] = _fixEmojiUrl(it.url);
+          // code 是官网评论里实际使用的格式({:neko3:}、[s:1]、{:df000:} 等)
+          if (it.isImage && it.code.isNotEmpty) {
+            map[it.code] = _fixEmojiUrl(it.url);
+          }
         }
       }
       setState(() {
@@ -504,10 +507,10 @@ class _CommentsPageState extends State<CommentsPage> {
     }
   }
 
-  /// 渲染评论内容:把 {:code:} 替换为表情图片
+  /// 渲染评论内容:把表情代码({:xx:} / [s:数字] 等)替换为表情图片
   Widget _renderContent(String content) {
     final spans = <InlineSpan>[];
-    final re = RegExp(r'\{:[^:]+:\}');
+    final re = RegExp(r'\{:[^:]+:\}|\[[a-zA-Z]+:\d+\]');
     var pos = 0;
     for (final m in re.allMatches(content)) {
       if (m.start > pos) {
