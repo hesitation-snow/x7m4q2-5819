@@ -1,7 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
+import 'package:gal/gal.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../api/lk_api.dart';
@@ -10,12 +14,14 @@ import '../api/store.dart';
 import '../widgets/common.dart';
 import 'search_page.dart';
 
-/// 正文块:文本或插画
+/// 正文块:文本(可含链接区间)或插画
 class _BodyBlock {
-  final String? text;
   final String? image;
-  _BodyBlock.text(this.text) : image = null;
-  _BodyBlock.image(this.image) : text = null;
+  final String text;
+  /// 链接区间 (start, end, url),相对于 [text] 的下标
+  final List<(int, int, String)> links;
+  _BodyBlock.text(this.text, [this.links = const []]) : image = null;
+  _BodyBlock.image(this.image) : text = '', links = const [];
 }
 
 /// 阅读器(LightNovelReader + Apple Books 风格):
@@ -51,6 +57,9 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _unlocked = false;
   bool _loading = true;
   bool _chrome = true;
+  bool _unlocking = false;
+  int _coinPrice = 0;
+  int _coins = -1; // -1 表示余额未知
 
   // 偏好
   double _fontSize = 17;
@@ -179,11 +188,16 @@ class _ReaderPageState extends State<ReaderPage> {
         _blocks = blocks;
         _locked = d.locked;
         _unlocked = d.unlocked;
+        _coinPrice = d.coinPrice;
         _prevId = d.prevChapterId;
         _prevTitle = d.prevTitle;
         _nextId = d.nextChapterId;
         _nextTitle = d.nextTitle;
       });
+      // 付费章节:拉取轻币余额,解锁卡片上显示「余额」
+      if (d.locked && !d.unlocked) {
+        _refreshCoins();
+      }
       if (LKClient.shared.session.isLoggedIn && !d.locked) {
         try {
           await LKApi.saveHistory(
@@ -201,6 +215,14 @@ class _ReaderPageState extends State<ReaderPage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// 拉取轻币余额(失败静默,余额显示保持未知)
+  Future<void> _refreshCoins() async {
+    try {
+      final c = await LKApi.myCoins();
+      if (mounted && _locked && !_unlocked) setState(() => _coins = c);
+    } catch (_) {}
   }
 
   /// 拉取本章所在卷的全部章节(翻页直到找齐或页尾)
@@ -262,8 +284,17 @@ class _ReaderPageState extends State<ReaderPage> {
     } else if (_simplified) {
       text = await ChineseConverter.convert(text, T2S());
     }
-    return [_BodyBlock.text(text)];
+    final blocks = <_BodyBlock>[];
+    _addTextBlocks(blocks, text);
+    return blocks.isEmpty ? [_BodyBlock.text('(本章暂无内容)')] : blocks;
   }
+
+  static final RegExp _aTagRe = RegExp(
+      r'<a\s+[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+      caseSensitive: false,
+      dotAll: true);
+  static final RegExp _urlRe =
+      RegExp(r"(?:https?://|www\.)[^\s<>""'（）()\[\]「」『』]+"); // ignore: unnecessary_string_escapes
 
   void _addTextBlocks(List<_BodyBlock> blocks, String seg) {
     var t = seg
@@ -275,14 +306,49 @@ class _ReaderPageState extends State<ReaderPage> {
         .replaceAll('&nbsp;', ' ')
         .replaceAll('&amp;', '&')
         .replaceAll(RegExp(r'<br\s*/?>'), '\n')
-        .replaceAll(RegExp(r'</p>'), '\n')
-        .replaceAll(RegExp(r'<[^>]+>'), '');
+        .replaceAll(RegExp(r'</p>'), '\n');
     final paras = t
         .split('\n')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList();
-    blocks.addAll(paras.map((p) => _BodyBlock.text(p)));
+    blocks.addAll(paras.map(_paraBlock));
+  }
+
+  /// 把一段(可能含 <a> 与裸 URL 的)文本解析成带链接区间的正文块
+  _BodyBlock _paraBlock(String raw) {
+    final buf = StringBuffer();
+    final links = <(int, int, String)>[];
+    var pos = 0;
+    for (final m in _aTagRe.allMatches(raw)) {
+      _appendScanningUrls(buf, links, raw.substring(pos, m.start));
+      final label = m.group(2)!.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+      final url = (m.group(1) ?? '').trim();
+      if (label.isNotEmpty && url.isNotEmpty) {
+        links.add((buf.length, buf.length + label.length, url));
+        buf.write(label);
+      }
+      pos = m.end;
+    }
+    _appendScanningUrls(buf, links, raw.substring(pos));
+    return _BodyBlock.text(buf.toString(), links);
+  }
+
+  /// 去标签后,扫描裸 URL(www./http/https),附加为链接区间
+  void _appendScanningUrls(StringBuffer buf, List<(int, int, String)> links,
+      String seg) {
+    final clean = seg.replaceAll(RegExp(r'<[^>]+>'), '');
+    var pos = 0;
+    for (final m in _urlRe.allMatches(clean)) {
+      if (m.start > pos) buf.write(clean.substring(pos, m.start));
+      var u = m.group(0)!;
+      // 去掉结尾误吞的中文标点
+      u = u.replaceFirst(RegExp(r'[。，！？；、,;:!?)）】』」]+$'), '');
+      links.add((buf.length, buf.length + u.length, u));
+      buf.write(u);
+      pos = m.end;
+    }
+    if (pos < clean.length) buf.write(clean.substring(pos));
   }
 
   void _open(int chapterId, String title) {
@@ -299,35 +365,46 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  /// 付费解锁:试读内容下方的解锁卡片直接调用,不再弹窗确认
   Future<void> _unlock() async {
-    // 付费解锁确认(显示轻币价格)
-    final price = _detail != null ? (_detail as dynamic).coinPrice as int : 0;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('解锁本章'),
-        content: Text(price > 0
-            ? '本章需要 $price 轻币解锁,是否继续?'
-            : '是否解锁本章?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('解锁')),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
+    if (_unlocking) return;
+    setState(() => _unlocking = true);
     try {
       await LKApi.unlockChapter(widget.chapterId);
       if (!mounted) return;
       showLkError(context, '解锁成功');
-      _load();
+      await _load();
     } catch (e) {
       if (mounted) showLkError(context, e);
+    } finally {
+      if (mounted) setState(() => _unlocking = false);
     }
+  }
+
+  Color get _linkColor =>
+      _isDarkBg ? const Color(0xFF7EB6FF) : const Color(0xFF2F6FBF);
+
+  /// 正文内链接:系统浏览器打开
+  Future<void> _openLink(String url) async {
+    var u = url.trim();
+    if (!u.startsWith('http://') && !u.startsWith('https://')) {
+      u = 'https://$u';
+    }
+    try {
+      final ok = await launchUrl(Uri.parse(u),
+          mode: LaunchMode.externalApplication);
+      if (!ok && mounted) showLkError(context, '无法打开链接');
+    } catch (e) {
+      if (mounted) showLkError(context, '无法打开链接: $e');
+    }
+  }
+
+  /// 全屏查看插画(可缩放、可保存到相册)
+  void _showImageViewer(String url) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => _ImageViewer(url: url)),
+    );
   }
 
   Future<void> _pickParagraph() async {
@@ -616,7 +693,12 @@ class _ReaderPageState extends State<ReaderPage> {
                           }
                         }),
                         if (_locked && !_unlocked)
-                          _aaTile(scheme, Icons.lock_open_rounded, '解锁本章',
+                          _aaTile(
+                              scheme,
+                              Icons.lock_open_rounded,
+                              _coinPrice > 0
+                                  ? '解锁本章($_coinPrice 轻币)'
+                                  : '解锁本章',
                               () {
                             Navigator.pop(sheetCtx);
                             _unlock();
@@ -712,6 +794,75 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // ==================== 章末导航 / 目录 / 本卷评论 ====================
 
+  /// 付费章节:试读内容下方的解锁卡片(轻币价格 + 余额,免弹窗直接解锁)
+  Widget _unlockCard() {
+    final accent = _linkColor;
+    return Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 6),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+        decoration: BoxDecoration(
+          color: _isDarkBg
+              ? Colors.white.withValues(alpha: 0.05)
+              : _textColor.withValues(alpha: 0.045),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: accent.withValues(alpha: 0.55)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.lock_rounded, size: 18, color: accent),
+            const SizedBox(width: 8),
+            Text('本章为付费章节',
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: _textColor)),
+          ]),
+          const SizedBox(height: 8),
+          Text('以上为试读内容,使用轻币解锁后可阅读全文',
+              style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.5,
+                  color: _textColor.withValues(alpha: 0.62))),
+          const SizedBox(height: 12),
+          Row(children: [
+            Icon(Icons.monetization_on_outlined, size: 18, color: accent),
+            const SizedBox(width: 6),
+            Text('$_coinPrice 轻币',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: accent)),
+            if (_coins >= 0) ...[
+              const SizedBox(width: 12),
+              Text('余额 $_coins',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      color: _textColor.withValues(alpha: 0.55))),
+            ],
+          ]),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12)),
+              onPressed: _unlocking ? null : _unlock,
+              icon: _unlocking
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.lock_open_rounded, size: 18),
+              label: Text(_unlocking ? '解锁中…' : '解锁本章($_coinPrice 轻币)'),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
   /// 章末的 上一章/下一章(首章只显下一章,末章只显上一章)
   Widget _chapterEndNav() {
     final style = OutlinedButton.styleFrom(
@@ -796,9 +947,31 @@ class _ReaderPageState extends State<ReaderPage> {
     return EdgeInsets.fromLTRB(_ml, _mt, _mr, _mb);
   }
 
+  /// 正文链接区间 → InlineSpan(链接用主题色+下划线,点击系统浏览器打开)
+  List<InlineSpan> _spansFor(_BodyBlock b) {
+    if (b.links.isEmpty) return [TextSpan(text: b.text)];
+    final out = <InlineSpan>[];
+    final linkStyle = TextStyle(
+        color: _linkColor,
+        decoration: TextDecoration.underline,
+        decorationColor: _linkColor);
+    var pos = 0;
+    for (final (s, e, url) in b.links) {
+      if (s > pos) out.add(TextSpan(text: b.text.substring(pos, s)));
+      out.add(TextSpan(
+          text: b.text.substring(s, e),
+          style: linkStyle,
+          recognizer: TapGestureRecognizer()..onTap = () => _openLink(url)));
+      pos = e;
+    }
+    if (pos < b.text.length) out.add(TextSpan(text: b.text.substring(pos)));
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final lockedBody = _locked && !_unlocked && _blocks.length == 1;
+    final locked = _locked && !_unlocked;
+    final lockedBody = locked && _blocks.length == 1;
     final barColor = _bgColor.withValues(alpha: 0.96);
     final padTop = MediaQuery.of(context).padding.top;
     // 未隐藏系统栏时:顶部避开状态栏、底部避开手势导航条
@@ -853,68 +1026,87 @@ class _ReaderPageState extends State<ReaderPage> {
                             child: ListView.builder(
                               controller: _sc,
                               padding: _bodyPadding,
-                              itemCount: _blocks.length + 1,
+                              itemCount: _blocks.length + 1 + (locked ? 1 : 0),
                               itemBuilder: (_, i) {
-                                if (i >= _blocks.length) {
-                                  // 章末:上一章/下一章(首章只显下一章,末章只显上一章)
-                                  if (lockedBody || _loading) {
-                                    return const SizedBox.shrink();
-                                  }
-                                  return _chapterEndNav();
-                                }
-                              final b = _blocks[i];
-                              if (b.image != null) {
-                                return Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 10),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(10),
-                                    child: CachedNetworkImage(
-                                      imageUrl: b.image!,
-                                      width: double.infinity,
-                                      fit: BoxFit.fitWidth,
-                                      placeholder: (_, __) => Container(
-                                        height: 180,
-                                        color: _isDarkBg
-                                            ? Colors.white10
-                                            : Colors.black
-                                                .withValues(alpha: 0.05),
-                                        child: const Center(
-                                            child:
-                                                CircularProgressIndicator(
-                                                    strokeWidth: 2)),
+                                if (i < _blocks.length) {
+                                  final b = _blocks[i];
+                                  if (b.image != null) {
+                                    return GestureDetector(
+                                      onTap: () => _showImageViewer(b.image!),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 10),
+                                        child: ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          child: CachedNetworkImage(
+                                            imageUrl: b.image!,
+                                            width: double.infinity,
+                                            fit: BoxFit.fitWidth,
+                                            placeholder: (_, __) => Container(
+                                              height: 180,
+                                              color: _isDarkBg
+                                                  ? Colors.white10
+                                                  : Colors.black
+                                                      .withValues(alpha: 0.05),
+                                              child: const Center(
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                          strokeWidth: 2)),
+                                            ),
+                                            errorWidget: (_, __, ___) =>
+                                                Container(
+                                              height: 120,
+                                              alignment: Alignment.center,
+                                              child: Icon(
+                                                  Icons.broken_image_outlined,
+                                                  color: _textColor
+                                                      .withValues(alpha: 0.5)),
+                                            ),
+                                          ),
+                                        ),
                                       ),
-                                      errorWidget: (_, __, ___) =>
-                                          Container(
-                                        height: 120,
-                                        alignment: Alignment.center,
-                                        child: Icon(
-                                            Icons.broken_image_outlined,
-                                            color: _textColor
-                                                .withValues(alpha: 0.5)),
+                                    );
+                                  }
+                                  // 锁定且无试读文本时给出提示
+                                  final hint = lockedBody &&
+                                      b.links.isEmpty &&
+                                      b.text == '(本章暂无内容)';
+                                  return Padding(
+                                    padding:
+                                        const EdgeInsets.only(bottom: 12),
+                                    child: Text.rich(
+                                      TextSpan(
+                                        style: TextStyle(
+                                          fontSize: _fontSize,
+                                          height: _lineHeight,
+                                          color: _textColor,
+                                          letterSpacing: 0.3,
+                                        ),
+                                        children: hint
+                                            ? const [
+                                                TextSpan(
+                                                    text:
+                                                        '本章为付费章节,需使用轻币解锁后阅读全文')
+                                              ]
+                                            : _spansFor(b),
                                       ),
                                     ),
-                                  ),
-                                );
-                              }
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: Text(
-                                  lockedBody
-                                      ? '本章需要解锁后阅读\n\n点击屏幕,在设置面板中解锁'
-                                      : (b.text ?? ''),
-                                  style: TextStyle(
-                                    fontSize: _fontSize,
-                                    height: _lineHeight,
-                                    color: _textColor,
-                                    letterSpacing: 0.3,
-                                  ),
-                                ),
-                              );
-                            },
+                                  );
+                                }
+                                // 试读内容下方:付费解锁卡片
+                                if (locked && i == _blocks.length) {
+                                  return _unlockCard();
+                                }
+                                // 章末:上一章/下一章(首章只显下一章,末章只显上一章)
+                                if (_loading) {
+                                  return const SizedBox.shrink();
+                                }
+                                return _chapterEndNav();
+                              },
+                            ),
                           ),
                         ),
-                      ),
                 ),
                 if (_indicators && !_chrome && !_loading)
                   Positioned(
@@ -1303,6 +1495,104 @@ class _ParagraphCommentsSheetState extends State<_ParagraphCommentsSheet> {
           ]),
         ]),
       ),
+    );
+  }
+}
+
+/// 全屏插画查看:双指缩放、点击空白关闭、一键保存到相册
+class _ImageViewer extends StatefulWidget {
+  final String url;
+  const _ImageViewer({required this.url});
+
+  @override
+  State<_ImageViewer> createState() => _ImageViewerState();
+}
+
+class _ImageViewerState extends State<_ImageViewer> {
+  bool _saving = false;
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final resp = await http
+          .get(Uri.parse(widget.url),
+              headers: const {
+                'User-Agent':
+                    'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 LKFlutter'
+              })
+          .timeout(const Duration(seconds: 30));
+      if (resp.statusCode != 200) {
+        throw Exception('下载失败 HTTP ${resp.statusCode}');
+      }
+      await Gal.putImageBytes(
+        resp.bodyBytes,
+        name: 'lk_${DateTime.now().millisecondsSinceEpoch}',
+        album: 'LK轻小说',
+      );
+      if (!mounted) return;
+      showLkError(context, '已保存到相册');
+      Navigator.pop(context);
+    } catch (e) {
+      if (mounted) showLkError(context, '保存失败: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(children: [
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: InteractiveViewer(
+              maxScale: 5,
+              child: Center(
+                child: CachedNetworkImage(
+                  imageUrl: widget.url,
+                  fit: BoxFit.contain,
+                  progressIndicatorBuilder: (_, __, ___) => const Center(
+                      child:
+                          CircularProgressIndicator(color: Colors.white70)),
+                  errorWidget: (_, __, ___) => const Center(
+                      child: Icon(Icons.broken_image_outlined,
+                          color: Colors.white38, size: 48)),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          top: MediaQuery.of(context).padding.top,
+          left: 8,
+          child: IconButton(
+            tooltip: '关闭',
+            icon: const Icon(Icons.close_rounded, color: Colors.white),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+        Positioned(
+          left: 24,
+          right: 24,
+          bottom: 24 + MediaQuery.of(context).padding.bottom,
+          child: SizedBox(
+            height: 46,
+            child: FilledButton.icon(
+              onPressed: _saving ? null : _save,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.download_rounded, size: 20),
+              label: Text(_saving ? '保存中…' : '保存图片到相册'),
+            ),
+          ),
+        ),
+      ]),
     );
   }
 }

@@ -1,8 +1,13 @@
+import 'dart:convert';
+
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
+import '../api/models.dart';
 import '../widgets/common.dart';
 import 'book_detail_page.dart';
 import 'channel_page.dart';
@@ -462,9 +467,14 @@ class _FeedTabState extends State<FeedTab> {
 
 // ==================== 分区 ====================
 
-class SectionTab extends StatelessWidget {
+class SectionTab extends StatefulWidget {
   const SectionTab({super.key});
 
+  @override
+  State<SectionTab> createState() => _SectionTabState();
+}
+
+class _SectionTabState extends State<SectionTab> {
   static const _sections = [
     (Icons.auto_stories_rounded, '轻小说', '日轻翻译 / 文库本', '/api/bff/home-lightnovel-feed-v1'),
     (Icons.lightbulb_outline_rounded, '原创', '站内原创作品', '/api/bff/home-original-feed-v1'),
@@ -472,6 +482,136 @@ class SectionTab extends StatelessWidget {
     (Icons.menu_book_outlined, 'EPUB', 'EPUB 电子书', '/api/bff/home-epub-feed-v1'),
     (Icons.bolt_rounded, '更新', '最近更新', '/api/bff/home-recent-updates-feed-v1'),
   ];
+
+  /// path -> 分区内最新 3 部(先读本地缓存,再后台刷新并写回)
+  final Map<String, List<LKBook>> _latest = {};
+  bool _refreshed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    await _loadCache();
+    await _refreshAll();
+  }
+
+  String _cacheKey(String path) => 'section_latest_$path';
+
+  /// 读取本地缓存的「最新三部」
+  Future<void> _loadCache() async {
+    final p = await SharedPreferences.getInstance();
+    for (final s in _sections) {
+      final raw = p.getString(_cacheKey(s.$4));
+      if (raw == null) continue;
+      try {
+        final list = (jsonDecode(raw) as List)
+            .map((e) => LKBook.fromJson((e as Map).cast<String, dynamic>()))
+            .toList();
+        if (!mounted) return;
+        setState(() => _latest[s.$4] = list);
+      } catch (_) {}
+    }
+  }
+
+  /// 后台刷新每个分区的最新 3 部,并保存到本地
+  Future<void> _refreshAll() async {
+    final p = await SharedPreferences.getInstance();
+    for (final s in _sections) {
+      try {
+        final items = await LKApi.channelFeed(s.$4, 1, pageSize: 3);
+        final top3 = items.take(3).toList();
+        if (!mounted) return;
+        setState(() => _latest[s.$4] = top3);
+        await p.setString(
+            _cacheKey(s.$4), jsonEncode(top3.map(_bookJson).toList()));
+      } catch (_) {}
+    }
+    if (mounted) setState(() => _refreshed = true);
+  }
+
+  static Map<String, dynamic> _bookJson(LKBook b) => {
+        'book_id': b.bookId,
+        'title': b.title,
+        'author_name': b.authorName,
+        'cover_url': b.coverUrl,
+      };
+
+  void _openBook(LKBook b) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => BookDetailPage(bookId: b.bookId)),
+    );
+  }
+
+  /// 分区卡片下方的「最新三部」横向列表
+  Widget _latestRow(String path) {
+    final items = _latest[path];
+    if (items == null || items.isEmpty) return const SizedBox.shrink();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return SizedBox(
+      height: 172,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+        itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (_, i) {
+          final b = items[i];
+          return SizedBox(
+            width: 92,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => _openBook(b),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    width: 92,
+                    height: 123,
+                    child: b.coverUrl.isEmpty
+                        ? Container(
+                            color: isDark
+                                ? const Color(0xFF2A2C33)
+                                : Colors.grey.shade200,
+                            child: const Icon(Icons.menu_book_rounded,
+                                color: Colors.grey),
+                          )
+                        : CachedNetworkImage(
+                            imageUrl: b.coverUrl,
+                            fit: BoxFit.cover,
+                            placeholder: (_, __) => Container(
+                                color: isDark
+                                    ? const Color(0xFF2A2C33)
+                                    : Colors.grey.shade200),
+                            errorWidget: (_, __, ___) => Container(
+                                color: isDark
+                                    ? const Color(0xFF2A2C33)
+                                    : Colors.grey.shade200,
+                                child: const Icon(Icons.menu_book_rounded,
+                                    color: Colors.grey)),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  b.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 12,
+                      height: 1.3,
+                      color: isDark ? Colors.white70 : const Color(0xFF37474F)),
+                ),
+              ]),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -486,20 +626,25 @@ class SectionTab extends StatelessWidget {
                 fontWeight: FontWeight.bold,
                 color: isDark ? Colors.white : const Color(0xFF263238))),
         const SizedBox(height: 4),
-        Text('按类型浏览作品',
+        Text('按类型浏览作品,每类附最新三部',
             style: TextStyle(fontSize: 12.5, color: Colors.grey.shade500)),
         const SizedBox(height: 14),
-        ..._sections.map((s) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Material(
-                color: isDark ? const Color(0xFF1E2025) : Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(14),
+        ..._sections.map((s) {
+          final latest = _latest[s.$4];
+          final loading = (latest == null || latest.isEmpty) && !_refreshed;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Material(
+              color: isDark ? const Color(0xFF1E2025) : Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              clipBehavior: Clip.antiAlias,
+              child: Column(children: [
+                InkWell(
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                        builder: (_) => ChannelPage(path: s.$4, label: s.$2)),
+                        builder: (_) =>
+                            ChannelPage(path: s.$4, label: s.$2)),
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(14),
@@ -533,8 +678,20 @@ class SectionTab extends StatelessWidget {
                     ]),
                   ),
                 ),
-              ),
-            )),
+                if (latest != null && latest.isNotEmpty) _latestRow(s.$4),
+                if (loading)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 14),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+              ]),
+            ),
+          );
+        }),
         // 排行榜入口
         Padding(
           padding: const EdgeInsets.only(bottom: 10),

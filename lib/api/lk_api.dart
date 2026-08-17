@@ -397,6 +397,13 @@ class LKApi {
   static Future<Map<String, dynamic>> myHome() async =>
       client.post('/api/bff/my-home-v1', client.authed());
 
+  /// 当前轻币余额
+  static Future<int> myCoins() async {
+    final d = await client.post('/api/bff/my-home-v1', client.authed());
+    final profile = d['profile'] as Map<String, dynamic>?;
+    return (profile?['coin'] as num?)?.toInt() ?? 0;
+  }
+
   static Future<void> updateProfile(String nickname, String sign) =>
       client.post('/api/bff/update-my-profile-v1', client.authed(
           {'nickname': nickname, 'sign': sign, 'signature': sign}));
