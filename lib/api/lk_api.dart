@@ -91,17 +91,36 @@ class LKApi {
     final secEnd = html.indexOf('</section>', secStart);
     final sec = html.substring(
         secStart, secEnd < 0 ? html.length : secEnd);
-    final re = RegExp(
-        r'<a href="/book/(\d+)"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*alt="([^"]*)"');
+    // 逐篇解析:书名优先取 img alt,为空则取 <h3>;封面取 img src,
+    // 相对路径/官方占位图视为无封面(客户端显示默认封面)
+    final artRe = RegExp(
+        r'<article[^>]*mini-book[^>]*>[\s\S]*?<a href="/book/(\d+)"[^>]*>([\s\S]*?)</a></article>');
     final out = <LKBook>[];
-    for (final m in re.allMatches(sec)) {
+    for (final m in artRe.allMatches(sec)) {
       final id = int.tryParse(m.group(1) ?? '') ?? 0;
       if (id <= 0) continue;
-      out.add(LKBook(
-        bookId: id,
-        title: (m.group(3) ?? '').replaceAll('&amp;', '&').trim(),
-        coverUrl: (m.group(2) ?? '').replaceAll('&amp;', '&').trim(),
-      ));
+      final body = m.group(2) ?? '';
+      var title = (RegExp(r'<img[^>]*alt="([^"]*)"')
+                  .firstMatch(body)
+                  ?.group(1) ??
+              '')
+          .replaceAll('&amp;', '&')
+          .trim();
+      if (title.isEmpty) {
+        title = (RegExp(r'<h3[^>]*>([\s\S]*?)</h3>')
+                    .firstMatch(body)
+                    ?.group(1) ??
+                '')
+            .replaceAll('&amp;', '&')
+            .trim();
+      }
+      final raw =
+          RegExp(r'<img[^>]*src="([^"]*)"').firstMatch(body)?.group(1) ?? '';
+      var cover = '';
+      if (raw.startsWith('http')) {
+        cover = raw.replaceAll('&amp;', '&').trim();
+      }
+      out.add(LKBook(bookId: id, title: title, coverUrl: cover));
     }
     return out;
   }

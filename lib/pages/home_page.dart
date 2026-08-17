@@ -36,12 +36,19 @@ class _HomePageState extends State<HomePage> {
     ('rank', '排行榜', 'rank'),
   ];
   int _channel = 0;
+  bool _listMode = false;
 
   @override
   void initState() {
     super.initState();
     // 登录/登出后刷新顶栏头像等会话相关 UI
     LKClient.sessionRev.addListener(_onSessionRev);
+    _loadListMode();
+  }
+
+  Future<void> _loadListMode() async {
+    final v = await ReaderPrefs.feedListMode();
+    if (mounted) setState(() => _listMode = v);
   }
 
   @override
@@ -215,6 +222,25 @@ class _HomePageState extends State<HomePage> {
                                       ),
                                     ),
                                   ),
+                                  const SizedBox(width: 2),
+                                  // 首页排版切换(网格/单列)
+                                  IconButton(
+                                    tooltip: _listMode
+                                        ? '切换为网格排版'
+                                        : '切换为单列排版',
+                                    visualDensity: VisualDensity.compact,
+                                    icon: Icon(
+                                      _listMode
+                                          ? Icons.grid_view_rounded
+                                          : Icons.view_agenda_outlined,
+                                      size: 21,
+                                    ),
+                                    onPressed: () {
+                                      setState(
+                                          () => _listMode = !_listMode);
+                                      ReaderPrefs.setFeedListMode(_listMode);
+                                    },
+                                  ),
                                 ],
                               ),
                             ),
@@ -298,6 +324,7 @@ class _HomePageState extends State<HomePage> {
                     FeedTab(
                       channelCode: _channels[_channel].$1,
                       path: _channels[_channel].$3,
+                      listMode: _listMode,
                     ),
                     const SectionTab(),
                     const DynamicPage(embedded: true),
@@ -354,7 +381,12 @@ class _HomePageState extends State<HomePage> {
 class FeedTab extends StatefulWidget {
   final String channelCode;
   final String path;
-  const FeedTab({super.key, required this.channelCode, required this.path});
+  final bool listMode;
+  const FeedTab(
+      {super.key,
+      required this.channelCode,
+      required this.path,
+      required this.listMode});
 
   @override
   State<FeedTab> createState() => _FeedTabState();
@@ -366,20 +398,14 @@ class _FeedTabState extends State<FeedTab> {
   bool _loading = false;
   bool _hasMore = true;
   String? _error;
-  bool _listMode = false;
 
   bool get _isRank => widget.path == 'rank';
+  bool get _listMode => widget.listMode;
 
   @override
   void initState() {
     super.initState();
-    _loadPrefs();
     _load(1, false);
-  }
-
-  Future<void> _loadPrefs() async {
-    final v = await ReaderPrefs.feedListMode();
-    if (mounted) setState(() => _listMode = v);
   }
 
   @override
@@ -420,11 +446,6 @@ class _FeedTabState extends State<FeedTab> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  void _toggleListMode() {
-    setState(() => _listMode = !_listMode);
-    ReaderPrefs.setFeedListMode(_listMode);
   }
 
   int? _rankOf(int i) =>
@@ -518,31 +539,6 @@ class _FeedTabState extends State<FeedTab> {
 
     return Stack(children: [
       Positioned.fill(child: _listMode ? listView : gridView),
-      // 排版切换:网格 / 单列
-      Positioned(
-        right: 12,
-        top: 10,
-        child: Material(
-          color: Theme.of(context).brightness == Brightness.dark
-              ? const Color(0xFF2A2C33)
-              : Colors.white,
-          elevation: 3,
-          shadowColor: Colors.black26,
-          shape: const CircleBorder(),
-          child: IconButton(
-            tooltip: _listMode ? '切换为网格排版' : '切换为单列排版',
-            visualDensity: VisualDensity.compact,
-            icon: Icon(
-              _listMode
-                  ? Icons.grid_view_rounded
-                  : Icons.view_agenda_outlined,
-              size: 20,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            onPressed: _toggleListMode,
-          ),
-        ),
-      ),
     ]);
   }
 
@@ -659,18 +655,10 @@ class _HomeRecommendCardState extends State<_HomeRecommendCard> {
               ),
               const SizedBox(width: 14),
               const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('好书推荐',
-                        style: TextStyle(
-                            fontSize: 15.5, fontWeight: FontWeight.w600)),
-                    Text('官网精选 · 编辑推荐',
-                        style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  ],
-                ),
+                child: Text('好书推荐',
+                    style: TextStyle(
+                        fontSize: 15.5, fontWeight: FontWeight.w600)),
               ),
-              Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
             ]),
           ),
           SizedBox(
@@ -807,7 +795,7 @@ class _SectionTabState extends State<SectionTab> {
     );
   }
 
-  /// 分区卡片下方的「最新五部」横向滑动列表(封面比之前大 20%)
+  /// 分区卡片下方的「最新五部」横向滑动列表(大封面)
   Widget _latestRow(String path) {
     final items = _latest[path];
     if (items == null || items.isEmpty) return const SizedBox.shrink();
@@ -815,7 +803,7 @@ class _SectionTabState extends State<SectionTab> {
     // 高度按字体缩放动态计算,避免 BOTTOM OVERFLOW
     final titleLine =
         MediaQuery.textScalerOf(context).scale(12) * 1.3;
-    final rowH = 147 + 6 + titleLine * 2 + 10;
+    final rowH = 191 + 6 + titleLine * 2 + 10;
     return SizedBox(
       height: rowH,
       child: ListView.separated(
@@ -826,7 +814,7 @@ class _SectionTabState extends State<SectionTab> {
         itemBuilder: (_, i) {
           final b = items[i];
           return SizedBox(
-            width: 110,
+            width: 143,
             child: InkWell(
               borderRadius: BorderRadius.circular(10),
               onTap: () => _openBook(b),
@@ -835,8 +823,8 @@ class _SectionTabState extends State<SectionTab> {
                   children: [
                     CoverImage(
                         url: b.coverUrl,
-                        width: 110,
-                        height: 147,
+                        width: 143,
+                        height: 191,
                         radius: 10),
                     const SizedBox(height: 6),
                     Text(
@@ -1142,22 +1130,6 @@ class _MyTabState extends State<MyTab> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // 右上角:通知入口(消息中心/私信)
-        Align(
-          alignment: Alignment.centerRight,
-          child: IconButton(
-            tooltip: '消息中心 / 私信',
-            icon: Icon(
-              Icons.notifications_none_rounded,
-              color: Theme.of(context).brightness == Brightness.dark
-                  ? Colors.grey.shade300
-                  : const Color(0xFF263238),
-            ),
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const MessagesPage())),
-          ),
-        ),
         // 头部卡片
         Container(
           padding: const EdgeInsets.all(16),

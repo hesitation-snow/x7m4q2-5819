@@ -150,6 +150,41 @@ class BookCard extends StatelessWidget {
                             ),
                         ],
                       ),
+                      // 小说介绍(单列卡片的简介)
+                      if (book.summary.trim().isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          book.summary,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 12,
+                              height: 1.45,
+                              color: isDark
+                                  ? Colors.grey.shade400
+                                  : Colors.grey.shade600),
+                        ),
+                      ],
+                      // 最后更新时间
+                      if (book.updatedAt.isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        Row(children: [
+                          Icon(Icons.schedule_rounded,
+                              size: 12,
+                              color: isDark
+                                  ? Colors.grey.shade500
+                                  : Colors.grey.shade500),
+                          const SizedBox(width: 4),
+                          Text(
+                            '更新于 ${book.updatedAt.length > 16 ? book.updatedAt.substring(0, 16) : book.updatedAt}',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: isDark
+                                    ? Colors.grey.shade500
+                                    : Colors.grey.shade500),
+                          ),
+                        ]),
+                      ],
                     ],
                   ),
                 ),

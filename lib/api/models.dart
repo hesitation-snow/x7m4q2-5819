@@ -31,12 +31,14 @@ class LKBook {
   final String lastReadChapterTitle;
   final int unreadChapterCount;
   final double ratingScore;
+  final String updatedAt;
   LKBook({
     this.bookId = 0, this.title = '', this.authorName = '', this.coverUrl = '',
     this.summary = '', this.tags = const [], this.wordCount = 0,
     this.volumeCount = 0, this.chapterCount = 0, this.defaultVolumeId = 0,
     this.defaultChapterId = 0, this.serialStatus = '', this.isCompleted = false,
     this.lastReadChapterTitle = '', this.unreadChapterCount = 0, this.ratingScore = 0,
+    this.updatedAt = '',
   });
   factory LKBook.fromJson(Map<String, dynamic> j) => LKBook(
         bookId: (j['book_id'] as num?)?.toInt() ?? 0,
@@ -55,6 +57,9 @@ class LKBook {
         lastReadChapterTitle: (j['last_read_chapter_title'] as String?) ?? '',
         unreadChapterCount: (j['unread_chapter_count'] as num?)?.toInt() ?? 0,
         ratingScore: (j['rating_score'] as num?)?.toDouble() ?? 0,
+        updatedAt: (j['latest_book_updated_at'] as String?) ??
+            (j['updated_at'] as String?) ??
+            '',
       );
 }
 
@@ -325,18 +330,32 @@ class LKConversation {
     this.peerAvatar = '', this.lastMessage = '', this.unread = 0,
   });
   factory LKConversation.fromJson(Map<String, dynamic> j) {
-    final peer = (j['peer'] as Map<String, dynamic>?) ??
-        (j['user'] as Map<String, dynamic>?) ??
-        const <String, dynamic>{};
+    final peerRaw = j['peer'] ?? j['user'];
+    final peer = peerRaw is Map<String, dynamic>
+        ? peerRaw
+        : const <String, dynamic>{};
     return LKConversation(
       conversationId: (j['conversation_id'] as num?)?.toInt() ?? 0,
       peerUid: (j['peer_uid'] as num?)?.toInt() ?? (peer['uid'] as num?)?.toInt() ?? 0,
       peerName: (peer['nickname'] as String?) ?? '',
       peerAvatar: (peer['avatar'] as String?) ?? '',
-      lastMessage: (j['last_message'] as String?) ?? '',
+      // last_message 是对象 {message_id, preview, sender_uid, time}
+      lastMessage: _msgText(j['last_message']),
       unread: (j['unread'] as num?)?.toInt() ?? 0,
     );
   }
+}
+
+/// 消息文本:可能是 String 或 {content/preview/text} 对象
+String _msgText(dynamic v) {
+  if (v is String) return v;
+  if (v is Map) {
+    for (final k in const ['preview', 'content', 'text', 'summary']) {
+      final s = v[k];
+      if (s is String && s.isNotEmpty) return s;
+    }
+  }
+  return '';
 }
 
 class LKDMMessage {
@@ -362,9 +381,10 @@ class LKMessageItem {
   final String time;
   LKMessageItem({this.title = '', this.content = '', this.nickname = '', this.avatar = '', this.time = ''});
   factory LKMessageItem.fromJson(Map<String, dynamic> j) {
-    final peer = (j['user'] as Map<String, dynamic>?) ??
-        (j['author'] as Map<String, dynamic>?) ??
-        const <String, dynamic>{};
+    // user 可能是对象、也可能是空数组(如系统消息),安全转换
+    final userRaw = j['user'] ?? j['author'];
+    final peer =
+        userRaw is Map<String, dynamic> ? userRaw : const <String, dynamic>{};
     return LKMessageItem(
       title: (j['title'] as String?) ?? '',
       content: (j['content'] as String?) ?? (j['summary'] as String?) ?? (j['body'] as String?) ?? '',
