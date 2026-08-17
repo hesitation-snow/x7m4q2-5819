@@ -69,12 +69,16 @@ class _ReaderPageState extends State<ReaderPage> {
   List<_BodyBlock> _blocks = [_BodyBlock.text('加载中…')];
   int? _prevId;
   String? _prevTitle;
+  int? _prevVolumeId;
   int? _nextId;
   String? _nextTitle;
+  int? _nextVolumeId;
   bool _locked = false;
   bool _unlocked = false;
   bool _loading = true;
   bool _chrome = true;
+  /// 章节真实所在卷(详情接口返回,入口传的 volumeId 可能是默认卷,不可靠)
+  int _effectiveVolumeId = 0;
   bool _unlocking = false;
   int _coinPrice = 0;
   int _coins = -1; // -1 表示余额未知
@@ -124,6 +128,7 @@ class _ReaderPageState extends State<ReaderPage> {
   void initState() {
     super.initState();
     _title = widget.chapterTitle;
+    _effectiveVolumeId = widget.volumeId;
     _sc.addListener(() {
       final max = _sc.position.maxScrollExtent;
       _progress = max <= 0 ? 1 : (_sc.offset / max).clamp(0.0, 1.0);
@@ -219,10 +224,13 @@ class _ReaderPageState extends State<ReaderPage> {
         _locked = d.locked;
         _unlocked = d.unlocked;
         _coinPrice = d.coinPrice;
+        _effectiveVolumeId = d.volumeId > 0 ? d.volumeId : widget.volumeId;
         _prevId = d.prevChapterId;
         _prevTitle = d.prevTitle;
+        _prevVolumeId = d.prevVolumeId;
         _nextId = d.nextChapterId;
         _nextTitle = d.nextTitle;
+        _nextVolumeId = d.nextVolumeId;
       });
       // 付费章节:拉取轻币余额,解锁卡片上显示「余额」
       if (d.locked && !d.unlocked) {
@@ -231,7 +239,7 @@ class _ReaderPageState extends State<ReaderPage> {
       if (LKClient.shared.session.isLoggedIn && !d.locked) {
         try {
           await LKApi.saveHistory(
-              widget.bookId, widget.volumeId, widget.chapterId, 5);
+              widget.bookId, _effectiveVolumeId, widget.chapterId, 5);
         } catch (_) {}
       }
       // 服务端 navigation 经常缺失,兜底:按卷内章节列表自己算前后章
@@ -255,37 +263,112 @@ class _ReaderPageState extends State<ReaderPage> {
     } catch (_) {}
   }
 
-  /// 拉取本章所在卷的全部章节(翻页直到找齐或页尾)
-  Future<List<dynamic>> _allChapters() async {
+  /// 拉取某卷的全部章节(翻页直到页尾)
+  Future<List<dynamic>> _chaptersAll(int volumeId) async {
     final all = <dynamic>[];
     for (var p = 1; p <= 10; p++) {
-      final page =
-          await LKApi.chapters(widget.bookId, widget.volumeId, p);
+      final page = await LKApi.chapters(widget.bookId, volumeId, p);
       if (page.isEmpty) break;
       all.addAll(page);
       if (page.length < 50) break;
-      if (all.any((c) => c.chapterId == widget.chapterId)) break;
     }
     return all;
   }
 
-  /// 客户端计算前后章(卷内):服务端 navigation 缺失时兜底
+  /// 拉取全书全部卷
+  Future<List<dynamic>> _allVolumes() async {
+    final all = <dynamic>[];
+    for (var p = 1; p <= 10; p++) {
+      final page = await LKApi.volumes(widget.bookId, p);
+      if (page.isEmpty) break;
+      all.addAll(page);
+      if (page.length < 50) break;
+    }
+    return all;
+  }
+
+  /// 客户端计算前后章:先卷内,再跨卷(上一卷最后一章 / 下一卷第一章)
+  /// 服务端 navigation 经常缺失,登录态尤其如此,必须自己兜底
   Future<void> _resolveAdjacent() async {
     try {
-      final chs = await _allChapters();
+      final chs = await _chaptersAll(_effectiveVolumeId);
       if (!mounted) return;
       final idx = chs.indexWhere((c) => c.chapterId == widget.chapterId);
-      if (idx < 0) return;
-      if (_prevId == null && idx > 0) {
-        _prevId = chs[idx - 1].chapterId;
-        _prevTitle = chs[idx - 1].title;
+      if (idx < 0) {
+        // 传入的卷不对时,扫全书找到章节真实所在卷
+        await _findRealVolume();
+      } else {
+        if (_prevId == null && idx > 0) {
+          _prevId = chs[idx - 1].chapterId;
+          _prevTitle = chs[idx - 1].title;
+          _prevVolumeId = _effectiveVolumeId;
+        }
+        if (_nextId == null && idx < chs.length - 1) {
+          _nextId = chs[idx + 1].chapterId;
+          _nextTitle = chs[idx + 1].title;
+          _nextVolumeId = _effectiveVolumeId;
+        }
+        if (_prevId == null || _nextId == null) {
+          await _crossVolumeAdjacent();
+        }
       }
-      if (_nextId == null && idx < chs.length - 1) {
-        _nextId = chs[idx + 1].chapterId;
-        _nextTitle = chs[idx + 1].title;
-      }
-      setState(() {});
+      if (mounted) setState(() {});
     } catch (_) {}
+  }
+
+  /// 章节不在当前卷时:扫描全部卷,定位真实卷并修正,再算前后章
+  Future<void> _findRealVolume() async {
+    final vols = await _allVolumes();
+    for (final v in vols) {
+      if (!mounted) return;
+      if (v.volumeId == _effectiveVolumeId) continue;
+      final chs = await _chaptersAll(v.volumeId);
+      if (!mounted) return;
+      final idx = chs.indexWhere((c) => c.chapterId == widget.chapterId);
+      if (idx >= 0) {
+        _effectiveVolumeId = v.volumeId;
+        if (_prevId == null && idx > 0) {
+          _prevId = chs[idx - 1].chapterId;
+          _prevTitle = chs[idx - 1].title;
+          _prevVolumeId = v.volumeId;
+        }
+        if (_nextId == null && idx < chs.length - 1) {
+          _nextId = chs[idx + 1].chapterId;
+          _nextTitle = chs[idx + 1].title;
+          _nextVolumeId = v.volumeId;
+        }
+        if (_prevId == null || _nextId == null) {
+          await _crossVolumeAdjacent();
+        }
+        return;
+      }
+    }
+  }
+
+  /// 跨卷兜底:本卷没有上一章时取上一卷最后一章;没有下一章时取下一卷第一章
+  Future<void> _crossVolumeAdjacent() async {
+    final vols = await _allVolumes();
+    if (!mounted) return;
+    final vi = vols.indexWhere((v) => v.volumeId == _effectiveVolumeId);
+    if (vi < 0) return;
+    if (_prevId == null && vi > 0) {
+      final prevChs = await _chaptersAll(vols[vi - 1].volumeId);
+      if (!mounted) return;
+      if (prevChs.isNotEmpty) {
+        _prevId = prevChs.last.chapterId;
+        _prevTitle = prevChs.last.title;
+        _prevVolumeId = vols[vi - 1].volumeId;
+      }
+    }
+    if (_nextId == null && vi < vols.length - 1) {
+      final nextChs = await _chaptersAll(vols[vi + 1].volumeId);
+      if (!mounted) return;
+      if (nextChs.isNotEmpty) {
+        _nextId = nextChs.first.chapterId;
+        _nextTitle = nextChs.first.title;
+        _nextVolumeId = vols[vi + 1].volumeId;
+      }
+    }
   }
 
   Future<List<_BodyBlock>> _parseBlocks(dynamic d) async {
@@ -387,7 +470,7 @@ class _ReaderPageState extends State<ReaderPage> {
     if (pos < clean.length) buf.write(clean.substring(pos));
   }
 
-  void _open(int chapterId, String title) {
+  void _open(int chapterId, String title, {int? volumeId}) {
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
@@ -396,7 +479,7 @@ class _ReaderPageState extends State<ReaderPage> {
                 bookTitle: widget.bookTitle,
                 chapterId: chapterId,
                 chapterTitle: title,
-                volumeId: widget.volumeId,
+                volumeId: volumeId ?? _effectiveVolumeId,
               )),
     );
   }
@@ -735,14 +818,16 @@ class _ReaderPageState extends State<ReaderPage> {
                             () {
                           Navigator.pop(sheetCtx);
                           if (_prevId != null) {
-                            _open(_prevId!, _prevTitle ?? '');
+                            _open(_prevId!, _prevTitle ?? '',
+                                volumeId: _prevVolumeId);
                           }
                         }),
                         _aaTile(scheme, Icons.chevron_right_rounded, '下一章',
                             () {
                           Navigator.pop(sheetCtx);
                           if (_nextId != null) {
-                            _open(_nextId!, _nextTitle ?? '');
+                            _open(_nextId!, _nextTitle ?? '',
+                                volumeId: _nextVolumeId);
                           }
                         }),
                         if (_locked && !_unlocked)
@@ -959,12 +1044,12 @@ class _ReaderPageState extends State<ReaderPage> {
                 _nextId != null &&
                 !_chapterSwitching) {
               _chapterSwitching = true;
-              _open(_nextId!, _nextTitle ?? '');
+              _open(_nextId!, _nextTitle ?? '', volumeId: _nextVolumeId);
             }
           } else if (n.overscroll < 0) {
             if (_pageIndex <= 0 && _prevId != null && !_chapterSwitching) {
               _chapterSwitching = true;
-              _open(_prevId!, _prevTitle ?? '');
+              _open(_prevId!, _prevTitle ?? '', volumeId: _prevVolumeId);
             }
           }
           return false;
@@ -1153,11 +1238,11 @@ class _ReaderPageState extends State<ReaderPage> {
       child: Row(children: [
         if (_prevId != null)
           btn(Icons.chevron_left_rounded, '上一章', _prevTitle,
-              () => _open(_prevId!, _prevTitle ?? '')),
+              () => _open(_prevId!, _prevTitle ?? '', volumeId: _prevVolumeId)),
         if (_prevId != null && _nextId != null) const SizedBox(width: 12),
         if (_nextId != null)
           btn(Icons.chevron_right_rounded, '下一章', _nextTitle,
-              () => _open(_nextId!, _nextTitle ?? '')),
+              () => _open(_nextId!, _nextTitle ?? '', volumeId: _nextVolumeId)),
       ]),
     );
   }
@@ -1169,7 +1254,7 @@ class _ReaderPageState extends State<ReaderPage> {
           builder: (_) => CommentsPage(
                 bookId: widget.bookId,
                 bookTitle: widget.bookTitle,
-                volumeId: widget.volumeId,
+                volumeId: _effectiveVolumeId,
               )),
     );
   }
@@ -1187,11 +1272,11 @@ class _ReaderPageState extends State<ReaderPage> {
         height: MediaQuery.of(context).size.height * 0.7,
         child: _CatalogSheet(
           bookId: widget.bookId,
-          volumeId: widget.volumeId,
+          volumeId: _effectiveVolumeId,
           currentChapterId: widget.chapterId,
-          onPick: (chapterId, title) {
+          onPick: (chapterId, title, volumeId) {
             Navigator.pop(context);
-            _open(chapterId, title);
+            _open(chapterId, title, volumeId: volumeId);
           },
         ),
       ),
@@ -1557,7 +1642,8 @@ class _ReaderPageState extends State<ReaderPage> {
                             _cornerChapterBtn(Icons.chevron_left_rounded,
                                 '上一章', _prevId != null, () {
                               if (_prevId != null) {
-                                _open(_prevId!, _prevTitle ?? '');
+                                _open(_prevId!, _prevTitle ?? '',
+                                    volumeId: _prevVolumeId);
                               }
                             }),
                             Expanded(
@@ -1592,7 +1678,8 @@ class _ReaderPageState extends State<ReaderPage> {
                             _cornerChapterBtn(Icons.chevron_right_rounded,
                                 '下一章', _nextId != null, () {
                               if (_nextId != null) {
-                                _open(_nextId!, _nextTitle ?? '');
+                                _open(_nextId!, _nextTitle ?? '',
+                                    volumeId: _nextVolumeId);
                               }
                             }),
                           ],
@@ -1610,12 +1697,12 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 }
 
-/// 阅读器目录弹层:卷就地展开章节,点章节跳转
+/// 阅读器目录弹层:卷就地展开章节,点章节跳转;打开时自动定位当前卷/章
 class _CatalogSheet extends StatefulWidget {
   final int bookId;
   final int volumeId;
   final int currentChapterId;
-  final void Function(int chapterId, String title) onPick;
+  final void Function(int chapterId, String title, int volumeId) onPick;
   const _CatalogSheet(
       {required this.bookId,
       required this.volumeId,
@@ -1631,18 +1718,50 @@ class _CatalogSheetState extends State<_CatalogSheet> {
   String? _error;
   int? _expanded;
   final Map<int, List<dynamic>> _chapters = {};
+  final ScrollController _sc = ScrollController();
+  final Map<int, GlobalKey> _volKeys = {};
+  final GlobalKey _curChapterKey = GlobalKey();
+  bool _located = false;
 
   @override
   void initState() {
     super.initState();
+    _expanded = widget.volumeId; // 打开即展开当前卷
     _loadVolumes();
+  }
+
+  @override
+  void dispose() {
+    _sc.dispose();
+    super.dispose();
   }
 
   Future<void> _loadVolumes() async {
     try {
-      final vs = await LKApi.volumes(widget.bookId, 1);
+      // 拉全所有卷(多页),保证当前卷一定在列表里
+      final vs = <dynamic>[];
+      for (var p = 1; p <= 10; p++) {
+        final page = await LKApi.volumes(widget.bookId, p);
+        if (page.isEmpty) break;
+        vs.addAll(page);
+        if (page.length < 50) break;
+      }
       if (!mounted) return;
       setState(() => _volumes = vs);
+      _loadChapters(widget.volumeId);
+      _revealCurrent();
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  Future<void> _loadChapters(int vid) async {
+    if (_chapters.containsKey(vid)) return;
+    try {
+      final cs = await LKApi.chapters(widget.bookId, vid, 1);
+      if (!mounted) return;
+      setState(() => _chapters[vid] = cs);
+      if (vid == widget.volumeId) _revealCurrent();
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
@@ -1654,14 +1773,58 @@ class _CatalogSheetState extends State<_CatalogSheet> {
       return;
     }
     setState(() => _expanded = vid);
-    if (_chapters.containsKey(vid)) return;
-    try {
-      final cs = await LKApi.chapters(widget.bookId, vid, 1);
-      if (!mounted) return;
-      setState(() => _chapters[vid] = cs);
-    } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
-    }
+    _loadChapters(vid);
+  }
+
+  /// 滚动定位到当前卷与当前章节
+  void _revealCurrent() {
+    if (_located) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _volumes.isEmpty) return;
+      final vi =
+          _volumes.indexWhere((v) => v.volumeId == widget.volumeId);
+      if (vi < 0) return;
+      // 1) 当前卷:已构建则 ensureVisible,否则按估计偏移跳
+      final vctx = _volKeys[widget.volumeId]?.currentContext;
+      if (vctx != null) {
+        Scrollable.ensureVisible(vctx,
+            duration: const Duration(milliseconds: 250), alignment: 0.15);
+      } else if (_sc.hasClients) {
+        final est = (vi * 56.0).clamp(0.0, _sc.position.maxScrollExtent);
+        _sc.jumpTo(est);
+      }
+      // 2) 当前章节(在展开的当前卷内):已构建则精确定位,否则按行高估计
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final cctx = _curChapterKey.currentContext;
+        if (cctx != null) {
+          _located = true;
+          Scrollable.ensureVisible(cctx,
+              duration: const Duration(milliseconds: 250), alignment: 0.45);
+          return;
+        }
+        final chs = _chapters[widget.volumeId];
+        if (_sc.hasClients && chs != null) {
+          final ci = chs
+              .indexWhere((c) => c.chapterId == widget.currentChapterId);
+          if (ci > 0) {
+            final est = (vi * 56.0 + ci * 42.0)
+                .clamp(0.0, _sc.position.maxScrollExtent);
+            _sc.jumpTo(est);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              final ctx2 = _curChapterKey.currentContext;
+              if (ctx2 != null) {
+                _located = true;
+                Scrollable.ensureVisible(ctx2,
+                    duration: const Duration(milliseconds: 200),
+                    alignment: 0.45);
+              }
+            });
+          }
+        }
+      });
+    });
   }
 
   @override
@@ -1686,6 +1849,7 @@ class _CatalogSheetState extends State<_CatalogSheet> {
                 child:
                     Text(_error!, style: const TextStyle(color: Colors.grey)))
             : ListView.builder(
+                controller: _sc,
                 padding: EdgeInsets.fromLTRB(12, 0, 12,
                     12 + MediaQuery.of(context).padding.bottom),
                 itemCount: _volumes.length,
@@ -1694,9 +1858,11 @@ class _CatalogSheetState extends State<_CatalogSheet> {
                   final vid = v.volumeId as int;
                   final expanded = _expanded == vid;
                   final chs = _chapters[vid];
+                  final isCur = vid == widget.volumeId;
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Material(
+                      key: _volKeys.putIfAbsent(vid, GlobalKey.new),
                       color: isDark
                           ? const Color(0xFF2A2C33)
                           : Colors.grey.shade100,
@@ -1720,10 +1886,28 @@ class _CatalogSheetState extends State<_CatalogSheet> {
                                 child: Text(v.title,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                         fontSize: 13.5,
-                                        fontWeight: FontWeight.w600)),
+                                        fontWeight: FontWeight.w600,
+                                        color: isCur
+                                            ? scheme.primary
+                                            : null)),
                               ),
+                              if (isCur)
+                                Container(
+                                  margin: const EdgeInsets.only(left: 6),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 1.5),
+                                  decoration: BoxDecoration(
+                                    color: scheme.primary.withValues(
+                                        alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text('当前',
+                                      style: TextStyle(
+                                          fontSize: 10,
+                                          color: scheme.primary)),
+                                ),
                             ]),
                           ),
                         ),
@@ -1741,9 +1925,13 @@ class _CatalogSheetState extends State<_CatalogSheet> {
                           ),
                         if (expanded && chs != null)
                           ...chs.map((c) => InkWell(
-                                onTap: () =>
-                                    widget.onPick(c.chapterId, c.title),
+                                onTap: () => widget.onPick(
+                                    c.chapterId, c.title, vid),
                                 child: Container(
+                                  key: c.chapterId ==
+                                          widget.currentChapterId
+                                      ? _curChapterKey
+                                      : null,
                                   width: double.infinity,
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 12, vertical: 10),

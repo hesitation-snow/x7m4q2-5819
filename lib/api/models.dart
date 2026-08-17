@@ -95,6 +95,7 @@ class LKChapter {
 
 class LKChapterDetail {
   final int chapterId;
+  final int volumeId;
   final String title;
   final String bookTitle;
   final String bodyText;
@@ -104,12 +105,15 @@ class LKChapterDetail {
   final int coinPrice;
   final int? prevChapterId;
   final String? prevTitle;
+  final int? prevVolumeId;
   final int? nextChapterId;
   final String? nextTitle;
+  final int? nextVolumeId;
   LKChapterDetail({
-    this.chapterId = 0, this.title = '', this.bookTitle = '', this.bodyText = '',
+    this.chapterId = 0, this.volumeId = 0, this.title = '', this.bookTitle = '', this.bodyText = '',
     this.bodyHtml, this.locked = false, this.unlocked = false, this.coinPrice = 0,
-    this.prevChapterId, this.prevTitle, this.nextChapterId, this.nextTitle,
+    this.prevChapterId, this.prevTitle, this.prevVolumeId,
+    this.nextChapterId, this.nextTitle, this.nextVolumeId,
   });
   factory LKChapterDetail.fromJson(Map<String, dynamic> j) {
     String body = '';
@@ -140,6 +144,7 @@ class LKChapterDetail {
     }
     return LKChapterDetail(
       chapterId: (j['chapter_id'] as num?)?.toInt() ?? 0,
+      volumeId: (j['volume_id'] as num?)?.toInt() ?? 0,
       title: (j['title'] as String?) ?? '',
       bookTitle: (j['book_title'] as String?) ?? '',
       bodyText: body,
@@ -149,8 +154,10 @@ class LKChapterDetail {
       coinPrice: (j['coin_price'] as num?)?.toInt() ?? 0,
       prevChapterId: prev0 != null ? (prev0['chapter_id'] as num?)?.toInt() : null,
       prevTitle: prev0 != null ? (prev0['title'] as String?) : null,
+      prevVolumeId: prev0 != null ? (prev0['volume_id'] as num?)?.toInt() : null,
       nextChapterId: next != null ? (next['chapter_id'] as num?)?.toInt() : null,
       nextTitle: next != null ? (next['title'] as String?) : null,
+      nextVolumeId: next != null ? (next['volume_id'] as num?)?.toInt() : null,
     );
   }
 }
