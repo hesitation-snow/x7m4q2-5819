@@ -134,4 +134,10 @@ class ReaderPrefs {
       (await _p()).getBool('feed_list') ?? false;
   static Future<void> setFeedListMode(bool v) async =>
       (await _p()).setBool('feed_list', v);
+
+  /// 章节阅读位置(0~1 进度),用于重新打开时自动跳转到上次阅读处
+  static Future<double> readPosFrac(int chapterId) async =>
+      (await _p()).getDouble('r_pos_$chapterId') ?? 0;
+  static Future<void> setReadPosFrac(int chapterId, double frac) async =>
+      (await _p()).setDouble('r_pos_$chapterId', frac.clamp(0.0, 1.0));
 }

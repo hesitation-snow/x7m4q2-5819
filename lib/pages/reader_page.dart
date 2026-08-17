@@ -18,20 +18,26 @@ import 'search_page.dart';
 /// 正文块:文本(可含链接区间)或插画
 class _BodyBlock {
   final String? image;
+  final double? aspect; // 插画宽高比(width/height),用于翻页模式精确命中区域
   final String text;
   /// 链接区间 (start, end, url),相对于 [text] 的下标
   final List<(int, int, String)> links;
-  _BodyBlock.text(this.text, [this.links = const []]) : image = null;
-  _BodyBlock.image(this.image) : text = '', links = const [];
+  _BodyBlock.text(this.text, [this.links = const []])
+      : image = null,
+        aspect = null;
+  _BodyBlock.image(this.image, {this.aspect}) : text = '', links = const [];
 }
 
 /// 翻页模式:一页内的条目(切分后的文本/插画)
 class _PageItem {
   final String? image;
+  final double? aspect;
   final String text;
   final List<(int, int, String)> links;
-  _PageItem.text(this.text, this.links) : image = null;
-  _PageItem.image(this.image) : text = '', links = const [];
+  _PageItem.text(this.text, this.links) : image = null, aspect = null;
+  _PageItem.image(this.image, {this.aspect})
+      : text = '',
+        links = const [];
 }
 
 /// 翻页模式:一页
@@ -139,11 +145,22 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override
   void dispose() {
+    _savePos();
     _sc.dispose();
     _pageController.dispose();
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
+  }
+
+  /// 保存本章阅读位置(滚动模式按滚动进度,翻页模式按页码进度)
+  void _savePos() {
+    final frac = _paged
+        ? (_pages.length <= 1 ? 0.0 : _pageIndex / (_pages.length - 1))
+        : _progress;
+    if (frac > 0.005) {
+      ReaderPrefs.setReadPosFrac(widget.chapterId, frac);
+    }
   }
 
   Future<void> _loadPrefs() async {
@@ -212,6 +229,9 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
+    // 上次阅读位置(重新打开本章时自动跳转)
+    final savedFrac = await ReaderPrefs.readPosFrac(widget.chapterId);
+    final restore = (savedFrac > 0.02 && savedFrac < 0.98) ? savedFrac : 0.0;
     try {
       final d = await LKApi.chapterDetail(widget.bookId, widget.chapterId);
       if (!mounted) return;
@@ -225,6 +245,7 @@ class _ReaderPageState extends State<ReaderPage> {
         _unlocked = d.unlocked;
         _coinPrice = d.coinPrice;
         _effectiveVolumeId = d.volumeId > 0 ? d.volumeId : widget.volumeId;
+        _progress = restore;
         _prevId = d.prevChapterId;
         _prevTitle = d.prevTitle;
         _prevVolumeId = d.prevVolumeId;
@@ -232,14 +253,22 @@ class _ReaderPageState extends State<ReaderPage> {
         _nextTitle = d.nextTitle;
         _nextVolumeId = d.nextVolumeId;
       });
+      // 滚动模式:跳到上次阅读位置
+      if (!_paged && restore > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _sc.hasClients) {
+            _sc.jumpTo(_sc.position.maxScrollExtent * restore);
+          }
+        });
+      }
       // 付费章节:拉取轻币余额,解锁卡片上显示「余额」
       if (d.locked && !d.unlocked) {
         _refreshCoins();
       }
       if (LKClient.shared.session.isLoggedIn && !d.locked) {
         try {
-          await LKApi.saveHistory(
-              widget.bookId, _effectiveVolumeId, widget.chapterId, 5);
+          await LKApi.saveHistory(widget.bookId, _effectiveVolumeId,
+              widget.chapterId, (restore * 100).round().clamp(0, 100));
         } catch (_) {}
       }
       // 服务端 navigation 经常缺失,兜底:按卷内章节列表自己算前后章
@@ -385,7 +414,17 @@ class _ReaderPageState extends State<ReaderPage> {
       var pos = 0;
       for (final m in imgRe.allMatches(html)) {
         _addTextBlocks(blocks, html.substring(pos, m.start));
-        blocks.add(_BodyBlock.image(m.group(1)!));
+        final tag = m.group(0)!;
+        final w = RegExp(r'(?:img-width|width)="(\d+)"')
+            .firstMatch(tag)
+            ?.group(1);
+        final h = RegExp(r'(?:img-height|height)="(\d+)"')
+            .firstMatch(tag)
+            ?.group(1);
+        final wi = int.tryParse(w ?? '') ?? 0;
+        final hi = int.tryParse(h ?? '') ?? 0;
+        blocks.add(_BodyBlock.image(m.group(1)!,
+            aspect: (wi > 0 && hi > 0) ? wi / hi : null));
         pos = m.end;
       }
       _addTextBlocks(blocks, html.substring(pos));
@@ -1090,36 +1129,67 @@ class _ReaderPageState extends State<ReaderPage> {
                 children: [
                   for (final it in page.items)
                     if (it.image != null)
-                      GestureDetector(
-                        onTap: () => _showImageViewer(it.image!),
-                        child: SizedBox(
-                          height: contentH,
-                          width: double.infinity,
-                          child: Padding(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 6),
-                            child: CachedNetworkImage(
-                              imageUrl: it.image!,
-                              fit: BoxFit.contain,
-                              placeholder: (_, __) => Container(
-                                color: _isDarkBg
-                                    ? Colors.white10
-                                    : Colors.black
-                                        .withValues(alpha: 0.05),
-                                child: const Center(
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2)),
-                              ),
-                              errorWidget: (_, __, ___) => Container(
-                                alignment: Alignment.center,
-                                child: Icon(Icons.broken_image_outlined,
-                                    color: _textColor
-                                        .withValues(alpha: 0.5)),
+                      // 展示层铺满页面的 contain,但只有插画实际区域可点
+                      // (无宽高信息时取中央 72% 作为命中区),空白处点击
+                      // 走翻页/工具栏逻辑
+                      Builder(builder: (_) {
+                        final pad = _bodyPadding;
+                        final contentW = MediaQuery.of(context).size.width -
+                            pad.left -
+                            pad.right;
+                        final availH = contentH - 12;
+                        double hitW, hitH;
+                        final aspect = it.aspect;
+                        if (aspect != null && aspect > 0) {
+                          hitH = availH;
+                          hitW = hitH * aspect;
+                          if (hitW > contentW) {
+                            hitW = contentW;
+                            hitH = hitW / aspect;
+                          }
+                        } else {
+                          hitW = contentW * 0.72;
+                          hitH = availH * 0.72;
+                        }
+                        return Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Container(
+                              width: contentW,
+                              height: availH,
+                              clipBehavior: Clip.antiAlias,
+                              decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8)),
+                              child: CachedNetworkImage(
+                                imageUrl: it.image!,
+                                width: contentW,
+                                height: availH,
+                                fit: BoxFit.contain,
+                                placeholder: (_, __) => Container(
+                                  color: _isDarkBg
+                                      ? Colors.white10
+                                      : Colors.black
+                                          .withValues(alpha: 0.05),
+                                  child: const Center(
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2)),
+                                ),
+                                errorWidget: (_, __, ___) => Container(
+                                  alignment: Alignment.center,
+                                  child: Icon(Icons.broken_image_outlined,
+                                      color: _textColor
+                                          .withValues(alpha: 0.5)),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                      )
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => _showImageViewer(it.image!),
+                              child: SizedBox(width: hitW, height: hitH),
+                            ),
+                          ],
+                        );
+                      })
                     else
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
@@ -1344,7 +1414,7 @@ class _ReaderPageState extends State<ReaderPage> {
     for (final b in _blocks) {
       if (b.image != null) {
         flush();
-        pages.add(_Page([_PageItem.image(b.image!)]));
+        pages.add(_Page([_PageItem.image(b.image!, aspect: b.aspect)]));
         continue;
       }
       if (b.text.trim().isEmpty) continue; // 空文本块不占页

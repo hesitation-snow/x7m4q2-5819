@@ -85,7 +85,7 @@ class _ChannelPageState extends State<ChannelPage> {
           ? Center(child: Text(_error!, style: const TextStyle(color: Colors.grey)))
           : _listMode
               ? ListView.builder(
-                  padding: EdgeInsets.fromLTRB(12, 8, 12,
+                  padding: EdgeInsets.fromLTRB(8, 8, 8,
                       12 + MediaQuery.of(context).padding.bottom),
                   itemCount: _items.length + (_hasMore ? 1 : 0),
                   itemBuilder: (_, i) {
@@ -198,7 +198,7 @@ class _RankPageState extends State<RankPage> {
               onRefresh: _load,
               child: _listMode
                   ? ListView.builder(
-                      padding: EdgeInsets.fromLTRB(12, 8, 12,
+                      padding: EdgeInsets.fromLTRB(8, 8, 8,
                           12 + MediaQuery.of(context).padding.bottom),
                       itemCount: _items.length,
                       itemBuilder: (_, i) {

@@ -448,8 +448,8 @@ class _FeedTabState extends State<FeedTab> {
     }
   }
 
-  int? _rankOf(int i) =>
-      _isRank ? ((_page - 1) * 20 + i + 1) : null;
+  // 主页排行榜不显示名次,正常展示
+  int? _rankOf(int i) => null;
 
   @override
   Widget build(BuildContext context) {
@@ -472,7 +472,7 @@ class _FeedTabState extends State<FeedTab> {
     }
 
     final listView = ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
       itemCount: _items.length + 1 + (_hasMore ? 1 : 0),
       itemBuilder: (_, i) {
         if (i == 0) return const _HomeRecommendCard();

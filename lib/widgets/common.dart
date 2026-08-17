@@ -83,7 +83,7 @@ class BookCard extends StatelessWidget {
         ? '完结'
         : (book.serialStatus.isEmpty ? '连载' : book.serialStatus);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
       child: Material(
         color: cardColor,
         borderRadius: BorderRadius.circular(14),
@@ -97,7 +97,7 @@ class BookCard extends StatelessWidget {
               children: [
                 if (rank != null) _rankBadge(scheme, rank!),
                 if (rank != null) const SizedBox(width: 10),
-                CoverImage(url: book.coverUrl, width: 54, height: 72, radius: 8),
+                CoverImage(url: book.coverUrl, width: 76, height: 101, radius: 8),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -135,7 +135,10 @@ class BookCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          ...book.tags.take(3).map((t) => _tagChip(scheme, t)),
+                          // 过长的 tag(如整段书名式 tag)不展示,避免 RIGHT OVERFLOW
+                          ..._shortTags(book.tags)
+                              .take(3)
+                              .map((t) => _tagChip(scheme, t)),
                           if (book.wordCount > 0)
                             Padding(
                               padding: const EdgeInsets.only(left: 6),
@@ -253,18 +256,29 @@ class BookCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(right: 5),
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      constraints: const BoxConstraints(maxWidth: 110),
       decoration: BoxDecoration(
         color: scheme.primary.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(tag,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(fontSize: 10.5, color: scheme.primary)),
     );
   }
 
+  /// 过长的 tag 在主页不展示(12 字以内)
+  static List<String> _shortTags(List<String> tags) =>
+      tags.where((t) => t.length <= 12).toList();
+
   static String _fmtWord(int n) =>
       n >= 10000 ? '${(n / 10000).toStringAsFixed(1)}万字' : '$n字';
 }
+
+/// 过长的 tag(如整段书名式 tag)过滤掉,避免溢出
+List<String> shortTags(List<String> tags) =>
+    tags.where((t) => t.length <= 12).toList();
 
 /// 视频网站风格:大封面竖排卡(双列网格用)
 class BookGridCard extends StatelessWidget {
@@ -359,7 +373,7 @@ class BookGridCard extends StatelessWidget {
             if (book.tags.isNotEmpty)
               Expanded(
                 child: Text(
-                  book.tags.join(' · '),
+                  shortTags(book.tags).join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 10.5, color: scheme.primary),
