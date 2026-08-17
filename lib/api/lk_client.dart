@@ -27,6 +27,9 @@ class LKClient {
   LKClient._();
   static final LKClient shared = LKClient._();
 
+  /// 登录态版本号:登录/登出/会话变更时自增,UI 监听刷新(如"我的"页用户卡片)
+  static final ValueNotifier<int> sessionRev = ValueNotifier<int>(0);
+
   final String base = 'https://www.lightnovel.fun/api/pc-proxy';
   final LKSession session = LKSession();
 

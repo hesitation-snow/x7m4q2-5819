@@ -40,6 +40,7 @@ class LKStore {
     await p.remove('nickname');
     await p.remove('avatar');
     LKClient.shared.session.securityKey = '';
+    LKClient.sessionRev.value++;
   }
 
   static ThemeMode _parseTheme(String? s) => switch (s) {
@@ -128,4 +129,9 @@ class ReaderPrefs {
       (await _p()).getBool('r_paged') ?? false;
   static Future<void> setPagedMode(bool v) async =>
       (await _p()).setBool('r_paged', v);
+
+  static Future<bool> feedListMode() async =>
+      (await _p()).getBool('feed_list') ?? false;
+  static Future<void> setFeedListMode(bool v) async =>
+      (await _p()).setBool('feed_list', v);
 }

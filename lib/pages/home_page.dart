@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/models.dart';
+import '../api/store.dart';
 import '../widgets/common.dart';
 import 'book_detail_page.dart';
 import 'channel_page.dart';
@@ -32,8 +33,26 @@ class _HomePageState extends State<HomePage> {
   static const _channels = [
     ('hot', '热门', '/api/bff/home-feed-v1'),
     ('new', '最新', '/api/bff/home-feed-v1'),
+    ('rank', '排行榜', 'rank'),
   ];
   int _channel = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // 登录/登出后刷新顶栏头像等会话相关 UI
+    LKClient.sessionRev.addListener(_onSessionRev);
+  }
+
+  @override
+  void dispose() {
+    LKClient.sessionRev.removeListener(_onSessionRev);
+    super.dispose();
+  }
+
+  void _onSessionRev() {
+    if (mounted) setState(() {});
+  }
 
   /// 首页滚动时顶栏向上滑出(参考 PiliPlus):
   /// 把拖动增量让渡给顶栏,并用 correctBy 抵消内容自身的滚动,
@@ -347,11 +366,20 @@ class _FeedTabState extends State<FeedTab> {
   bool _loading = false;
   bool _hasMore = true;
   String? _error;
+  bool _listMode = false;
+
+  bool get _isRank => widget.path == 'rank';
 
   @override
   void initState() {
     super.initState();
+    _loadPrefs();
     _load(1, false);
+  }
+
+  Future<void> _loadPrefs() async {
+    final v = await ReaderPrefs.feedListMode();
+    if (mounted) setState(() => _listMode = v);
   }
 
   @override
@@ -369,9 +397,11 @@ class _FeedTabState extends State<FeedTab> {
       _error = null;
     });
     try {
-      final items = widget.path == '/api/bff/home-feed-v1'
-          ? await LKApi.homeFeed(widget.channelCode, page)
-          : await LKApi.channelFeed(widget.path, page);
+      final items = _isRank
+          ? await LKApi.rank(page, pageSize: 20)
+          : (widget.path == '/api/bff/home-feed-v1'
+              ? await LKApi.homeFeed(widget.channelCode, page)
+              : await LKApi.channelFeed(widget.path, page));
       if (!mounted) return;
       setState(() {
         if (append) {
@@ -392,46 +422,128 @@ class _FeedTabState extends State<FeedTab> {
     }
   }
 
+  void _toggleListMode() {
+    setState(() => _listMode = !_listMode);
+    ReaderPrefs.setFeedListMode(_listMode);
+  }
+
+  int? _rankOf(int i) =>
+      _isRank ? ((_page - 1) * 20 + i + 1) : null;
+
   @override
   Widget build(BuildContext context) {
     // 注意:IndexedStack 的子组件不能包 Expanded(非法 ParentDataWidget,
     // release 模式会抛类型转换异常导致整个信息流区域空白),直接返回即可。
-    return _error != null && _items.isEmpty
-        ? _feedHint(icon: Icons.wifi_off_rounded, text: _error!, onRetry: () => _load(1, false))
-        : _items.isEmpty
-            ? (_loading
-                ? const Center(child: CircularProgressIndicator())
-                : _feedHint(
-                    icon: Icons.inbox_outlined,
-                    text: '没有获取到内容,请点击重试',
-                    onRetry: () => _load(1, false)))
-            : GridView.builder(
-                padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 0.56,
-                ),
-                itemCount: _items.length + (_hasMore ? 1 : 0),
-                itemBuilder: (_, i) {
-                  if (i >= _items.length) {
-                    // 触底加载更多(延迟到帧后,避免 build 期间 setState)
-                    WidgetsBinding.instance
-                        .addPostFrameCallback((_) => _load(_page + 1, true));
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final book = _items[i];
-                  return BookGridCard(
-                    book: book,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => BookDetailPage(bookId: book.bookId)),
-                    ),
-                  );
-                },
-              );
+    if (_error != null && _items.isEmpty) {
+      return _feedHint(
+          icon: Icons.wifi_off_rounded,
+          text: _error!,
+          onRetry: () => _load(1, false));
+    }
+    if (_items.isEmpty && _loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_items.isEmpty) {
+      return _feedHint(
+          icon: Icons.inbox_outlined,
+          text: '没有获取到内容,请点击重试',
+          onRetry: () => _load(1, false));
+    }
+
+    final listView = ListView.builder(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+      itemCount: _items.length + 1 + (_hasMore ? 1 : 0),
+      itemBuilder: (_, i) {
+        if (i == 0) return const _HomeRecommendCard();
+        final j = i - 1;
+        if (j >= _items.length) {
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _load(_page + 1, true));
+          return const Padding(
+            padding: EdgeInsets.all(12),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final book = _items[j];
+        return BookCard(
+          book: book,
+          rank: _rankOf(j),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => BookDetailPage(bookId: book.bookId)),
+          ),
+        );
+      },
+    );
+
+    final gridView = CustomScrollView(
+      slivers: [
+        const SliverToBoxAdapter(child: _HomeRecommendCard()),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+          sliver: SliverGrid(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 12,
+              childAspectRatio: 0.56,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (_, i) {
+                if (i >= _items.length) {
+                  // 触底加载更多(延迟到帧后,避免 build 期间 setState)
+                  WidgetsBinding.instance.addPostFrameCallback(
+                      (_) => _load(_page + 1, true));
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final book = _items[i];
+                return BookGridCard(
+                  book: book,
+                  rank: _rankOf(i),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            BookDetailPage(bookId: book.bookId)),
+                  ),
+                );
+              },
+              childCount: _items.length + (_hasMore ? 1 : 0),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    return Stack(children: [
+      Positioned.fill(child: _listMode ? listView : gridView),
+      // 排版切换:网格 / 单列
+      Positioned(
+        right: 12,
+        top: 10,
+        child: Material(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xFF2A2C33)
+              : Colors.white,
+          elevation: 3,
+          shadowColor: Colors.black26,
+          shape: const CircleBorder(),
+          child: IconButton(
+            tooltip: _listMode ? '切换为网格排版' : '切换为单列排版',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(
+              _listMode
+                  ? Icons.grid_view_rounded
+                  : Icons.view_agenda_outlined,
+              size: 20,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            onPressed: _toggleListMode,
+          ),
+        ),
+      ),
+    ]);
   }
 
   /// 首页信息流的错误/空状态提示(带重试)
@@ -459,6 +571,156 @@ class _FeedTabState extends State<FeedTab> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ==================== 首页好书推荐(官网模块) ====================
+
+class _HomeRecommendCard extends StatefulWidget {
+  const _HomeRecommendCard();
+
+  @override
+  State<_HomeRecommendCard> createState() => _HomeRecommendCardState();
+}
+
+class _HomeRecommendCardState extends State<_HomeRecommendCard> {
+  static const _cacheKey = 'home_recommend_v1';
+  List<LKBook> _books = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    await _loadCache();
+    await _refresh();
+  }
+
+  Future<void> _loadCache() async {
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getString(_cacheKey);
+    if (raw == null) return;
+    try {
+      final list = (jsonDecode(raw) as List)
+          .map((e) => LKBook.fromJson((e as Map).cast<String, dynamic>()))
+          .toList();
+      if (mounted && list.isNotEmpty) setState(() => _books = list);
+    } catch (_) {}
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final books = await LKApi.homeRecommend();
+      if (!mounted) return;
+      setState(() {
+        if (books.isNotEmpty) _books = books;
+      });
+      final p = await SharedPreferences.getInstance();
+      await p.setString(
+          _cacheKey,
+          jsonEncode(books
+              .map((b) => {
+                    'book_id': b.bookId,
+                    'title': b.title,
+                    'cover_url': b.coverUrl,
+                  })
+              .toList()));
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_books.isEmpty) return const SizedBox.shrink();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+      child: Material(
+        color: isDark ? const Color(0xFF1E2025) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                      colors: [Colors.pink.shade300, Colors.deepPurple.shade400]),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child:
+                    const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 24),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('好书推荐',
+                        style: TextStyle(
+                            fontSize: 15.5, fontWeight: FontWeight.w600)),
+                    Text('官网精选 · 编辑推荐',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
+            ]),
+          ),
+          SizedBox(
+            height: 178,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+              itemCount: _books.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (_, i) {
+                final b = _books[i];
+                return SizedBox(
+                  width: 96,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) =>
+                              BookDetailPage(bookId: b.bookId)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        CoverImage(
+                            url: b.coverUrl,
+                            width: 96,
+                            height: 128,
+                            radius: 10),
+                        const SizedBox(height: 5),
+                        Text(
+                          b.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            height: 1.25,
+                            color: isDark
+                                ? Colors.white70
+                                : const Color(0xFF37474F),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ]),
       ),
     );
   }
@@ -550,8 +812,12 @@ class _SectionTabState extends State<SectionTab> {
     final items = _latest[path];
     if (items == null || items.isEmpty) return const SizedBox.shrink();
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // 高度按字体缩放动态计算,避免 BOTTOM OVERFLOW
+    final titleLine =
+        MediaQuery.textScalerOf(context).scale(12) * 1.3;
+    final rowH = 147 + 6 + titleLine * 2 + 10;
     return SizedBox(
-      height: 190,
+      height: rowH,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
@@ -564,19 +830,27 @@ class _SectionTabState extends State<SectionTab> {
             child: InkWell(
               borderRadius: BorderRadius.circular(10),
               onTap: () => _openBook(b),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                CoverImage(url: b.coverUrl, width: 110, height: 147, radius: 10),
-                const SizedBox(height: 6),
-                Text(
-                  b.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 12,
-                      height: 1.3,
-                      color: isDark ? Colors.white70 : const Color(0xFF37474F)),
-                ),
-              ]),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CoverImage(
+                        url: b.coverUrl,
+                        width: 110,
+                        height: 147,
+                        radius: 10),
+                    const SizedBox(height: 6),
+                    Text(
+                      b.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 12,
+                          height: 1.3,
+                          color: isDark
+                              ? Colors.white70
+                              : const Color(0xFF37474F)),
+                    ),
+                  ]),
             ),
           );
         },
@@ -663,49 +937,7 @@ class _SectionTabState extends State<SectionTab> {
             ),
           );
         }),
-        // 排行榜入口
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Material(
-            color: isDark ? const Color(0xFF1E2025) : Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => Navigator.push(
-                  context, MaterialPageRoute(builder: (_) => const RankPage())),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                          colors: [Colors.orange.shade300, Colors.deepOrange.shade400]),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.emoji_events_rounded,
-                        color: Colors.white, size: 24),
-                  ),
-                  const SizedBox(width: 14),
-                  const Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('排行榜',
-                              style: TextStyle(
-                                  fontSize: 15.5, fontWeight: FontWeight.w600)),
-                          Text('每日热度榜单',
-                              style: TextStyle(
-                                  fontSize: 12, color: Colors.grey)),
-                        ]),
-                  ),
-                  Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
-                ]),
-              ),
-            ),
-          ),
-        ),
+        // (排行榜已移到首页频道:热门 / 最新 / 排行榜)
       ],
     );
   }
@@ -879,8 +1111,30 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
 
 // ==================== 我的 ====================
 
-class MyTab extends StatelessWidget {
+class MyTab extends StatefulWidget {
   const MyTab({super.key});
+
+  @override
+  State<MyTab> createState() => _MyTabState();
+}
+
+class _MyTabState extends State<MyTab> {
+  @override
+  void initState() {
+    super.initState();
+    // 登录/登出后刷新用户卡片
+    LKClient.sessionRev.addListener(_onRev);
+  }
+
+  @override
+  void dispose() {
+    LKClient.sessionRev.removeListener(_onRev);
+    super.dispose();
+  }
+
+  void _onRev() {
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {

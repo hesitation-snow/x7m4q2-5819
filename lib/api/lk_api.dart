@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
 import 'lk_client.dart';
 import 'models.dart';
 
@@ -22,13 +26,17 @@ class LKApi {
     client.session
       ..nickname = (u['nickname'] as String?) ?? ''
       ..avatar = (u['avatar'] as String?) ?? '';
+    LKClient.sessionRev.value++;
   }
 
   static Future<bool> validateSession() async {
     if (!client.session.isLoggedIn) return false;
     final d = await client.post('/api/bff/auth-session-v1', client.authed());
     final ok = (d['logged_in'] as num?)?.toInt() == 1;
-    if (!ok) client.session.securityKey = '';
+    if (!ok) {
+      client.session.securityKey = '';
+      LKClient.sessionRev.value++;
+    }
     return ok;
   }
 
@@ -39,6 +47,7 @@ class LKApi {
       } catch (_) {}
     }
     client.session.securityKey = '';
+    LKClient.sessionRev.value++;
   }
 
   // ==================== 首页 / 发现 ====================
@@ -63,6 +72,38 @@ class LKApi {
     final d = await client.post('/api/bff/book-rank-list-v1',
         {'page': page, 'pageSize': pageSize});
     return _bookList(d);
+  }
+
+  /// 官网首页「好书推荐」:模块为服务端渲染,无独立客户端接口,
+  /// 抓取官网首页 HTML 解析出推荐书籍(仅书号/标题/封面)
+  static Future<List<LKBook>> homeRecommend() async {
+    final resp = await http
+        .get(Uri.parse('https://www.lightnovel.fun/'), headers: const {
+      'User-Agent':
+          'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36 LKFlutter/0.1',
+    }).timeout(const Duration(seconds: 20));
+    if (resp.statusCode != 200) {
+      throw LKException(resp.statusCode, 'HTTP ${resp.statusCode}');
+    }
+    final html = utf8.decode(resp.bodyBytes, allowMalformed: true);
+    final secStart = html.indexOf('<section class="web-recommend"');
+    if (secStart < 0) return const [];
+    final secEnd = html.indexOf('</section>', secStart);
+    final sec = html.substring(
+        secStart, secEnd < 0 ? html.length : secEnd);
+    final re = RegExp(
+        r'<a href="/book/(\d+)"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*alt="([^"]*)"');
+    final out = <LKBook>[];
+    for (final m in re.allMatches(sec)) {
+      final id = int.tryParse(m.group(1) ?? '') ?? 0;
+      if (id <= 0) continue;
+      out.add(LKBook(
+        bookId: id,
+        title: (m.group(3) ?? '').replaceAll('&amp;', '&').trim(),
+        coverUrl: (m.group(2) ?? '').replaceAll('&amp;', '&').trim(),
+      ));
+    }
+    return out;
   }
 
   static Future<List<LKBook>> search(String q, int page,
