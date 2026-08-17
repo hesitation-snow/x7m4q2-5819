@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -22,6 +23,23 @@ class _BodyBlock {
   final List<(int, int, String)> links;
   _BodyBlock.text(this.text, [this.links = const []]) : image = null;
   _BodyBlock.image(this.image) : text = '', links = const [];
+}
+
+/// 翻页模式:一页内的条目(切分后的文本/插画)
+class _PageItem {
+  final String? image;
+  final String text;
+  final List<(int, int, String)> links;
+  _PageItem.text(this.text, this.links) : image = null;
+  _PageItem.image(this.image) : text = '', links = const [];
+}
+
+/// 翻页模式:一页
+class _Page {
+  final List<_PageItem> items;
+  final bool chapterEnd; // 章末导航页
+  final bool unlockCard; // 付费解锁卡片页
+  _Page(this.items, {this.chapterEnd = false, this.unlockCard = false});
 }
 
 /// 阅读器(LightNovelReader + Apple Books 风格):
@@ -60,6 +78,15 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _unlocking = false;
   int _coinPrice = 0;
   int _coins = -1; // -1 表示余额未知
+  bool _paged = false;
+  final PageController _pageController = PageController();
+  List<_Page> _pages = [_Page(const [], chapterEnd: true)];
+  int _pageIndex = 0;
+  bool _chapterSwitching = false;
+  /// 翻页模式分页缓存键(内容/尺寸变化时重建分页)
+  String _pagedKey = '';
+  /// 已参与分页的正文块(内容变化检测)
+  List<_BodyBlock> _pagesSource = const [];
 
   // 偏好
   double _fontSize = 17;
@@ -108,6 +135,7 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void dispose() {
     _sc.dispose();
+    _pageController.dispose();
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -129,6 +157,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final ind = await ReaderPrefs.showIndicators();
     final trad = await ReaderPrefs.traditional();
     final simp = await ReaderPrefs.simplified();
+    final paged = await ReaderPrefs.pagedMode();
     final tradChanged = _traditional != trad || _simplified != simp;
     if (!mounted) return;
     setState(() {
@@ -150,6 +179,7 @@ class _ReaderPageState extends State<ReaderPage> {
       _indicators = ind;
       _traditional = trad;
       _simplified = simp;
+      _paged = paged;
     });
     // 偏好到达后,若章节已加载且简繁状态有变化,则本地重解析
     if (tradChanged && _detail != null) {
@@ -305,6 +335,8 @@ class _ReaderPageState extends State<ReaderPage> {
         .replaceAll('&apos;', "'")
         .replaceAll('&nbsp;', ' ')
         .replaceAll('&amp;', '&')
+        // 正文里的资源占位符(如 [res]0,369356[/res])不展示
+        .replaceAll(RegExp(r'\[res\][^[]+\[/res\]'), '')
         .replaceAll(RegExp(r'<br\s*/?>'), '\n')
         .replaceAll(RegExp(r'</p>'), '\n');
     final paras = t
@@ -312,7 +344,11 @@ class _ReaderPageState extends State<ReaderPage> {
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList();
-    blocks.addAll(paras.map(_paraBlock));
+    for (final p in paras) {
+      final blk = _paraBlock(p);
+      // 纯标签段落(<p> 等)去掉标签后为空,跳过,否则翻页模式会出现空白页
+      if (blk.text.isNotEmpty) blocks.add(blk);
+    }
   }
 
   /// 把一段(可能含 <a> 与裸 URL 的)文本解析成带链接区间的正文块
@@ -469,6 +505,10 @@ class _ReaderPageState extends State<ReaderPage> {
   // ==================== 翻页 ====================
 
   void _pageUp() {
+    if (_paged) {
+      _turnPrev();
+      return;
+    }
     final h = MediaQuery.of(context).size.height;
     _sc.animateTo(
         (_sc.offset - h * 0.85).clamp(0.0, _sc.position.maxScrollExtent),
@@ -477,6 +517,10 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _pageDown() {
+    if (_paged) {
+      _turnNext();
+      return;
+    }
     final h = MediaQuery.of(context).size.height;
     _sc.animateTo(
         (_sc.offset + h * 0.85).clamp(0.0, _sc.position.maxScrollExtent),
@@ -662,6 +706,15 @@ class _ReaderPageState extends State<ReaderPage> {
                           setState(() => _tapTurn = v);
                           ReaderPrefs.setTapTurnPage(v);
                         }),
+                        _switchTile(
+                            scheme, Icons.auto_stories_rounded, '翻页模式(整页左右翻)',
+                            _paged, (v) {
+                          setSheet(() {});
+                          setState(() => _paged = v);
+                          ReaderPrefs.setPagedMode(v);
+                          _pagedKey = '';
+                          if (v) _sc.jumpTo(0);
+                        }),
                         _switchTile(scheme, Icons.volume_up_outlined,
                             '音量键翻页', _volTurn, (v) {
                           setSheet(() {});
@@ -792,6 +845,219 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
+  /// 底栏左右角的 上一章/下一章 按钮
+  Widget _cornerChapterBtn(
+      IconData icon, String label, bool enabled, VoidCallback onTap) {
+    final color = enabled ? _textColor : _textColor.withValues(alpha: 0.35);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: TextButton.icon(
+        onPressed: enabled ? onTap : null,
+        icon: Icon(icon, size: 18, color: color),
+        label:
+            Text(label, style: TextStyle(fontSize: 13, color: color)),
+      ),
+    );
+  }
+
+  /// 滚动模式正文(整章连续滚动)
+  Widget _scrollBody(double viewTop, double viewBottom, bool locked,
+      bool lockedBody) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) {
+        if (n is ScrollUpdateNotification && _chrome) {
+          setState(() => _chrome = false);
+        }
+        return false;
+      },
+      // 视口整体避开系统栏:未隐藏时文本/章末按钮都不会进入状态栏与手势条区域
+      child: Padding(
+        padding: EdgeInsets.only(top: viewTop, bottom: viewBottom),
+        child: ListView.builder(
+          controller: _sc,
+          padding: _bodyPadding,
+          itemCount: _blocks.length + 1 + (locked ? 1 : 0),
+          itemBuilder: (_, i) {
+            if (i < _blocks.length) {
+              final b = _blocks[i];
+              if (b.image != null) {
+                return GestureDetector(
+                  onTap: () => _showImageViewer(b.image!),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: CachedNetworkImage(
+                        imageUrl: b.image!,
+                        width: double.infinity,
+                        fit: BoxFit.fitWidth,
+                        placeholder: (_, __) => Container(
+                          height: 180,
+                          color: _isDarkBg
+                              ? Colors.white10
+                              : Colors.black.withValues(alpha: 0.05),
+                          child: const Center(
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2)),
+                        ),
+                        errorWidget: (_, __, ___) => Container(
+                          height: 120,
+                          alignment: Alignment.center,
+                          child: Icon(Icons.broken_image_outlined,
+                              color: _textColor.withValues(alpha: 0.5)),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }
+              // 锁定且无试读文本时给出提示
+              final hint =
+                  lockedBody && b.links.isEmpty && b.text == '(本章暂无内容)';
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text.rich(
+                  TextSpan(
+                    style: _bodyTextStyle,
+                    children: hint
+                        ? const [TextSpan(text: '本章需要轻币解锁')]
+                        : _spansFor(b),
+                  ),
+                ),
+              );
+            }
+            // 试读内容下方:付费解锁卡片
+            if (locked && i == _blocks.length) {
+              return _unlockCard();
+            }
+            // 章末:上一章/下一章(首章只显下一章,末章只显上一章)
+            if (_loading) {
+              return const SizedBox.shrink();
+            }
+            return _chapterEndNav();
+          },
+        ),
+      ),
+    );
+  }
+
+  /// 翻页模式正文(整页左右翻,末页/首页超滑切章)
+  Widget _pagedBody(
+      double vh, double viewTop, double viewBottom, bool lockedBody) {
+    final contentH = (vh -
+            viewTop -
+            viewBottom -
+            _bodyPadding.top -
+            _bodyPadding.bottom)
+        .clamp(120.0, 4000.0);
+    return Padding(
+      padding: EdgeInsets.only(top: viewTop, bottom: viewBottom),
+      child: NotificationListener<OverscrollNotification>(
+        onNotification: (n) {
+          if (n.overscroll > 0) {
+            if (_pageIndex >= _pages.length - 1 &&
+                _nextId != null &&
+                !_chapterSwitching) {
+              _chapterSwitching = true;
+              _open(_nextId!, _nextTitle ?? '');
+            }
+          } else if (n.overscroll < 0) {
+            if (_pageIndex <= 0 && _prevId != null && !_chapterSwitching) {
+              _chapterSwitching = true;
+              _open(_prevId!, _prevTitle ?? '');
+            }
+          }
+          return false;
+        },
+        child: PageView.builder(
+          controller: _pageController,
+          itemCount: _pages.length,
+          physics: const ClampingScrollPhysics(),
+          onPageChanged: (i) {
+            setState(() {
+              _pageIndex = i;
+              _progress = _pages.length <= 1
+                  ? 1
+                  : (i / (_pages.length - 1)).clamp(0.0, 1.0);
+            });
+          },
+          itemBuilder: (_, i) {
+            final page = _pages[i];
+            if (page.unlockCard) {
+              return Padding(
+                padding: _bodyPadding,
+                child: Align(
+                    alignment: Alignment.topCenter, child: _unlockCard()),
+              );
+            }
+            if (page.chapterEnd) {
+              return Padding(
+                padding: _bodyPadding,
+                child: SizedBox(
+                    height: contentH,
+                    child: Center(child: _chapterEndNav())),
+              );
+            }
+            return Padding(
+              padding: _bodyPadding,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final it in page.items)
+                    if (it.image != null)
+                      GestureDetector(
+                        onTap: () => _showImageViewer(it.image!),
+                        child: SizedBox(
+                          height: contentH,
+                          width: double.infinity,
+                          child: Padding(
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 6),
+                            child: CachedNetworkImage(
+                              imageUrl: it.image!,
+                              fit: BoxFit.contain,
+                              placeholder: (_, __) => Container(
+                                color: _isDarkBg
+                                    ? Colors.white10
+                                    : Colors.black
+                                        .withValues(alpha: 0.05),
+                                child: const Center(
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2)),
+                              ),
+                              errorWidget: (_, __, ___) => Container(
+                                alignment: Alignment.center,
+                                child: Icon(Icons.broken_image_outlined,
+                                    color: _textColor
+                                        .withValues(alpha: 0.5)),
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Text.rich(
+                          TextSpan(
+                            style: _bodyTextStyle,
+                            children: (lockedBody &&
+                                    it.links.isEmpty &&
+                                    it.text == '(本章暂无内容)')
+                                ? const [TextSpan(text: '本章需要轻币解锁')]
+                                : _spans(it.text, it.links),
+                          ),
+                        ),
+                      ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   // ==================== 章末导航 / 目录 / 本卷评论 ====================
 
   /// 付费章节:试读内容下方的解锁卡片(轻币价格 + 余额,免弹窗直接解锁)
@@ -813,18 +1079,12 @@ class _ReaderPageState extends State<ReaderPage> {
           Row(children: [
             Icon(Icons.lock_rounded, size: 18, color: accent),
             const SizedBox(width: 8),
-            Text('本章为付费章节',
+            Text('本章需要轻币解锁',
                 style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
                     color: _textColor)),
           ]),
-          const SizedBox(height: 8),
-          Text('以上为试读内容,使用轻币解锁后可阅读全文',
-              style: TextStyle(
-                  fontSize: 12.5,
-                  height: 1.5,
-                  color: _textColor.withValues(alpha: 0.62))),
           const SizedBox(height: 12),
           Row(children: [
             Icon(Icons.monetization_on_outlined, size: 18, color: accent),
@@ -948,24 +1208,175 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   /// 正文链接区间 → InlineSpan(链接用主题色+下划线,点击系统浏览器打开)
-  List<InlineSpan> _spansFor(_BodyBlock b) {
-    if (b.links.isEmpty) return [TextSpan(text: b.text)];
+  List<InlineSpan> _spansFor(_BodyBlock b) => _spans(b.text, b.links);
+
+  List<InlineSpan> _spans(String text, List<(int, int, String)> links) {
+    if (links.isEmpty) return [TextSpan(text: text)];
     final out = <InlineSpan>[];
     final linkStyle = TextStyle(
         color: _linkColor,
         decoration: TextDecoration.underline,
         decorationColor: _linkColor);
     var pos = 0;
-    for (final (s, e, url) in b.links) {
-      if (s > pos) out.add(TextSpan(text: b.text.substring(pos, s)));
+    for (final (s, e, url) in links) {
+      if (s > pos) out.add(TextSpan(text: text.substring(pos, s)));
       out.add(TextSpan(
-          text: b.text.substring(s, e),
+          text: text.substring(s, e),
           style: linkStyle,
           recognizer: TapGestureRecognizer()..onTap = () => _openLink(url)));
       pos = e;
     }
-    if (pos < b.text.length) out.add(TextSpan(text: b.text.substring(pos)));
+    if (pos < text.length) out.add(TextSpan(text: text.substring(pos)));
     return out;
+  }
+
+  // ==================== 翻页模式 ====================
+
+  TextStyle get _bodyTextStyle => TextStyle(
+      fontSize: _fontSize,
+      height: _lineHeight,
+      color: _textColor,
+      letterSpacing: 0.3);
+
+  /// 把整章正文切分成翻页页面
+  void _buildPages(double viewW, double viewH) {
+    final pad = _bodyPadding;
+    final contentW = (viewW - pad.left - pad.right).clamp(80.0, 2000.0);
+    final contentH = (viewH - pad.top - pad.bottom).clamp(120.0, 4000.0);
+    final pages = <_Page>[];
+    var cur = <_PageItem>[];
+    var used = 0.0;
+    void flush() {
+      if (cur.isNotEmpty) {
+        pages.add(_Page(cur));
+        cur = [];
+        used = 0;
+      }
+    }
+
+    // 渲染时每个文本条目底部有 12px 段间距,分页高度计算必须计入,否则 BOTTOM OVERFLOW
+    const gap = 12.0;
+    for (final b in _blocks) {
+      if (b.image != null) {
+        flush();
+        pages.add(_Page([_PageItem.image(b.image!)]));
+        continue;
+      }
+      if (b.text.trim().isEmpty) continue; // 空文本块不占页
+      for (final chunk in _splitTextBlock(b, contentW, contentH)) {
+        if (chunk.text.isEmpty) continue;
+        final h = _measureText(chunk.text, contentW) + gap;
+        if (used + h > contentH && used > 0) flush();
+        cur.add(_PageItem.text(chunk.text, chunk.links));
+        used += h;
+      }
+    }
+    flush();
+    if (_locked && !_unlocked) pages.add(_Page(const [], unlockCard: true));
+    pages.add(_Page(const [], chapterEnd: true));
+    _pages = pages;
+    // 保持大致阅读进度
+    final total = pages.length - 1;
+    final target = total <= 0
+        ? 0
+        : (_progress * total).round().clamp(0, total);
+    _pageIndex = target;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _pageController.hasClients) {
+        _pageController.jumpToPage(target);
+      }
+    });
+  }
+
+  /// 文本段按行切分(每页高度 contentH),链接区间随之重映射
+  List<_PageItem> _splitTextBlock(_BodyBlock b, double w, double h) {
+    final tp = TextPainter(
+      text: TextSpan(text: b.text, style: _bodyTextStyle),
+      textDirection: TextDirection.ltr,
+      textScaler: TextScaler.noScaling,
+    )..layout(maxWidth: w);
+    final lms = tp.computeLineMetrics();
+    if (lms.isEmpty) {
+      return [_PageItem.text(b.text, b.links)];
+    }
+    int lineEnd(int idx) {
+      final pos = tp.getPositionForOffset(Offset(0, lms[idx].baseline));
+      return tp.getLineBoundary(pos).end;
+    }
+
+    final out = <_PageItem>[];
+    var lineIdx = 0;
+    var start = 0;
+    var usedH = 0.0;
+    while (lineIdx < lms.length) {
+      final lh = lms[lineIdx].height;
+      if (usedH + lh > h && usedH > 0) {
+        final end = lineEnd(lineIdx - 1);
+        if (end > start) {
+          out.add(_PageItem.text(b.text.substring(start, end),
+              _remapLinks(b.links, start, end)));
+        }
+        start = end;
+        usedH = 0;
+      } else {
+        usedH += lh;
+        lineIdx++;
+      }
+    }
+    final end = lineEnd(lms.length - 1);
+    if (end > start) {
+      out.add(_PageItem.text(
+          b.text.substring(start, end), _remapLinks(b.links, start, end)));
+    }
+    if (end < b.text.length) {
+      out.add(_PageItem.text(b.text.substring(end), const []));
+    }
+    return out;
+  }
+
+  /// 链接区间裁剪重映射到子串坐标
+  List<(int, int, String)> _remapLinks(
+      List<(int, int, String)> links, int start, int end) {
+    final out = <(int, int, String)>[];
+    for (final (s, e, url) in links) {
+      if (e <= start || s >= end) continue;
+      final ns = (s - start).clamp(0, end - start);
+      final ne = (e - start).clamp(ns, end - start);
+      if (ne > ns) out.add((ns, ne, url));
+    }
+    return out;
+  }
+
+  double _measureText(String text, double w) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: _bodyTextStyle),
+      textDirection: TextDirection.ltr,
+      textScaler: TextScaler.noScaling,
+    )..layout(maxWidth: w);
+    return tp.height;
+  }
+
+  /// 分享本章:系统分享菜单,内容为小说链接
+  Future<void> _share() async {
+    final url =
+        'https://www.lightnovel.fun/reader/${widget.bookId}/${widget.chapterId}';
+    try {
+      await Share.share(url, subject: _title);
+    } catch (e) {
+      if (mounted) showLkError(context, '分享失败: $e');
+    }
+  }
+
+  void _turnPrev() {
+    if (_pageIndex <= 0) return; // 边界交给超滑/底栏按钮
+    _pageController.previousPage(
+        duration: const Duration(milliseconds: 260), curve: Curves.easeOutCubic);
+  }
+
+  void _turnNext() {
+    if (_pageIndex >= _pages.length - 1) return;
+    _pageController.nextPage(
+        duration: const Duration(milliseconds: 260), curve: Curves.easeOutCubic);
   }
 
   @override
@@ -992,8 +1403,21 @@ class _ReaderPageState extends State<ReaderPage> {
           body: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapUp: (d) {
+              final w = MediaQuery.of(context).size.width;
+              if (_paged) {
+                // 翻页模式:左右 1/3 翻页,中间唤出/隐藏工具栏
+                if (d.globalPosition.dx < w / 3) {
+                  _turnPrev();
+                  return;
+                }
+                if (d.globalPosition.dx > w * 2 / 3) {
+                  _turnNext();
+                  return;
+                }
+                setState(() => _chrome = !_chrome);
+                return;
+              }
               if (_tapTurn) {
-                final w = MediaQuery.of(context).size.width;
                 if (d.globalPosition.dx < w / 3) {
                   _pageUp();
                   return;
@@ -1012,101 +1436,32 @@ class _ReaderPageState extends State<ReaderPage> {
                       ? Center(
                           child:
                               CircularProgressIndicator(color: _textColor))
-                      : NotificationListener<ScrollNotification>(
-                          onNotification: (n) {
-                            if (n is ScrollUpdateNotification && _chrome) {
-                              setState(() => _chrome = false);
+                      : LayoutBuilder(builder: (ctx, cons) {
+                          final vw = cons.maxWidth;
+                          final vh = cons.maxHeight;
+                          // 翻页模式:内容/排版/尺寸变化时重建分页
+                          if (_paged) {
+                            final key = '$_fontSize|$_lineHeight|$_mt|$_mb|'
+                                '$_ml|$_mr|$_autoMargin|${vw.round()}|${vh.round()}|'
+                                '${viewTopPadding.round()}|${viewBottomPadding.round()}|'
+                                '$_locked|$_unlocked|${identical(_blocks, _pagesSource)}';
+                            if (key != _pagedKey) {
+                              _pagedKey = key;
+                              _pagesSource = _blocks;
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  _buildPages(vw,
+                                      vh - viewTopPadding - viewBottomPadding);
+                                  setState(() {});
+                                }
+                              });
                             }
-                            return false;
-                          },
-                          // 视口整体避开系统栏:未隐藏时文本/章末按钮都不会进入状态栏与手势条区域
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                                top: viewTopPadding, bottom: viewBottomPadding),
-                            child: ListView.builder(
-                              controller: _sc,
-                              padding: _bodyPadding,
-                              itemCount: _blocks.length + 1 + (locked ? 1 : 0),
-                              itemBuilder: (_, i) {
-                                if (i < _blocks.length) {
-                                  final b = _blocks[i];
-                                  if (b.image != null) {
-                                    return GestureDetector(
-                                      onTap: () => _showImageViewer(b.image!),
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                            vertical: 10),
-                                        child: ClipRRect(
-                                          borderRadius:
-                                              BorderRadius.circular(10),
-                                          child: CachedNetworkImage(
-                                            imageUrl: b.image!,
-                                            width: double.infinity,
-                                            fit: BoxFit.fitWidth,
-                                            placeholder: (_, __) => Container(
-                                              height: 180,
-                                              color: _isDarkBg
-                                                  ? Colors.white10
-                                                  : Colors.black
-                                                      .withValues(alpha: 0.05),
-                                              child: const Center(
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                          strokeWidth: 2)),
-                                            ),
-                                            errorWidget: (_, __, ___) =>
-                                                Container(
-                                              height: 120,
-                                              alignment: Alignment.center,
-                                              child: Icon(
-                                                  Icons.broken_image_outlined,
-                                                  color: _textColor
-                                                      .withValues(alpha: 0.5)),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                  // 锁定且无试读文本时给出提示
-                                  final hint = lockedBody &&
-                                      b.links.isEmpty &&
-                                      b.text == '(本章暂无内容)';
-                                  return Padding(
-                                    padding:
-                                        const EdgeInsets.only(bottom: 12),
-                                    child: Text.rich(
-                                      TextSpan(
-                                        style: TextStyle(
-                                          fontSize: _fontSize,
-                                          height: _lineHeight,
-                                          color: _textColor,
-                                          letterSpacing: 0.3,
-                                        ),
-                                        children: hint
-                                            ? const [
-                                                TextSpan(
-                                                    text:
-                                                        '本章为付费章节,需使用轻币解锁后阅读全文')
-                                              ]
-                                            : _spansFor(b),
-                                      ),
-                                    ),
-                                  );
-                                }
-                                // 试读内容下方:付费解锁卡片
-                                if (locked && i == _blocks.length) {
-                                  return _unlockCard();
-                                }
-                                // 章末:上一章/下一章(首章只显下一章,末章只显上一章)
-                                if (_loading) {
-                                  return const SizedBox.shrink();
-                                }
-                                return _chapterEndNav();
-                              },
-                            ),
-                          ),
-                        ),
+                            return _pagedBody(
+                                vh, viewTopPadding, viewBottomPadding, lockedBody);
+                          }
+                          return _scrollBody(viewTopPadding,
+                              viewBottomPadding, locked, lockedBody);
+                        }),
                 ),
                 if (_indicators && !_chrome && !_loading)
                   Positioned(
@@ -1129,7 +1484,9 @@ class _ReaderPageState extends State<ReaderPage> {
                     bottom: 8,
                     right: 16,
                     child: Text(
-                      '${(_progress * 100).toStringAsFixed(1)}%',
+                      _paged
+                          ? '第 ${_pageIndex + 1}/${_pages.length} 页'
+                          : '${(_progress * 100).toStringAsFixed(1)}%',
                       style: TextStyle(
                           fontSize: 11,
                           color: _textColor.withValues(alpha: 0.45)),
@@ -1166,10 +1523,10 @@ class _ReaderPageState extends State<ReaderPage> {
                             ),
                           ),
                           IconButton(
-                            tooltip: '目录',
-                            icon: Icon(Icons.menu_book_rounded,
+                            tooltip: '分享',
+                            icon: Icon(Icons.ios_share_rounded,
                                 size: 22, color: _textColor),
-                            onPressed: _showCatalog,
+                            onPressed: _share,
                           ),
                           IconButton(
                             tooltip: '本卷评论',
@@ -1182,33 +1539,64 @@ class _ReaderPageState extends State<ReaderPage> {
                     ),
                   ),
                 ),
-                // 底栏:小齿轮
+                // 底栏:上一章 / 设置+目录 / 下一章
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 200),
                   curve: Curves.easeOut,
-                  bottom: _chrome ? 0 : -90,
+                  bottom: _chrome ? 0 : -120,
                   left: 0,
                   right: 0,
                   child: Container(
                     color: barColor,
                     child: SafeArea(
                       top: false,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          if (_locked && !_unlocked)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 6),
-                              child: Icon(Icons.lock_outline_rounded,
-                                  size: 16, color: _textColor),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            _cornerChapterBtn(Icons.chevron_left_rounded,
+                                '上一章', _prevId != null, () {
+                              if (_prevId != null) {
+                                _open(_prevId!, _prevTitle ?? '');
+                              }
+                            }),
+                            Expanded(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  if (_locked && !_unlocked)
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.only(right: 4),
+                                      child: Icon(Icons.lock_outline_rounded,
+                                          size: 16, color: _textColor),
+                                    ),
+                                  IconButton(
+                                    tooltip: '阅读设置',
+                                    icon: Icon(Icons.settings_rounded,
+                                        size: 22, color: _textColor),
+                                    onPressed: _showSettings,
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: _showCatalog,
+                                    icon: Icon(Icons.menu_book_rounded,
+                                        size: 18, color: _textColor),
+                                    label: Text('目录',
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            color: _textColor)),
+                                  ),
+                                ],
+                              ),
                             ),
-                          IconButton(
-                            tooltip: '阅读设置',
-                            icon: Icon(Icons.settings_rounded,
-                                size: 22, color: _textColor),
-                            onPressed: _showSettings,
-                          ),
-                        ],
+                            _cornerChapterBtn(Icons.chevron_right_rounded,
+                                '下一章', _nextId != null, () {
+                              if (_nextId != null) {
+                                _open(_nextId!, _nextTitle ?? '');
+                              }
+                            }),
+                          ],
+                        ),
                       ),
                     ),
                   ),

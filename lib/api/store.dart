@@ -123,4 +123,9 @@ class ReaderPrefs {
       (await _p()).getBool('r_simp') ?? false;
   static Future<void> setSimplified(bool v) async =>
       (await _p()).setBool('r_simp', v);
+
+  static Future<bool> pagedMode() async =>
+      (await _p()).getBool('r_paged') ?? false;
+  static Future<void> setPagedMode(bool v) async =>
+      (await _p()).setBool('r_paged', v);
 }

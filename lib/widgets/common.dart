@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 
+/// 无封面书籍的默认封面(站点官方占位图)
+const String kDefaultCover =
+    'https://www.lightnovel.fun/sample-assets/legacy/default_article_cover_v.jpg';
+
 /// 带缓存、圆角与阴影的封面/头像
 class CoverImage extends StatelessWidget {
   final String url;
@@ -48,10 +52,8 @@ class CoverImage extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
-        child: url.isEmpty
-            ? placeholder
-            : CachedNetworkImage(
-                imageUrl: url,
+        child: CachedNetworkImage(
+                imageUrl: url.isEmpty ? kDefaultCover : url,
                 width: width,
                 height: height,
                 fit: fit,

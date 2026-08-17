@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -516,17 +515,17 @@ class _SectionTabState extends State<SectionTab> {
     }
   }
 
-  /// 后台刷新每个分区的最新 3 部,并保存到本地
+  /// 后台刷新每个分区的最新 5 部,并保存到本地
   Future<void> _refreshAll() async {
     final p = await SharedPreferences.getInstance();
     for (final s in _sections) {
       try {
-        final items = await LKApi.channelFeed(s.$4, 1, pageSize: 3);
-        final top3 = items.take(3).toList();
+        final items = await LKApi.channelFeed(s.$4, 1, pageSize: 5);
+        final top = items.take(5).toList();
         if (!mounted) return;
-        setState(() => _latest[s.$4] = top3);
+        setState(() => _latest[s.$4] = top);
         await p.setString(
-            _cacheKey(s.$4), jsonEncode(top3.map(_bookJson).toList()));
+            _cacheKey(s.$4), jsonEncode(top.map(_bookJson).toList()));
       } catch (_) {}
     }
     if (mounted) setState(() => _refreshed = true);
@@ -546,55 +545,27 @@ class _SectionTabState extends State<SectionTab> {
     );
   }
 
-  /// 分区卡片下方的「最新三部」横向列表
+  /// 分区卡片下方的「最新五部」横向滑动列表(封面比之前大 20%)
   Widget _latestRow(String path) {
     final items = _latest[path];
     if (items == null || items.isEmpty) return const SizedBox.shrink();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return SizedBox(
-      height: 172,
+      height: 190,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
         itemCount: items.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (_, i) {
           final b = items[i];
           return SizedBox(
-            width: 92,
+            width: 110,
             child: InkWell(
               borderRadius: BorderRadius.circular(10),
               onTap: () => _openBook(b),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: SizedBox(
-                    width: 92,
-                    height: 123,
-                    child: b.coverUrl.isEmpty
-                        ? Container(
-                            color: isDark
-                                ? const Color(0xFF2A2C33)
-                                : Colors.grey.shade200,
-                            child: const Icon(Icons.menu_book_rounded,
-                                color: Colors.grey),
-                          )
-                        : CachedNetworkImage(
-                            imageUrl: b.coverUrl,
-                            fit: BoxFit.cover,
-                            placeholder: (_, __) => Container(
-                                color: isDark
-                                    ? const Color(0xFF2A2C33)
-                                    : Colors.grey.shade200),
-                            errorWidget: (_, __, ___) => Container(
-                                color: isDark
-                                    ? const Color(0xFF2A2C33)
-                                    : Colors.grey.shade200,
-                                child: const Icon(Icons.menu_book_rounded,
-                                    color: Colors.grey)),
-                          ),
-                  ),
-                ),
+                CoverImage(url: b.coverUrl, width: 110, height: 147, radius: 10),
                 const SizedBox(height: 6),
                 Text(
                   b.title,
@@ -626,7 +597,7 @@ class _SectionTabState extends State<SectionTab> {
                 fontWeight: FontWeight.bold,
                 color: isDark ? Colors.white : const Color(0xFF263238))),
         const SizedBox(height: 4),
-        Text('按类型浏览作品,每类附最新三部',
+        Text('按类型浏览作品,每类附最新五部',
             style: TextStyle(fontSize: 12.5, color: Colors.grey.shade500)),
         const SizedBox(height: 14),
         ..._sections.map((s) {
