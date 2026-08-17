@@ -68,6 +68,11 @@ class ReaderPrefs {
   static Future<void> setBgPreset(int v) async =>
       (await _p()).setInt('r_bg', v);
 
+  static Future<bool> bgFollowSystem() async =>
+      (await _p()).getBool('r_bg_sys') ?? false;
+  static Future<void> setBgFollowSystem(bool v) async =>
+      (await _p()).setBool('r_bg_sys', v);
+
   static Future<bool> keepScreenOn() async =>
       (await _p()).getBool('r_keep_on') ?? false;
   static Future<void> setKeepScreenOn(bool v) async =>

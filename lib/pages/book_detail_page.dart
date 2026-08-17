@@ -312,15 +312,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                   label: const Text('书评'),
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () {},
-                                  icon: const Icon(Icons.redeem_outlined,
-                                      size: 18),
-                                  label: const Text('打赏'),
-                                ),
-                              ),
                             ]),
                             const SizedBox(height: 18),
                             const Text('简介',

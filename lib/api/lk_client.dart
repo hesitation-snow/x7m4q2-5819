@@ -9,7 +9,8 @@ class LKException implements Exception {
   final String message;
   LKException(this.code, this.message);
   @override
-  String toString() => message.isEmpty ? '接口错误 code=$code' : '接口错误 code=$code $message';
+  String toString() =>
+      message.isEmpty ? '请求失败(错误码 $code)' : message;
 }
 
 /// 登录会话(持久化字段由上层保存)
@@ -65,7 +66,7 @@ class LKClient {
       final body = utf8.decode(resp.bodyBytes, allowMalformed: true);
       final snippet = body.length > 300 ? body.substring(0, 300) : body;
       debugPrint('LKHTTP status=${resp.statusCode} url=$base$path body=$snippet');
-      throw LKException(resp.statusCode, 'HTTP ${resp.statusCode}');
+      throw LKException(resp.statusCode, '网络异常(HTTP ${resp.statusCode})');
     }
     final Object? obj;
     try {
@@ -75,7 +76,10 @@ class LKClient {
     }
     if (obj is! Map<String, dynamic>) throw LKException(-1, '响应格式错误');
     final code = (obj['code'] as num?)?.toInt() ?? -1;
-    if (code != 0) throw LKException(code, _extractMessage(obj['data']));
+    if (code != 0) {
+      final msg = _extractMessage(obj['data']);
+      throw LKException(code, msg.isNotEmpty ? msg : _codeHint(code));
+    }
     return (obj['data'] as Map<String, dynamic>?) ?? <String, dynamic>{};
   }
 
@@ -95,6 +99,16 @@ class LKClient {
     }
     return '';
   }
+
+  /// 常见错误码的友好提示
+  static String _codeHint(int code) => switch (code) {
+        8 => '登录状态已失效,请重新登录',
+        403 => '没有权限执行此操作',
+        404 => '内容不存在或已删除',
+        429 => '操作太频繁,请稍后再试',
+        500 => '服务器开小差了,请稍后再试',
+        _ => '请求失败(错误码 $code)',
+      };
 
   /// pageSize 服务端上限 50
   static int clampPageSize(int n) => n < 1 ? 1 : (n > 50 ? 50 : n);

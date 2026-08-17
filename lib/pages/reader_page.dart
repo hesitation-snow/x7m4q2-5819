@@ -103,10 +103,11 @@ class _ReaderPageState extends State<ReaderPage> {
   double _lineHeight = 1.7;
   int _bg = 0;
   bool _bgChosen = false;
+  /// 外观:跟随系统深浅色
+  bool _bgFollowSystem = true;
   bool _keepOn = false;
   bool _hideBar = false;
   bool _tapTurn = false;
-  bool _volTurn = false;
   bool _autoMargin = true;
   double _mt = 56, _mb = 70, _ml = 20, _mr = 20;
   bool _indicators = true;
@@ -118,6 +119,8 @@ class _ReaderPageState extends State<ReaderPage> {
 
   final _sc = ScrollController();
   double _progress = 0;
+  /// 滚动进度通知(正文指示器实时刷新,无需整页重建)
+  final ValueNotifier<double> _progressN = ValueNotifier<double>(0);
 
   static const _presets = [
     (Color(0xFFFFFFFF), Color(0xFF333333), '白'),
@@ -126,9 +129,11 @@ class _ReaderPageState extends State<ReaderPage> {
     (Color(0xFF000000), Color(0xFF9AA0A6), '纯黑'),
   ];
 
-  Color get _bgColor => _presets[_bg].$1;
-  Color get _textColor => _presets[_bg].$2;
-  bool get _isDarkBg => _bg >= 2;
+  bool get _sysDark => Theme.of(context).brightness == Brightness.dark;
+  int get _bgEff => _bgFollowSystem ? (_sysDark ? 2 : 0) : _bg;
+  Color get _bgColor => _presets[_bgEff].$1;
+  Color get _textColor => _presets[_bgEff].$2;
+  bool get _isDarkBg => _bgEff >= 2;
 
   @override
   void initState() {
@@ -136,8 +141,10 @@ class _ReaderPageState extends State<ReaderPage> {
     _title = widget.chapterTitle;
     _effectiveVolumeId = widget.volumeId;
     _sc.addListener(() {
+      if (!_sc.hasClients) return;
       final max = _sc.position.maxScrollExtent;
       _progress = max <= 0 ? 1 : (_sc.offset / max).clamp(0.0, 1.0);
+      _progressN.value = _progress;
     });
     _load();
     _loadPrefs();
@@ -148,6 +155,7 @@ class _ReaderPageState extends State<ReaderPage> {
     _savePos();
     _sc.dispose();
     _pageController.dispose();
+    _progressN.dispose();
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -165,12 +173,12 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Future<void> _loadPrefs() async {
     final bg = await ReaderPrefs.bgPreset();
+    final bgSys = await ReaderPrefs.bgFollowSystem();
     final fontSize = await ReaderPrefs.fontSize();
     final lineHeight = await ReaderPrefs.lineHeight();
     final keepOn = await ReaderPrefs.keepScreenOn();
     final hideBar = await ReaderPrefs.hideStatusBar();
     final tapTurn = await ReaderPrefs.tapTurnPage();
-    final volTurn = await ReaderPrefs.volumeTurnPage();
     final autoMargin = await ReaderPrefs.autoMargin();
     final mt = await ReaderPrefs.marginTop();
     final mb = await ReaderPrefs.marginBottom();
@@ -188,11 +196,12 @@ class _ReaderPageState extends State<ReaderPage> {
       if (bg >= 0) {
         _bg = bg;
         _bgChosen = true;
+        // 选过具体预设的老用户保持固定;新用户默认跟随系统
+        _bgFollowSystem = bgSys;
       }
       _keepOn = keepOn;
       _hideBar = hideBar;
       _tapTurn = tapTurn;
-      _volTurn = volTurn;
       _autoMargin = autoMargin;
       _mt = mt;
       _mb = mb;
@@ -254,12 +263,10 @@ class _ReaderPageState extends State<ReaderPage> {
         _nextVolumeId = d.nextVolumeId;
       });
       // 滚动模式:跳到上次阅读位置
+      // ListView 懒加载下 maxScrollExtent 随构建逐渐增大,
+      // 分多次跳转直到接近目标,保证恢复位置准确
       if (!_paged && restore > 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _sc.hasClients) {
-            _sc.jumpTo(_sc.position.maxScrollExtent * restore);
-          }
-        });
+        _scheduleRestoreJumps(restore);
       }
       // 付费章节:拉取轻币余额,解锁卡片上显示「余额」
       if (d.locked && !d.unlocked) {
@@ -281,6 +288,23 @@ class _ReaderPageState extends State<ReaderPage> {
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+      // 内容加载完成后,ListView 才会上屏;此时补一次跳转,
+      // 避免网络慢时前面的定时跳转全部落空
+      if (!_paged && restore > 0) {
+        _scheduleRestoreJumps(restore);
+      }
+    }
+  }
+
+  /// 分多次跳转到目标阅读位置(滚动模式)
+  void _scheduleRestoreJumps(double restore) {
+    for (final delay in const [0, 150, 400, 900, 1500]) {
+      Future.delayed(Duration(milliseconds: delay), () {
+        if (mounted && _sc.hasClients) {
+          final target = _sc.position.maxScrollExtent * restore;
+          if (target > 0) _sc.jumpTo(target);
+        }
+      });
     }
   }
 
@@ -565,44 +589,6 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  Future<void> _pickParagraph() async {
-    try {
-      final paras = await LKApi.paragraphs(widget.bookId, widget.chapterId);
-      if (!mounted) return;
-      if (paras.isEmpty) {
-        showLkError(context, '本章没有段落数据');
-        return;
-      }
-      final p = await showModalBottomSheet<dynamic>(
-        context: context,
-        builder: (_) => ListView(
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: Text('选择段落看段评',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            ...paras.take(30).map((e) => ListTile(
-                  dense: true,
-                  title: Text('¶${e.paragraphNo} ${e.text}',
-                      maxLines: 2, overflow: TextOverflow.ellipsis),
-                  onTap: () => Navigator.pop(context, e),
-                )),
-          ],
-        ),
-      );
-      if (p == null || !mounted) return;
-      showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        builder: (_) => _ParagraphCommentsSheet(
-            bookId: widget.bookId, chapterId: widget.chapterId, para: p),
-      );
-    } catch (e) {
-      if (mounted) showLkError(context, e);
-    }
-  }
-
   void _addBookmark() {
     showDialog<void>(
       context: context,
@@ -648,20 +634,6 @@ class _ReaderPageState extends State<ReaderPage> {
         (_sc.offset + h * 0.85).clamp(0.0, _sc.position.maxScrollExtent),
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOut);
-  }
-
-  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
-    if (event is KeyDownEvent && _volTurn) {
-      if (event.logicalKey == LogicalKeyboardKey.audioVolumeUp) {
-        _pageUp();
-        return KeyEventResult.handled;
-      }
-      if (event.logicalKey == LogicalKeyboardKey.audioVolumeDown) {
-        _pageDown();
-        return KeyEventResult.handled;
-      }
-    }
-    return KeyEventResult.ignored;
   }
 
   // ==================== 设置面板(三页签) ====================
@@ -787,8 +759,10 @@ class _ReaderPageState extends State<ReaderPage> {
                                     setState(() {
                                       _bg = i;
                                       _bgChosen = true;
+                                      _bgFollowSystem = false;
                                     });
                                     ReaderPrefs.setBgPreset(i);
+                                    ReaderPrefs.setBgFollowSystem(false);
                                   },
                                   child: Container(
                                     width: 44,
@@ -797,12 +771,14 @@ class _ReaderPageState extends State<ReaderPage> {
                                       color: _presets[i].$1,
                                       borderRadius: BorderRadius.circular(22),
                                       border: Border.all(
-                                        color: _bg == i
+                                        color: !_bgFollowSystem && _bg == i
                                             ? scheme.primary
                                             : (isDark
                                                 ? Colors.grey.shade700
                                                 : Colors.grey.shade300),
-                                        width: _bg == i ? 2.5 : 1,
+                                        width: !_bgFollowSystem && _bg == i
+                                            ? 2.5
+                                            : 1,
                                       ),
                                     ),
                                     child: Center(
@@ -814,6 +790,45 @@ class _ReaderPageState extends State<ReaderPage> {
                                   ),
                                 ),
                               ),
+                            // 跟随系统
+                            Padding(
+                              padding: const EdgeInsets.only(right: 10),
+                              child: GestureDetector(
+                                onTap: () {
+                                  setSheet(() {});
+                                  setState(() {
+                                    _bgFollowSystem = true;
+                                    _bgChosen = true;
+                                  });
+                                  ReaderPrefs.setBgFollowSystem(true);
+                                },
+                                child: Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? const Color(0xFF2A2D34)
+                                        : Colors.white,
+                                    borderRadius: BorderRadius.circular(22),
+                                    border: Border.all(
+                                      color: _bgFollowSystem
+                                          ? scheme.primary
+                                          : (isDark
+                                              ? Colors.grey.shade700
+                                              : Colors.grey.shade300),
+                                      width: _bgFollowSystem ? 2.5 : 1,
+                                    ),
+                                  ),
+                                  child: Icon(
+                                    Icons.brightness_auto_rounded,
+                                    size: 20,
+                                    color: _bgFollowSystem
+                                        ? scheme.primary
+                                        : Colors.grey,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ],
@@ -837,37 +852,10 @@ class _ReaderPageState extends State<ReaderPage> {
                           _pagedKey = '';
                           if (v) _sc.jumpTo(0);
                         }),
-                        _switchTile(scheme, Icons.volume_up_outlined,
-                            '音量键翻页', _volTurn, (v) {
-                          setSheet(() {});
-                          setState(() => _volTurn = v);
-                          ReaderPrefs.setVolumeTurnPage(v);
-                        }),
-                        _aaTile(scheme, Icons.format_quote_rounded, '段评',
-                            () {
-                          Navigator.pop(sheetCtx);
-                          _pickParagraph();
-                        }),
                         _aaTile(scheme, Icons.bookmark_border_rounded, '书签',
                             () {
                           Navigator.pop(sheetCtx);
                           _addBookmark();
-                        }),
-                        _aaTile(scheme, Icons.chevron_left_rounded, '上一章',
-                            () {
-                          Navigator.pop(sheetCtx);
-                          if (_prevId != null) {
-                            _open(_prevId!, _prevTitle ?? '',
-                                volumeId: _prevVolumeId);
-                          }
-                        }),
-                        _aaTile(scheme, Icons.chevron_right_rounded, '下一章',
-                            () {
-                          Navigator.pop(sheetCtx);
-                          if (_nextId != null) {
-                            _open(_nextId!, _nextTitle ?? '',
-                                volumeId: _nextVolumeId);
-                          }
                         }),
                         if (_locked && !_unlocked)
                           _aaTile(
@@ -1550,18 +1538,15 @@ class _ReaderPageState extends State<ReaderPage> {
             _isDarkBg ? Brightness.light : Brightness.dark,
         statusBarBrightness: _isDarkBg ? Brightness.dark : Brightness.light,
       ),
-      child: Focus(
-        autofocus: true,
-        onKeyEvent: _onKey,
-        child: Scaffold(
-          backgroundColor: _bgColor,
-          body: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTapUp: (d) {
-              final w = MediaQuery.of(context).size.width;
-              if (_paged) {
-                // 翻页模式:左右 1/3 翻页,中间唤出/隐藏工具栏
-                if (d.globalPosition.dx < w / 3) {
+      child: Scaffold(
+        backgroundColor: _bgColor,
+        body: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapUp: (d) {
+            final w = MediaQuery.of(context).size.width;
+            if (_paged) {
+              // 翻页模式:左右 1/3 翻页,中间唤出/隐藏工具栏
+              if (d.globalPosition.dx < w / 3) {
                   _turnPrev();
                   return;
                 }
@@ -1638,14 +1623,24 @@ class _ReaderPageState extends State<ReaderPage> {
                   Positioned(
                     bottom: 8,
                     right: 16,
-                    child: Text(
-                      _paged
-                          ? '第 ${_pageIndex + 1}/${_pages.length} 页'
-                          : '${(_progress * 100).toStringAsFixed(1)}%',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: _textColor.withValues(alpha: 0.45)),
-                    ),
+                    child: _paged
+                        ? Text(
+                            '第 ${_pageIndex + 1}/${_pages.length} 页',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color:
+                                    _textColor.withValues(alpha: 0.45)),
+                          )
+                        : ValueListenableBuilder<double>(
+                            valueListenable: _progressN,
+                            builder: (_, v, __) => Text(
+                              '${(v * 100).toStringAsFixed(1)}%',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: _textColor
+                                      .withValues(alpha: 0.45)),
+                            ),
+                          ),
                   ),
                 // 顶栏
                 AnimatedPositioned(
@@ -1761,7 +1756,6 @@ class _ReaderPageState extends State<ReaderPage> {
               ],
             ),
           ),
-        ),
       ),
     );
   }
@@ -2027,121 +2021,6 @@ class _CatalogSheetState extends State<_CatalogSheet> {
               ),
       ),
     ]);
-  }
-}
-
-/// 段评底部弹层
-class _ParagraphCommentsSheet extends StatefulWidget {
-  final int bookId;
-  final int chapterId;
-  final dynamic para;
-  const _ParagraphCommentsSheet(
-      {required this.bookId, required this.chapterId, required this.para});
-
-  @override
-  State<_ParagraphCommentsSheet> createState() =>
-      _ParagraphCommentsSheetState();
-}
-
-class _ParagraphCommentsSheetState extends State<_ParagraphCommentsSheet> {
-  List<dynamic> _comments = [];
-  String? _error;
-  final _input = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void dispose() {
-    _input.dispose();
-    super.dispose();
-  }
-
-  Future<void> _load() async {
-    try {
-      final cs = await LKApi.paragraphComments(
-          widget.bookId, widget.chapterId, widget.para);
-      if (!mounted) return;
-      setState(() => _comments = cs);
-    } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
-    }
-  }
-
-  Future<void> _publish() async {
-    final content = _input.text.trim();
-    if (content.isEmpty) return;
-    try {
-      await LKApi.publishParagraphComment(
-          widget.bookId, widget.chapterId, widget.para, content);
-      _input.clear();
-      _load();
-    } catch (e) {
-      if (mounted) showLkError(context, e);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom +
-              MediaQuery.of(context).padding.bottom),
-      child: SizedBox(
-        height: 420,
-        child: Column(children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text('¶${widget.para.paragraphNo} ${widget.para.text}',
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: Colors.grey.shade600)),
-          ),
-          Expanded(
-            child: _comments.isEmpty
-                ? Center(
-                    child: Text(_error ?? '这段还没有段评',
-                        style: const TextStyle(color: Colors.grey)))
-                : ListView.builder(
-                    itemCount: _comments.length,
-                    itemBuilder: (_, i) {
-                      final c = _comments[i];
-                      return ListTile(
-                        dense: true,
-                        leading: CircleAvatar(
-                            backgroundImage: c.avatar.isNotEmpty
-                                ? NetworkImage(c.avatar)
-                                : null),
-                        title: Text(c.nickname,
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.indigo.shade400)),
-                        subtitle: Text(c.content),
-                      );
-                    },
-                  ),
-          ),
-          Row(children: [
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: TextField(
-                  controller: _input,
-                  decoration: const InputDecoration(
-                      hintText: '写段评…',
-                      isDense: true,
-                      border: OutlineInputBorder()),
-                ),
-              ),
-            ),
-            FilledButton(onPressed: _publish, child: const Text('发布')),
-          ]),
-        ]),
-      ),
-    );
   }
 }
 

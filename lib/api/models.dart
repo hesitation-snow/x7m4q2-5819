@@ -45,7 +45,9 @@ class LKBook {
         title: (j['title'] as String?) ?? '',
         authorName: (j['author_name'] as String?) ?? '',
         coverUrl: (j['cover_url'] as String?) ?? '',
-        summary: (j['summary'] as String?) ?? '',
+        summary: (j['summary'] as String?) ??
+            (j['summary_short'] as String?) ??
+            '',
         tags: (j['tags'] as List?)?.map((e) => e.toString()).toList() ?? const [],
         wordCount: (j['word_count'] as num?)?.toInt() ?? 0,
         volumeCount: (j['volume_count'] as num?)?.toInt() ?? 0,

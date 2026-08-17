@@ -1201,17 +1201,15 @@ class _MyTabState extends State<MyTab> {
         const SizedBox(height: 8),
         _row(context, Icons.collections_bookmark_outlined, '我的书架',
             () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ShelfPage()))),
-        _row(context, Icons.history_rounded, '云端阅读历史(网页同步)',
+        _row(context, Icons.history_rounded, '阅读历史',
             () => Navigator.push(
                 context,
                 MaterialPageRoute(
                     builder: (_) => Scaffold(
-                          appBar: AppBar(title: const Text('云端阅读历史')),
+                          appBar: AppBar(title: const Text('阅读历史')),
                           body: const CloudHistoryTab(),
                         )))),
-        _row(context, Icons.dynamic_feed_outlined, '动态广场',
-            () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DynamicPage()))),
-        _row(context, Icons.chat_bubble_outline, '消息中心 / 私信',
+        _row(context, Icons.chat_bubble_outline, '消息中心',
             () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
         _row(context, Icons.card_giftcard, '福利中心',
             () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WelfarePage()))),
