@@ -232,7 +232,7 @@ async function notifyDiscord(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       content: [
-        '🌷 **Yomiru 收到一位新读者**',
+        '🌷 **Yomiru 有新人加入！**',
         `版本：${platform} ${event.version} (${event.build})`,
         `系统标识：${event.installationId}`,
         `系统：${event.os} ${event.architecture} ${event.locale}`,

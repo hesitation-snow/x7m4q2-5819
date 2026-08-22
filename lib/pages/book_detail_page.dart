@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
+import '../api/models.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
 import 'reader_page.dart';
@@ -37,7 +38,7 @@ class BookDetailPage extends StatefulWidget {
 }
 
 class _BookDetailPageState extends State<BookDetailPage> {
-  dynamic _book;
+  LKBook? _book;
   List<dynamic> _volumes = [];
   bool _inShelf = false;
   int _latestChapterId = 0;
@@ -75,7 +76,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   Future<void> _load() async {
     try {
-      final book = await LKApi.bookDetail(widget.bookId);
+      final detailBook = await LKApi.bookDetail(widget.bookId);
+      // 详情接口个别缓存/兼容响应可能缺少 book_id,但当前页面路由 ID 是可靠的。
+      final book = detailBook.bookId > 0
+          ? detailBook
+          : LKBook.fromJson({...detailBook.toJson(), 'book_id': widget.bookId});
       final vols = await LKApi.volumes(widget.bookId, 1);
       if (!mounted) return;
       setState(() {
@@ -109,9 +114,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
     try {
       if (LKClient.shared.session.isLoggedIn) {
         await LKApi.toggleShelf(widget.bookId, add);
+        final book = _book;
+        if (book != null) {
+          await LKStore.setLocalShelf(book, add);
+        }
       } else {
         final book = _book;
-        if (book == null) return;
+        if (book == null) {
+          if (mounted) showLkError(context, '书籍信息仍在加载,请稍后再试');
+          return;
+        }
         await LKStore.setLocalShelf(book, add);
       }
       if (mounted) setState(() => _inShelf = add);
@@ -494,9 +506,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   Future<void> _loadVolumeChapters(dynamic v) async {
     final id = v.volumeId as int;
+    final book = _book;
+    if (book == null) return;
     if (_volumeChapters.containsKey(id)) return;
     try {
-      final chs = await LKApi.chapters(_book.bookId, id, 1);
+      final chs = await LKApi.chapters(book.bookId, id, 1);
       if (!mounted) return;
       setState(() => _volumeChapters[id] = chs);
     } catch (e) {
@@ -506,6 +520,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
   }
 
   List<Widget> _chapterRows(dynamic v, List<dynamic>? chs) {
+    final book = _book;
+    if (book == null) return const [];
     if (chs == null) {
       if (_volumeErrors[v.volumeId] != null) {
         return [
@@ -535,8 +551,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
                 context,
                 MaterialPageRoute(
                     builder: (_) => ReaderPage(
-                          bookId: _book.bookId,
-                          bookTitle: _book.title,
+                          bookId: book.bookId,
+                          bookTitle: book.title,
                           chapterId: c.chapterId,
                           chapterTitle: c.title,
                           volumeId: v.volumeId,

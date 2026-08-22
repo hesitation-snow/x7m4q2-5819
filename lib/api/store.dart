@@ -110,7 +110,8 @@ class LKStore {
 
   static Future<void> setLocalShelf(LKBook book, bool added) async {
     if (book.bookId <= 0) return;
-    final books = await localShelf();
+    // localShelf() 在空数据时可能返回 const [],这里必须复制为可变列表。
+    final books = (await localShelf()).toList();
     books.removeWhere((item) => item.bookId == book.bookId);
     if (added) books.insert(0, book);
     await (await SharedPreferences.getInstance()).setString(

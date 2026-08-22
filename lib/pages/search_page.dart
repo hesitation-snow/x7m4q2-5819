@@ -404,12 +404,15 @@ class _ShelfPageState extends State<ShelfPage> {
   bool _hasMore = true;
   bool _loading = false;
   bool _listMode = false;
+  bool _localMode = false;
+  int _loadSerial = 0;
   double _topBarFrac = 1.0;
   static const double _topBarFlex = 56.0;
 
   @override
   void initState() {
     super.initState();
+    _localMode = !LKClient.shared.session.isLoggedIn;
     LKClient.sessionRev.addListener(_onSessionRev);
     LKStore.localShelfRev.addListener(_onLocalShelfRev);
     _loadListMode();
@@ -424,11 +427,31 @@ class _ShelfPageState extends State<ShelfPage> {
   }
 
   void _onSessionRev() {
-    if (mounted) _load();
+    if (!mounted) return;
+    _loadSerial++;
+    setState(() {
+      _localMode = !LKClient.shared.session.isLoggedIn;
+      _items = [];
+      _page = 0;
+      _hasMore = true;
+      _error = null;
+      _loading = false;
+    });
+    _load();
   }
 
   void _onLocalShelfRev() {
-    if (!LKClient.shared.session.isLoggedIn && mounted) _load();
+    if (!_localMode || !mounted) return;
+    // 本地书架不需要重新走完整加载流程;即使首次加载尚未结束,也直接同步最新数据。
+    LKStore.localShelf().then((items) {
+      if (!mounted || !_localMode) return;
+      setState(() {
+        _items = items;
+        _page = 1;
+        _hasMore = false;
+        _error = null;
+      });
+    });
   }
 
   bool _onShelfScroll(ScrollNotification notification) {
@@ -473,11 +496,13 @@ class _ShelfPageState extends State<ShelfPage> {
 
   Future<void> _load({int page = 1, bool append = false}) async {
     if (_loading || append && !_hasMore) return;
+    final requestSerial = ++_loadSerial;
+    final localMode = _localMode || !LKClient.shared.session.isLoggedIn;
     setState(() => _loading = true);
     try {
-      if (!LKClient.shared.session.isLoggedIn) {
+      if (localMode) {
         final items = await LKStore.localShelf();
-        if (!mounted) return;
+        if (!mounted || requestSerial != _loadSerial || !_localMode) return;
         setState(() {
           _items = items;
           _page = 1;
@@ -487,7 +512,7 @@ class _ShelfPageState extends State<ShelfPage> {
         return;
       }
       final items = await LKApi.bookshelf(page);
-      if (!mounted) return;
+      if (!mounted || requestSerial != _loadSerial || _localMode) return;
       setState(() {
         if (append) {
           _items.addAll(items);
@@ -499,10 +524,46 @@ class _ShelfPageState extends State<ShelfPage> {
         _error = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && requestSerial == _loadSerial) {
+        setState(() => _error = e.toString());
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && requestSerial == _loadSerial) {
+        setState(() => _loading = false);
+      }
     }
+  }
+
+  void _toggleShelfSource() {
+    if (!LKClient.shared.session.isLoggedIn) {
+      if (!_localMode) setState(() => _localMode = true);
+      return;
+    }
+    if (_loading) return;
+    _loadSerial++;
+    setState(() {
+      _localMode = !_localMode;
+      _items = [];
+      _page = 0;
+      _hasMore = true;
+      _error = null;
+    });
+    _load();
+  }
+
+  Widget _shelfSourceButton() {
+    return TextButton.icon(
+      onPressed: _loading ? null : _toggleShelfSource,
+      icon: Icon(
+        _localMode ? Icons.smartphone_rounded : Icons.cloud_outlined,
+        size: 18,
+      ),
+      label: Text(_localMode ? '本机书架' : '云端书架'),
+      style: TextButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
+    );
   }
 
   @override
@@ -512,18 +573,18 @@ class _ShelfPageState extends State<ShelfPage> {
             child: Text(_error!, style: const TextStyle(color: Colors.grey)))
         : RefreshIndicator(
             onRefresh: () => _load(),
-            child: _listMode
-                ? _loading && _items.isEmpty
-                    ? ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: [
-                          SizedBox(
-                            height: MediaQuery.sizeOf(context).height * 0.65,
-                            child: const Center(child: LkLoadingIndicator()),
-                          ),
-                        ],
-                      )
-                    : ListView.builder(
+            child: _loading && _items.isEmpty
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.sizeOf(context).height * 0.65,
+                        child: const Center(child: LkLoadingIndicator()),
+                      ),
+                    ],
+                  )
+                : _listMode
+                    ? ListView.builder(
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: EdgeInsets.fromLTRB(8, 4, 8,
                             12 + MediaQuery.of(context).padding.bottom),
@@ -547,36 +608,40 @@ class _ShelfPageState extends State<ShelfPage> {
                           );
                         },
                       )
-                : GridView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: EdgeInsets.fromLTRB(
-                        12, 8, 12, 12 + MediaQuery.of(context).padding.bottom),
-                    gridDelegate: bookGridDelegate(),
-                    itemCount: _items.length + (_hasMore ? 1 : 0),
-                    itemBuilder: (_, i) {
-                      if (i >= _items.length) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) _load(page: _page + 1, append: true);
-                        });
-                        return const LkLoadingIndicator();
-                      }
-                      final b = _items[i];
-                      return BookGridCard(
-                        book: b,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => BookDetailPage(bookId: b.bookId)),
-                        ),
-                      );
-                    },
-                  ),
+                    : GridView.builder(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: EdgeInsets.fromLTRB(12, 8, 12,
+                            12 + MediaQuery.of(context).padding.bottom),
+                        gridDelegate: bookGridDelegate(),
+                        itemCount: _items.length + (_hasMore ? 1 : 0),
+                        itemBuilder: (_, i) {
+                          if (i >= _items.length) {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) {
+                                _load(page: _page + 1, append: true);
+                              }
+                            });
+                            return const LkLoadingIndicator();
+                          }
+                          final b = _items[i];
+                          return BookGridCard(
+                            book: b,
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) =>
+                                      BookDetailPage(bookId: b.bookId)),
+                            ),
+                          );
+                        },
+                      ),
           );
     if (!widget.embedded) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('我的书架'),
+          title: Text(_localMode ? '本机书架' : '我的书架'),
           actions: [
+            _shelfSourceButton(),
             IconButton(
               tooltip: _listMode ? '切换为网格排版' : '切换为单列排版',
               icon: Icon(_listMode
@@ -622,7 +687,7 @@ class _ShelfPageState extends State<ShelfPage> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 8, vertical: 4),
                             child: Text(
-                              '书架',
+                              _localMode ? '本机书架' : '书架',
                               style: TextStyle(
                                 color: Theme.of(context).colorScheme.onSurface,
                                 fontSize: 20,
@@ -631,6 +696,7 @@ class _ShelfPageState extends State<ShelfPage> {
                             ),
                           ),
                           const Spacer(),
+                          _shelfSourceButton(),
                           IconButton(
                             tooltip: _listMode ? '切换为网格排版' : '切换为单列排版',
                             visualDensity: VisualDensity.compact,

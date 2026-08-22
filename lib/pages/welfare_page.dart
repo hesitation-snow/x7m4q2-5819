@@ -46,7 +46,7 @@ class _WelfarePageState extends State<WelfarePage> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceTaskList = false}) async {
     _sleepTimer?.cancel();
     if (mounted) {
       setState(() {
@@ -70,9 +70,11 @@ class _WelfarePageState extends State<WelfarePage> {
         _safeDetail(LKApi.welfareSleepDetail()),
       ]);
       var tasks = _extractTasks(root);
-      if (tasks.isEmpty) {
+      if (forceTaskList || tasks.isEmpty) {
         try {
-          tasks = _extractTasks(_root(await LKApi.welfareTaskList()));
+          final refreshedTasks =
+              _extractTasks(_root(await LKApi.welfareTaskList()));
+          if (refreshedTasks.isNotEmpty) tasks = refreshedTasks;
         } catch (_) {
           // 主页数据已经足够展示时，任务列表接口失败不影响其他模块。
         }
@@ -157,7 +159,7 @@ class _WelfarePageState extends State<WelfarePage> {
       await request();
       if (!mounted) return;
       showLkError(context, '操作成功');
-      await _load();
+      await _load(forceTaskList: action.startsWith('task:'));
     } catch (e) {
       if (mounted) showLkError(context, e);
     } finally {
@@ -299,21 +301,29 @@ class _WelfarePageState extends State<WelfarePage> {
       .toList();
 
   Map<String, dynamic> _sleepDataFor(Map<String, dynamic> data) {
-    // 睡眠详情接口会直接返回任务本身；不要被内部通用 detail 字段覆盖。
+    final nested = _map(data['detail']) ??
+        _map(data['sleep_detail']) ??
+        _map(data['sleepDetail']) ??
+        _map(data['sleep']) ??
+        _map(data['result']) ??
+        _map(data['payload']) ??
+        _map(data['data']) ??
+        const <String, dynamic>{};
+    // 外层是任务汇总状态,detail 才是睡眠任务的实际生命周期状态。
+    // 例如外层可能为 in_progress,但 detail.status=idle,此时仍应允许开始睡觉。
+    if (nested.isNotEmpty &&
+        (nested.containsKey('status') ||
+            nested.containsKey('sleep_start_at') ||
+            nested.containsKey('remaining_seconds'))) {
+      return {...data, ...nested};
+    }
     if (data.containsKey('task_key') ||
         data.containsKey('sleep_start_at') ||
         data.containsKey('claim_at_text') ||
         data.containsKey('button_text')) {
       return data;
     }
-    return _map(data['sleep_detail']) ??
-        _map(data['sleepDetail']) ??
-        _map(data['sleep']) ??
-        _map(data['detail']) ??
-        _map(data['result']) ??
-        _map(data['payload']) ??
-        _map(data['data']) ??
-        data;
+    return nested;
   }
 
   Map<String, dynamic> get _sleepData => _sleepDataFor(_sleep);

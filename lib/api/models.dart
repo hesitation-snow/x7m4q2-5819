@@ -671,6 +671,26 @@ class LKBook {
       };
 }
 
+String bookStatusLabel(LKBook book) {
+  if (book.isCompleted) return '完结';
+  final status = book.serialStatus.trim().toLowerCase();
+  if (status.isEmpty ||
+      const {
+        'serial',
+        'serializing',
+        'ongoing',
+        'in_progress',
+        'publishing',
+      }.contains(status)) {
+    return '连载';
+  }
+  if (const {'complete', 'completed', 'finished', 'done', 'ended', 'end'}
+      .contains(status)) {
+    return '完结';
+  }
+  return book.serialStatus;
+}
+
 class LKVolume {
   final int volumeId;
   final String title;
