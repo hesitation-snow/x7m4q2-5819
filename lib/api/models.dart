@@ -31,6 +31,18 @@ int? _jsonIntOrNull(dynamic value) {
   return int.tryParse(value.toString());
 }
 
+String dynamicEventLabel(String value) {
+  final normalized =
+      value.trim().toLowerCase().replaceAll(RegExp(r'[\s-]+'), '_');
+  if (normalized.endsWith('book_created')) return '新作品';
+  if (normalized.endsWith('volume_created')) return '更新了新卷';
+  if (normalized.endsWith('chapter_published')) return '更新了新章节';
+  if (normalized.contains('book')) return '作品';
+  if (normalized.endsWith('short_post_published')) return '动态';
+  if (normalized.contains('repost')) return '转发';
+  return normalized.replaceAll('_', ' ');
+}
+
 class LKUser {
   final int uid;
   final String nickname;
@@ -924,8 +936,11 @@ class LKEmojiGroup {
 
 class LKComment {
   final int commentId;
+  final int rootCommentId;
+  final int replyToCommentId;
   final int userUid;
   final String nickname;
+  final String replyToNickname;
   final String avatar;
   final String content;
   final int likeCount;
@@ -933,10 +948,14 @@ class LKComment {
   final bool liked;
   final List<LKDynamicMedia> media;
   final int replyCount;
+  final List<LKComment> replies;
   LKComment({
     this.commentId = 0,
+    this.rootCommentId = 0,
+    this.replyToCommentId = 0,
     this.userUid = 0,
     this.nickname = '',
+    this.replyToNickname = '',
     this.avatar = '',
     this.content = '',
     this.likeCount = 0,
@@ -944,14 +963,38 @@ class LKComment {
     this.liked = false,
     this.media = const [],
     this.replyCount = 0,
+    this.replies = const [],
   });
-  factory LKComment.fromJson(Map<String, dynamic> j) {
-    final author = (j['author'] as Map<String, dynamic>?) ??
-        (j['user'] as Map<String, dynamic>?) ??
+
+  static List<LKComment> _parseReplies(dynamic value) {
+    dynamic raw = value;
+    if (raw is Map) {
+      raw = raw['list'] ?? raw['items'] ?? raw['replies'];
+    }
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => LKComment.fromJson(Map<String, dynamic>.from(e),
+            parseReplies: false))
+        .toList();
+  }
+
+  factory LKComment.fromJson(Map<String, dynamic> j,
+      {bool parseReplies = true}) {
+    final author = _jsonMap(j['author']) ??
+        _jsonMap(j['user']) ??
         const <String, dynamic>{};
-    final inter = (j['interaction_state'] as Map<String, dynamic>?) ??
+    final replyAuthor = _jsonMap(j['reply_to_user']) ??
+        _jsonMap(j['reply_author']) ??
+        _jsonMap(j['replyToUser']) ??
         const <String, dynamic>{};
-    dynamic rawMedia = j['media'];
+    final replyTarget = _jsonMap(j['reply_to']) ??
+        _jsonMap(j['replyTo']) ??
+        const <String, dynamic>{};
+    final inter = _jsonMap(j['interaction_state']) ?? const <String, dynamic>{};
+    final stats = _jsonMap(j['stats']) ?? const <String, dynamic>{};
+    dynamic rawMedia =
+        j['media_json'] ?? j['media'] ?? j['images'] ?? j['image_list'];
     if (rawMedia is String && rawMedia.isNotEmpty) {
       try {
         rawMedia = jsonDecode(rawMedia);
@@ -966,8 +1009,18 @@ class LKComment {
             .where((e) => e.url.isNotEmpty)
             .toList()
         : const <LKDynamicMedia>[];
+    final rawReplies =
+        j['replies'] ?? j['reply_list'] ?? j['reply_preview'] ?? j['children'];
     return LKComment(
-      commentId: (j['comment_id'] as num?)?.toInt() ?? 0,
+      commentId:
+          _jsonInt(j['comment_id'] ?? j['tid'] ?? j['commentId'] ?? j['id']),
+      rootCommentId: _jsonInt(j['root_comment_id'] ?? j['rootCommentId']),
+      replyToCommentId: _jsonInt(j['reply_comment_id'] ??
+          j['replyCommentId'] ??
+          j['parent_comment_id'] ??
+          j['parentCommentId'] ??
+          replyTarget['comment_id'] ??
+          replyTarget['id']),
       userUid: _jsonInt(author['uid'] ??
           author['user_id'] ??
           author['id'] ??
@@ -976,16 +1029,32 @@ class LKComment {
           j['uid'] ??
           j['user_id']),
       nickname: (author['nickname'] ?? j['nickname'] ?? '').toString(),
+      replyToNickname: (replyAuthor['nickname'] ??
+              j['reply_to_nickname'] ??
+              j['replyToNickname'] ??
+              replyTarget['nickname'] ??
+              '')
+          .toString(),
       avatar: (author['avatar'] ?? j['avatar'] ?? '').toString(),
       content:
           (j['content'] as String?) ?? (j['content_text'] as String?) ?? '',
-      likeCount: (j['like_count'] as num?)?.toInt() ?? 0,
+      likeCount: _jsonInt(j['like_count'] ??
+          j['likeCount'] ??
+          j['likes'] ??
+          stats['like_count']),
       time:
           (j['publish_time'] as String?) ?? (j['created_at'] as String?) ?? '',
-      liked: (j['liked'] as num?)?.toInt() == 1 ||
-          (inter['liked'] as num?)?.toInt() == 1,
+      liked: _jsonFlag(j['liked'] ?? j['is_liked']) ||
+          _jsonFlag(inter['liked'] ?? inter['is_liked']),
       media: media,
-      replyCount: _jsonInt(j['reply_count'] ?? j['replyCount']),
+      replyCount: _jsonInt(j['reply_count'] ??
+          j['replyCount'] ??
+          j['replies_count'] ??
+          j['repliesCount'] ??
+          stats['reply_count'] ??
+          stats['replies_count'] ??
+          (rawReplies is List ? rawReplies.length : 0)),
+      replies: parseReplies ? _parseReplies(rawReplies) : const [],
     );
   }
 }

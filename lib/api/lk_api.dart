@@ -32,12 +32,10 @@ class LKApi {
 
   static Future<bool> validateSession() async {
     if (!client.session.isLoggedIn) return false;
+    final securityKey = client.session.securityKey;
     final d = await client.post('/api/bff/auth-session-v1', client.authed());
     final ok = (d['logged_in'] as num?)?.toInt() == 1;
-    if (!ok) {
-      client.session.clear();
-      LKClient.sessionRev.value++;
-    }
+    if (!ok) await client.expireSessionIfCurrent(securityKey);
     return ok;
   }
 
@@ -355,10 +353,21 @@ class LKApi {
             'parent_comment_id': 0,
           }));
 
-  static List<LKComment> _commentList(Map<String, dynamic> d) =>
-      ((d['list'] as List?) ?? const [])
-          .map((e) => LKComment.fromJson(e as Map<String, dynamic>))
-          .toList();
+  static List<LKComment> _commentList(Map<String, dynamic> d) {
+    dynamic raw = d['list'] ??
+        d['comments'] ??
+        d['replies'] ??
+        d['reply_list'] ??
+        d['items'];
+    if (raw is Map) {
+      raw = raw['list'] ?? raw['comments'] ?? raw['replies'] ?? raw['items'];
+    }
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => LKComment.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
 
   static Map<String, dynamic> _mediaJson(LKDynamicMedia media) => {
         'url': media.url,
@@ -495,16 +504,22 @@ class LKApi {
         .items;
   }
 
-  static Future<List<LKComment>> dynamicComments(int dynamicId) async {
+  static Future<List<LKComment>> dynamicComments(int dynamicId,
+      {int commentId = 0,
+      String cursor = '',
+      int page = 1,
+      int pageSize = 20}) async {
     final d = await client.post(
         '/api/dynamic/get-comments-v1',
         client.authed({
           'dynamic_id': dynamicId,
-          'comment_id': 0,
-          'cursor': '',
+          // comment_id=0 loads root comments; a root id loads its replies.
+          'comment_id': commentId,
+          'cursor': cursor,
+          'page': page,
           'sort': 'latest',
-          'page_size': 20,
-          'pageSize': 20,
+          'page_size': pageSize,
+          'pageSize': pageSize,
         }));
     return _commentList(d);
   }
@@ -737,7 +752,7 @@ class LKApi {
 
   /// 公开用户主页资料与公开发布(只读)
   static Future<LKPublicUserPage> publicUserHome(int uid, int page,
-      {int pageSize = 20}) async {
+      {int pageSize = 20, bool forceRefresh = false}) async {
     final d = await client.post(
         '/api/bff/public-user-home-v1',
         client.authed({
@@ -746,7 +761,8 @@ class LKApi {
           'pageSize': LKClient.clampPageSize(pageSize),
         }),
         cacheKey: 'public_user_${client.session.uid}-$uid-$page-$pageSize',
-        cacheTtl: const Duration(minutes: 5));
+        cacheTtl: const Duration(minutes: 5),
+        forceRefresh: forceRefresh);
     return LKPublicUserPage.fromJson(d,
         fallbackPage: page, fallbackPageSize: pageSize);
   }
@@ -792,9 +808,11 @@ class LKApi {
     return (profile?['coin'] as num?)?.toInt() ?? 0;
   }
 
-  static Future<void> toggleFollow(int uid, bool follow) => client.post(
-      '/api/bff/toggle-user-follow-v1',
-      client.authed({'uid': uid, 'act': follow ? 'follow' : 'unfollow'}));
+  static Future<void> toggleFollow(int uid, bool follow) async {
+    await client.post('/api/bff/toggle-user-follow-v1',
+        client.authed({'uid': uid, 'act': follow ? 'follow' : 'unfollow'}));
+    client.invalidateCachePrefix('public_user_${client.session.uid}-$uid-');
+  }
 
   static Future<List<LKMedal>> myMedals() async {
     final d = await client.post('/api/bff/my-medals-v1', client.authed());

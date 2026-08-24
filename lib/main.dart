@@ -3,14 +3,35 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'api/lk_client.dart';
 import 'api/store.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 import 'services/anonymous_telemetry.dart';
 
+final _rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
+void _showSessionExpiredNotice() {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    final messenger = _rootScaffoldMessengerKey.currentState;
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('登录状态已失效，已自动退出，请重新登录'),
+          duration: Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  });
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await LKStore.load();
+  LKClient.sessionExpiredHandler = LKStore.clear;
+  LKClient.sessionExpiredRev.addListener(_showSessionExpiredNotice);
   runApp(const LKApp());
   // 统计请求独立于界面初始化：网络异常不会影响应用正常打开。
   unawaited(AnonymousTelemetry.reportFirstActivation());
@@ -109,6 +130,7 @@ class LKApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: LKStore.themeMode,
       builder: (_, mode, __) => MaterialApp(
+        scaffoldMessengerKey: _rootScaffoldMessengerKey,
         title: 'Yomiru',
         debugShowCheckedModeBanner: false,
         theme: _buildTheme(Brightness.light),

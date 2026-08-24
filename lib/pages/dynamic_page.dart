@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
@@ -13,6 +15,12 @@ import 'dynamic_publish_page.dart';
 import 'media_viewer_page.dart';
 import 'search_page.dart';
 import 'user_profile_page.dart';
+
+/// 手机保持单列；平板按可用逻辑尺寸显示双列，宽屏平板横屏显示三列。
+int dynamicFeedColumnCount(Size viewport) {
+  if (viewport.shortestSide < 600 || viewport.width < 560) return 1;
+  return viewport.width >= 1100 ? 3 : 2;
+}
 
 /// 动态广场(本站动态 / 关注动态)
 class DynamicPage extends StatefulWidget {
@@ -36,7 +44,8 @@ class _DynamicPageState extends State<DynamicPage> {
   int _requestSerial = 0;
   Map<int, List<LKMedal>> _globalMedals = {};
   int _unreadCount = 0;
-  double _topBarFrac = 1.0;
+  final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
+  List<LKDynamicItem> _visibleItems = const [];
   // 与主页保持同一伸缩高度,确保筛选胶囊完整显示并让内容紧贴顶栏。
   static const double _topBarFlex = 100.0;
 
@@ -60,7 +69,7 @@ class _DynamicPageState extends State<DynamicPage> {
     return b.dynamicId.compareTo(a.dynamicId);
   }
 
-  List<LKDynamicItem> get _visibleItems {
+  void _rebuildVisibleItems() {
     final visible = _contentFilter == 'book'
         ? _items.where((item) => item.isWorkPost).toList()
         : [..._items];
@@ -69,15 +78,43 @@ class _DynamicPageState extends State<DynamicPage> {
       final order = _compareDynamicItems(a.value, b.value);
       return order == 0 ? a.key.compareTo(b.key) : order;
     });
-    return indexed.map((entry) => entry.value).toList();
+    _visibleItems = indexed.map((entry) => entry.value).toList();
   }
 
   @override
   void initState() {
     super.initState();
+    LKClient.sessionRev.addListener(_onSessionChanged);
     _loadGlobalMedals();
     _loadUnread();
     _load();
+  }
+
+  @override
+  void dispose() {
+    LKClient.sessionRev.removeListener(_onSessionChanged);
+    _topBarFrac.dispose();
+    super.dispose();
+  }
+
+  void _onSessionChanged() {
+    if (!mounted) return;
+    _requestSerial++;
+    setState(() {
+      if (!LKClient.shared.session.isLoggedIn && _feedTab == 'following') {
+        _feedTab = 'mixed';
+      }
+      _items = [];
+      _visibleItems = const [];
+      _cursor = '';
+      _page = 1;
+      _hasMore = true;
+      _loading = false;
+      _unreadCount = 0;
+      _error = null;
+    });
+    _load();
+    _loadUnread();
   }
 
   Future<void> _loadUnread() async {
@@ -147,14 +184,13 @@ class _DynamicPageState extends State<DynamicPage> {
                 result.items.isEmpty &&
                 result.cursor == previousCursor);
         _error = null;
+        if (medalUpdates.isNotEmpty) {
+          _globalMedals = {..._globalMedals, ...medalUpdates};
+        }
+        _rebuildVisibleItems();
       });
       if (medalUpdates.isNotEmpty) {
-        await LKStore.cacheGlobalMedals(medalUpdates);
-        if (mounted) {
-          setState(() {
-            _globalMedals = {..._globalMedals, ...medalUpdates};
-          });
-        }
+        unawaited(LKStore.cacheGlobalMedals(medalUpdates));
       }
     } catch (e) {
       if (mounted && requestSerial == _requestSerial) {
@@ -178,8 +214,9 @@ class _DynamicPageState extends State<DynamicPage> {
       _hasMore = true;
       _error = null;
       _loading = false;
-      _topBarFrac = 1.0;
+      _rebuildVisibleItems();
     });
+    _topBarFrac.value = 1.0;
     _load();
   }
 
@@ -187,8 +224,9 @@ class _DynamicPageState extends State<DynamicPage> {
     if (_contentFilter == filter) return;
     setState(() {
       _contentFilter = filter;
-      _topBarFrac = 1.0;
+      _rebuildVisibleItems();
     });
+    _topBarFrac.value = 1.0;
   }
 
   List<LKMedal> _medalsFor(LKDynamicItem item) => item.authorMedals.isNotEmpty
@@ -250,52 +288,55 @@ class _DynamicPageState extends State<DynamicPage> {
 
   /// 与主页相同的让渡式收合:顶栏吸收手指滚动距离,内容不会突然跳动。
   Widget _scrollingHeader() {
-    return ClipRect(
-      child: SizedBox(
-        height: _topBarFlex * _topBarFrac,
-        child: Stack(
-          clipBehavior: Clip.hardEdge,
-          children: [
-            Positioned(
-              top: -_topBarFlex * (1.0 - _topBarFrac),
-              left: 0,
-              right: 0,
-              height: _topBarFlex,
-              child: ColoredBox(
-                color: Theme.of(context).scaffoldBackgroundColor,
-                child: SingleChildScrollView(
-                  physics: const NeverScrollableScrollPhysics(),
-                  child: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-                        child: Row(children: [
-                          _dynamicTitle(),
-                          const Spacer(),
-                          if (LKClient.shared.session.isLoggedIn)
-                            IconButton(
-                              tooltip: '发动态',
-                              visualDensity: VisualDensity.compact,
-                              icon: const Icon(Icons.edit_note_rounded),
-                              onPressed: () async {
-                                final published = await Navigator.push<bool>(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) =>
-                                          const DynamicPublishPage()),
-                                );
-                                if (published == true && mounted) _load();
-                              },
-                            ),
-                        ]),
-                      ),
-                      _feedControls(),
-                    ],
+    return ValueListenableBuilder<double>(
+      valueListenable: _topBarFrac,
+      builder: (context, topBarFrac, _) => ClipRect(
+        child: SizedBox(
+          height: _topBarFlex * topBarFrac,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Positioned(
+                top: -_topBarFlex * (1.0 - topBarFrac),
+                left: 0,
+                right: 0,
+                height: _topBarFlex,
+                child: ColoredBox(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  child: SingleChildScrollView(
+                    physics: const NeverScrollableScrollPhysics(),
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+                          child: Row(children: [
+                            _dynamicTitle(),
+                            const Spacer(),
+                            if (LKClient.shared.session.isLoggedIn)
+                              IconButton(
+                                tooltip: '发动态',
+                                visualDensity: VisualDensity.compact,
+                                icon: const Icon(Icons.edit_note_rounded),
+                                onPressed: () async {
+                                  final published = await Navigator.push<bool>(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) =>
+                                            const DynamicPublishPage()),
+                                  );
+                                  if (published == true && mounted) _load();
+                                },
+                              ),
+                          ]),
+                        ),
+                        _feedControls(),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -328,6 +369,8 @@ class _DynamicPageState extends State<DynamicPage> {
         imageUrl: media.url,
         width: width,
         height: height,
+        memCacheWidth:
+            width == null ? null : imageCacheDimension(context, width),
         fit: BoxFit.cover,
         placeholder: (_, __) => ColoredBox(
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -384,26 +427,28 @@ class _DynamicPageState extends State<DynamicPage> {
         notification.dragDetails != null) {
       final delta = notification.scrollDelta ?? 0.0;
       if (delta.abs() < 0.5) return false;
-      final next = (_topBarFrac - delta / _topBarFlex).clamp(0.0, 1.0);
-      final diff = next - _topBarFrac;
+      final current = _topBarFrac.value;
+      final next = (current - delta / _topBarFlex).clamp(0.0, 1.0);
+      final diff = next - current;
       if (diff == 0 || !mounted) return false;
-      setState(() => _topBarFrac = next);
+      _topBarFrac.value = next;
       // 顶栏吸收的位移从列表滚动位置中抵消,保持与主页一样跟手。
       Scrollable.of(notification.context!)
           .position
           .correctBy(diff * _topBarFlex);
     } else if (notification is OverscrollNotification) {
+      final current = _topBarFrac.value;
       final next =
-          (_topBarFrac - notification.overscroll / _topBarFlex).clamp(0.0, 1.0);
-      if (next != _topBarFrac && mounted) {
-        setState(() => _topBarFrac = next);
-      }
+          (current - notification.overscroll / _topBarFlex).clamp(0.0, 1.0);
+      if (next != current && mounted) _topBarFrac.value = next;
     }
     return false;
   }
 
   Widget _feedBody() {
     final visibleItems = _visibleItems;
+    final columns = dynamicFeedColumnCount(MediaQuery.sizeOf(context));
+    final rowCount = (visibleItems.length + columns - 1) ~/ columns;
     return NotificationListener<ScrollNotification>(
       onNotification: _onFeedScroll,
       child: RefreshIndicator(
@@ -425,10 +470,10 @@ class _DynamicPageState extends State<DynamicPage> {
                         _contentFilter == 'book' ? '暂无作品发布动态' : '暂无动态')
                     : ListView.separated(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount: visibleItems.length + (_hasMore ? 1 : 0),
+                        itemCount: rowCount + (_hasMore ? 1 : 0),
                         separatorBuilder: (_, __) => const SizedBox(height: 2),
                         itemBuilder: (_, i) {
-                          if (i == visibleItems.length) {
+                          if (i == rowCount) {
                             if (_loading) {
                               return const Padding(
                                 padding: EdgeInsets.all(16),
@@ -455,195 +500,220 @@ class _DynamicPageState extends State<DynamicPage> {
                               child: Center(child: LkLoadingIndicator()),
                             );
                           }
-                          final d = visibleItems[i];
-                          final hasBook =
-                              d.bookId > 0 && d.bookTitle.trim().isNotEmpty;
-                          final medals = _medalsFor(d);
-                          return Padding(
-                            padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
-                            child: Card(
-                              margin: EdgeInsets.zero,
-                              clipBehavior: Clip.antiAlias,
-                              child: InkWell(
-                                onTap: d.dynamicId > 0
-                                    ? () => Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) => CommentsPage(
-                                              dynamicId: d.dynamicId,
-                                              dynamicPreview: d,
-                                            ),
-                                          ),
-                                        )
-                                    : null,
-                                onLongPress: () => _actions(d),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            GestureDetector(
-                                              onTap: d.authorUid > 0
-                                                  ? () => openUserProfile(
-                                                      context, d.authorUid)
-                                                  : null,
-                                              child: CircleAvatar(
-                                                  radius: 16,
-                                                  backgroundImage: d
-                                                          .avatar.isNotEmpty
-                                                      ? YomiruAvatarCache
-                                                          .provider(d.avatar)
-                                                      : null),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Expanded(
-                                              child: Wrap(
-                                                spacing: 5,
-                                                runSpacing: 3,
-                                                crossAxisAlignment:
-                                                    WrapCrossAlignment.center,
-                                                children: [
-                                                  GestureDetector(
-                                                    onTap: d.authorUid > 0
-                                                        ? () => openUserProfile(
-                                                            context,
-                                                            d.authorUid)
-                                                        : null,
-                                                    child: Text(
-                                                        d.nickname.isEmpty
-                                                            ? '用户 ${d.authorUid}'
-                                                            : d.nickname,
-                                                        style: TextStyle(
-                                                            color: Colors.indigo
-                                                                .shade400,
-                                                            fontSize: 13)),
-                                                  ),
-                                                  ...medals
-                                                      .take(5)
-                                                      .map((medal) => Tooltip(
-                                                            message: medal.name,
-                                                            child:
-                                                                GestureDetector(
-                                                              onTap: () =>
-                                                                  ScaffoldMessenger.of(
-                                                                          context)
-                                                                      .showSnackBar(
-                                                                SnackBar(
-                                                                    content: Text(
-                                                                        medal
-                                                                            .name)),
-                                                              ),
-                                                              child:
-                                                                  CircleAvatar(
-                                                                radius: 10,
-                                                                backgroundColor: Theme.of(
-                                                                        context)
-                                                                    .colorScheme
-                                                                    .surfaceContainerHighest,
-                                                                backgroundImage:
-                                                                    YomiruAvatarCache
-                                                                        .provider(
-                                                                            medal.image),
-                                                              ),
-                                                            ),
-                                                          )),
-                                                  if (d.eventType.isNotEmpty)
-                                                    Container(
-                                                      padding: const EdgeInsets
-                                                          .symmetric(
-                                                          horizontal: 6,
-                                                          vertical: 2),
-                                                      decoration: BoxDecoration(
-                                                        color: Theme.of(context)
-                                                                    .brightness ==
-                                                                Brightness.dark
-                                                            ? Colors
-                                                                .grey.shade800
-                                                            : Colors
-                                                                .grey.shade300,
-                                                        borderRadius:
-                                                            BorderRadius
-                                                                .circular(4),
-                                                      ),
-                                                      child: Text(
-                                                          _eventLabel(
-                                                              d.eventType),
-                                                          style:
-                                                              const TextStyle(
-                                                                  fontSize: 10,
-                                                                  color: Colors
-                                                                      .white)),
-                                                    ),
-                                                ],
-                                              ),
-                                            ),
-                                          ]),
-                                      const SizedBox(height: 6),
-                                      Text(d.summary),
-                                      if (hasBook)
-                                        InkWell(
-                                          onTap: () => Navigator.push(
+                          Widget buildCard(int itemIndex) {
+                            final d = visibleItems[itemIndex];
+                            final hasBook =
+                                d.bookId > 0 && d.bookTitle.trim().isNotEmpty;
+                            final medals = _medalsFor(d);
+                            return Padding(
+                              padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+                              child: Card(
+                                margin: EdgeInsets.zero,
+                                clipBehavior: Clip.antiAlias,
+                                child: InkWell(
+                                  onTap: d.dynamicId > 0
+                                      ? () => Navigator.push(
                                             context,
                                             MaterialPageRoute(
-                                                builder: (_) => BookDetailPage(
-                                                    bookId: d.bookId)),
-                                          ),
-                                          child: Container(
-                                            margin:
-                                                const EdgeInsets.only(top: 8),
-                                            padding: const EdgeInsets.all(8),
-                                            decoration: BoxDecoration(
-                                              color: Theme.of(context)
-                                                          .brightness ==
-                                                      Brightness.dark
-                                                  ? const Color(0xFF2A2C33)
-                                                  : Colors.grey.shade100,
-                                              borderRadius:
-                                                  BorderRadius.circular(6),
+                                              builder: (_) => CommentsPage(
+                                                dynamicId: d.dynamicId,
+                                                dynamicPreview: d,
+                                              ),
                                             ),
-                                            child: Row(children: [
-                                              CoverImage(
-                                                  url: d.bookCover,
-                                                  width: 40,
-                                                  height: 53),
-                                              const SizedBox(width: 10),
+                                          )
+                                      : null,
+                                  onLongPress: () => _actions(d),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              GestureDetector(
+                                                onTap: d.authorUid > 0
+                                                    ? () => openUserProfile(
+                                                        context, d.authorUid)
+                                                    : null,
+                                                child: CircleAvatar(
+                                                    radius: 16,
+                                                    backgroundImage: d
+                                                            .avatar.isNotEmpty
+                                                        ? YomiruAvatarCache
+                                                            .provider(d.avatar)
+                                                        : null),
+                                              ),
+                                              const SizedBox(width: 8),
                                               Expanded(
-                                                child: Text(d.bookTitle,
-                                                    maxLines: 2,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                    style: const TextStyle(
-                                                        fontSize: 13,
-                                                        fontWeight:
-                                                            FontWeight.w600)),
+                                                child: Wrap(
+                                                  spacing: 5,
+                                                  runSpacing: 3,
+                                                  crossAxisAlignment:
+                                                      WrapCrossAlignment.center,
+                                                  children: [
+                                                    GestureDetector(
+                                                      onTap: d.authorUid > 0
+                                                          ? () =>
+                                                              openUserProfile(
+                                                                  context,
+                                                                  d.authorUid)
+                                                          : null,
+                                                      child: Text(
+                                                          d.nickname.isEmpty
+                                                              ? '用户 ${d.authorUid}'
+                                                              : d.nickname,
+                                                          style: TextStyle(
+                                                              color: Colors
+                                                                  .indigo
+                                                                  .shade400,
+                                                              fontSize: 13)),
+                                                    ),
+                                                    ...medals
+                                                        .take(5)
+                                                        .map((medal) => Tooltip(
+                                                              message:
+                                                                  medal.name,
+                                                              child:
+                                                                  GestureDetector(
+                                                                onTap: () =>
+                                                                    ScaffoldMessenger.of(
+                                                                            context)
+                                                                        .showSnackBar(
+                                                                  SnackBar(
+                                                                      content: Text(
+                                                                          medal
+                                                                              .name)),
+                                                                ),
+                                                                child:
+                                                                    CircleAvatar(
+                                                                  radius: 10,
+                                                                  backgroundColor: Theme.of(
+                                                                          context)
+                                                                      .colorScheme
+                                                                      .surfaceContainerHighest,
+                                                                  backgroundImage:
+                                                                      YomiruAvatarCache
+                                                                          .provider(
+                                                                              medal.image),
+                                                                ),
+                                                              ),
+                                                            )),
+                                                    if (d.eventType.isNotEmpty)
+                                                      Container(
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .symmetric(
+                                                                horizontal: 6,
+                                                                vertical: 2),
+                                                        decoration:
+                                                            BoxDecoration(
+                                                          color: Theme.of(context)
+                                                                      .brightness ==
+                                                                  Brightness
+                                                                      .dark
+                                                              ? Colors
+                                                                  .grey.shade800
+                                                              : Colors.grey
+                                                                  .shade300,
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(4),
+                                                        ),
+                                                        child: Text(
+                                                            _eventLabel(
+                                                                d.eventType),
+                                                            style:
+                                                                const TextStyle(
+                                                                    fontSize:
+                                                                        10,
+                                                                    color: Colors
+                                                                        .white)),
+                                                      ),
+                                                  ],
+                                                ),
                                               ),
                                             ]),
+                                        const SizedBox(height: 6),
+                                        Text(d.summary),
+                                        if (hasBook)
+                                          InkWell(
+                                            onTap: () => Navigator.push(
+                                              context,
+                                              MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      BookDetailPage(
+                                                          bookId: d.bookId)),
+                                            ),
+                                            child: Container(
+                                              margin:
+                                                  const EdgeInsets.only(top: 8),
+                                              padding: const EdgeInsets.all(8),
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(context)
+                                                            .brightness ==
+                                                        Brightness.dark
+                                                    ? const Color(0xFF2A2C33)
+                                                    : Colors.grey.shade100,
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                              ),
+                                              child: Row(children: [
+                                                CoverImage(
+                                                    url: d.bookCover,
+                                                    width: 40,
+                                                    height: 53),
+                                                const SizedBox(width: 10),
+                                                Expanded(
+                                                  child: Text(d.bookTitle,
+                                                      maxLines: 2,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                          fontSize: 13,
+                                                          fontWeight:
+                                                              FontWeight.w600)),
+                                                ),
+                                              ]),
+                                            ),
                                           ),
-                                        ),
-                                      _mediaGallery(d.media),
-                                      const SizedBox(height: 6),
-                                      Row(children: [
-                                        Text(
-                                            '赞 ${d.likeCount} · 评论 ${d.commentCount}',
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey.shade500)),
-                                        const Spacer(),
-                                        Text(_shortTime(d.time),
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey.shade400)),
-                                      ]),
-                                    ],
+                                        _mediaGallery(d.media),
+                                        const SizedBox(height: 6),
+                                        Row(children: [
+                                          Text(
+                                              '赞 ${d.likeCount} · 评论 ${d.commentCount}',
+                                              style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey.shade500)),
+                                          const Spacer(),
+                                          Text(_shortTime(d.time),
+                                              style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: Colors.grey.shade400)),
+                                        ]),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
+                            );
+                          }
+
+                          if (columns == 1) return buildCard(i);
+                          final firstItem = i * columns;
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              for (var column = 0; column < columns; column++)
+                                Expanded(
+                                  child:
+                                      firstItem + column < visibleItems.length
+                                          ? buildCard(firstItem + column)
+                                          : const SizedBox.shrink(),
+                                ),
+                            ],
                           );
                         },
                       ),
@@ -671,11 +741,7 @@ class _DynamicPageState extends State<DynamicPage> {
   }
 
   String _eventLabel(String e) {
-    if (e.endsWith('book_created')) return '新作品';
-    if (e.contains('book')) return '作品';
-    if (e.endsWith('short_post_published')) return '动态';
-    if (e.contains('repost')) return '转发';
-    return e.replaceAll('_', ' ');
+    return dynamicEventLabel(e);
   }
 
   DateTime? _parseDynamicTime(String raw) {

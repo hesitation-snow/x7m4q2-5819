@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,8 +13,13 @@ import 'models.dart';
 class ReaderContentCache {
   static const _directoryName = 'reader_content_cache';
   static const _maxEntries = 50;
+  static Future<Directory>? _directoryFuture;
+  static int _writesSincePrune = 0;
 
-  static Future<Directory> _directory() async {
+  static Future<Directory> _directory() =>
+      _directoryFuture ??= _createDirectory();
+
+  static Future<Directory> _createDirectory() async {
     final root = await getApplicationSupportDirectory();
     final dir =
         Directory('${root.path}${Platform.pathSeparator}$_directoryName');
@@ -41,15 +47,22 @@ class ReaderContentCache {
         return null;
       }
       // 访问时更新时间,让清理策略保留最近阅读的正文。
-      await file.setLastModified(DateTime.now());
+      unawaited(file.setLastModified(DateTime.now()).catchError((_) => file));
       return detail;
     } catch (_) {
       return null;
     }
   }
 
-  static Future<bool> contains(int bookId, int chapterId) async =>
-      await read(bookId, chapterId) != null;
+  /// 预取仅需判断章节文件是否存在,无需再次解码整章 JSON。
+  static Future<bool> contains(int bookId, int chapterId) async {
+    if (bookId <= 0 || chapterId <= 0) return false;
+    try {
+      return await _file(await _directory(), chapterId).exists();
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// 只缓存公开内容或已经解锁的付费章节,避免把未授权试读内容持久化。
   static Future<void> write(int bookId, LKChapterDetail detail) async {
@@ -72,9 +85,12 @@ class ReaderContentCache {
           'saved_at': DateTime.now().toUtc().toIso8601String(),
           'detail': detail.toCacheJson(),
         }),
-        flush: true,
       );
-      await _prune(file.parent);
+      _writesSincePrune++;
+      if (_writesSincePrune >= 5) {
+        _writesSincePrune = 0;
+        unawaited(_pruneSafely(file.parent));
+      }
     } catch (_) {
       // 缓存失败不应影响正常在线阅读。
     }
@@ -93,8 +109,23 @@ class ReaderContentCache {
     }
   }
 
+  static Future<int> sizeBytes() async {
+    try {
+      final dir = await _directory();
+      var total = 0;
+      await for (final entity in dir.list()) {
+        if (entity is File) total += await entity.length();
+      }
+      return total;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   static Future<void> clear() async {
     try {
+      _directoryFuture = null;
+      _writesSincePrune = 0;
       final root = await getApplicationSupportDirectory();
       final dir =
           Directory('${root.path}${Platform.pathSeparator}$_directoryName');
@@ -123,6 +154,14 @@ class ReaderContentCache {
       try {
         await entry.$1.delete();
       } catch (_) {}
+    }
+  }
+
+  static Future<void> _pruneSafely(Directory dir) async {
+    try {
+      await _prune(dir);
+    } catch (_) {
+      // 后台清理失败不影响正文缓存与阅读。
     }
   }
 }

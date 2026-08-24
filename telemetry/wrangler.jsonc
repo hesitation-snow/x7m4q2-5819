@@ -15,5 +15,8 @@
       "pattern": "telemetry.yutro.uk",
       "custom_domain": true
     }
-  ]
+  ],
+  "triggers": {
+    "crons": ["0 16 * * *"]
+  }
 }

@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
-import '../api/models.dart';
 import '../api/reader_cache.dart';
 import '../api/store.dart';
+import '../services/app_cache.dart';
+import '../services/app_update_service.dart';
 import '../widgets/common.dart';
+import 'feedback_page.dart';
 
 /// 私信聊天
 class DMChatPage extends StatefulWidget {
@@ -131,25 +132,37 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   int _readerCacheCount = 0;
+  int? _cacheBytes;
+  bool _clearingCache = false;
   bool _checkingUpdate = false;
 
   @override
   void initState() {
     super.initState();
-    _loadReaderCacheCount();
+    _loadCacheUsage();
   }
 
-  Future<void> _loadReaderCacheCount() async {
-    final count = await ReaderContentCache.count();
-    if (mounted) setState(() => _readerCacheCount = count);
+  Future<void> _loadCacheUsage() async {
+    final values = await Future.wait<int>([
+      ReaderContentCache.count(),
+      YomiruAppCache.sizeBytes(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _readerCacheCount = values[0];
+      _cacheBytes = values[1];
+    });
   }
 
-  Future<void> _clearReaderCache() async {
+  Future<void> _clearAllCaches() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        title: const Text('清除正文缓存'),
-        content: Text('将删除本机已缓存的 $_readerCacheCount 章正文，不影响阅读进度。'),
+        title: const Text('清除缓存'),
+        content: Text(
+          '将清除所有缓存图片、$_readerCacheCount 章正文和可重新获取的页面数据。'
+          '不会影响登录状态、本机书架或阅读进度。',
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(dialogCtx, false),
@@ -161,72 +174,181 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (confirmed != true) return;
-    await ReaderContentCache.clear();
-    if (!mounted) return;
-    setState(() => _readerCacheCount = 0);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('正文缓存已清除')));
+    setState(() => _clearingCache = true);
+    try {
+      await YomiruAppCache.clearAll();
+      if (!mounted) return;
+      await _loadCacheUsage();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('缓存已清除')));
+    } catch (e) {
+      if (mounted) showLkError(context, '缓存清理失败：$e');
+    } finally {
+      if (mounted) setState(() => _clearingCache = false);
+    }
   }
 
   Future<void> _checkForUpdate() async {
     if (_checkingUpdate) return;
     setState(() => _checkingUpdate = true);
     try {
-      final info = await PackageInfo.fromPlatform();
-      final rel = await LKApi.latestRelease();
+      final info = await YomiruUpdateService.check();
       if (!mounted) return;
+      await YomiruUpdateService.showResult(context, info);
+    } catch (e) {
+      if (mounted) showLkError(context, e);
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
 
-      final current = '${info.version}+${info.buildNumber}';
-      if (rel == null || rel.tag.isEmpty) {
-        showDialog<void>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('检查更新'),
-            content: Text('当前版本 $current\n\n暂未找到可用的 GitHub Release，请稍后重试。'),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('好')),
-            ],
-          ),
-        );
-        return;
+  Widget _sectionTitle(BuildContext context, String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+      child: Text(
+        title,
+        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+      ),
+    );
+  }
+
+  String _formatCacheSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(bytes < 10 * 1024 ? 1 : 0)} KB';
+    }
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
+  Widget _settingsIcon(
+    BuildContext context,
+    IconData icon, {
+    bool danger = false,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = danger ? scheme.error : scheme.primary;
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(11),
+      ),
+      alignment: Alignment.center,
+      child: Icon(icon, size: 21, color: color),
+    );
+  }
+
+  Widget _settingsGroup(BuildContext context, List<Widget> tiles) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final children = <Widget>[];
+    for (var i = 0; i < tiles.length; i++) {
+      if (i > 0) {
+        children.add(Divider(
+          height: 1,
+          indent: 70,
+          color: scheme.outlineVariant.withValues(alpha: 0.45),
+        ));
       }
+      children.add(tiles[i]);
+    }
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      color: theme.cardTheme.color ?? scheme.surfaceContainerLow,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: scheme.outlineVariant.withValues(alpha: 0.28),
+        ),
+      ),
+      child: ListTileTheme(
+        data: ListTileThemeData(
+          tileColor: Colors.transparent,
+          iconColor: scheme.onSurfaceVariant,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          shape: const RoundedRectangleBorder(),
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: children),
+      ),
+    );
+  }
 
-      final latest = rel.tag.replaceFirst(RegExp(r'^v'), '');
-      final newer = compareVersions(latest, info.version) > 0;
-      final body = rel.body.trim();
-      showDialog<void>(
+  Future<void> _showAbout() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      await showDialog<void>(
         context: context,
-        builder: (_) => AlertDialog(
-          title: Text(newer ? '发现新版本' : '已是最新版本'),
-          content: Text(
-            newer
-                ? '当前版本 $current\n最新版本 $latest\n\n${body.length > 300 ? '${body.substring(0, 300)}…' : body}'
-                : '当前版本 $current 已是最新',
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('关于'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('使用 Flutter 开发的 轻之国度 第三方客户端'),
+              const SizedBox(height: 8),
+              Text('当前版本：${info.version}+${info.buildNumber}'),
+              const SizedBox(height: 18),
+              Text(
+                '项目仓库',
+                style: Theme.of(dialogContext).textTheme.labelLarge?.copyWith(
+                      color:
+                          Theme.of(dialogContext).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () async {
+                  Navigator.pop(dialogContext);
+                  await YomiruUpdateService.openExternal(
+                    context,
+                    YomiruUpdateService.repositoryUrl,
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'github.com/hesitation-snow/yomiru',
+                          style: TextStyle(
+                            color: Theme.of(dialogContext).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.open_in_new_rounded,
+                        size: 18,
+                        color: Theme.of(dialogContext).colorScheme.primary,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('好')),
-            if (newer)
-              FilledButton(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  if (rel.url.isNotEmpty) {
-                    await launchUrl(Uri.parse(rel.url),
-                        mode: LaunchMode.externalApplication);
-                  }
-                },
-                child: const Text('去 GitHub 下载'),
-              ),
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('好'),
+            ),
           ],
         ),
       );
     } catch (e) {
       if (mounted) showLkError(context, e);
-    } finally {
-      if (mounted) setState(() => _checkingUpdate = false);
     }
   }
 
@@ -241,38 +363,82 @@ class _SettingsPageState extends State<SettingsPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
-          padding:
-              EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
-          children: [
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          MediaQuery.of(context).padding.bottom + 24,
+        ),
+        children: [
+          _sectionTitle(context, '应用'),
+          _settingsGroup(context, [
             ListTile(
-              leading: const Icon(Icons.dark_mode_outlined),
+              leading: _settingsIcon(context, Icons.dark_mode_outlined),
               title: const Text('深色模式'),
-              subtitle: Text('当前: $modeLabel'),
-              trailing: const Icon(Icons.chevron_right),
+              subtitle: Text('当前：$modeLabel'),
+              trailing: const Icon(Icons.chevron_right_rounded),
               onTap: () => _darkMode(context),
             ),
             ListTile(
-              leading: const Icon(Icons.offline_bolt_outlined),
+              leading: _settingsIcon(context, Icons.offline_bolt_outlined),
               title: const Text('清除缓存'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _readerCacheCount == 0 ? null : _clearReaderCache,
-            ),
-            ListTile(
-              leading: const Icon(Icons.system_update_outlined),
-              title: const Text('检查更新'),
-              trailing: _checkingUpdate
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
+              subtitle: Text(_cacheBytes == null
+                  ? '正在计算缓存占用…'
+                  : '缓存占用：${_formatCacheSize(_cacheBytes!)}'),
+              trailing: _clearingCache
+                  ? const SizedBox.square(
+                      dimension: 22,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.chevron_right),
+                  : const Icon(Icons.chevron_right_rounded),
+              onTap: _clearingCache ? null : _clearAllCaches,
+            ),
+            ListTile(
+              leading: _settingsIcon(context, Icons.system_update_outlined),
+              title: const Text('检查更新'),
+              trailing: _checkingUpdate
+                  ? const SizedBox.square(
+                      dimension: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.chevron_right_rounded),
               onTap: _checkingUpdate ? null : _checkForUpdate,
             ),
+          ]),
+          const SizedBox(height: 20),
+          _sectionTitle(context, '帮助'),
+          _settingsGroup(context, [
+            ListTile(
+              leading: _settingsIcon(context, Icons.feedback_outlined),
+              title: const Text('反馈问题'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () async {
+                final sent = await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute<bool>(
+                    builder: (_) => const FeedbackPage(),
+                  ),
+                );
+                if (sent == true && context.mounted) {
+                  showLkError(context, '反馈已发送，谢谢你的反馈');
+                }
+              },
+            ),
+          ]),
+          const SizedBox(height: 20),
+          _sectionTitle(context, '账号与信息'),
+          _settingsGroup(context, [
             if (LKClient.shared.session.isLoggedIn)
               ListTile(
-                leading: const Icon(Icons.logout, color: Colors.redAccent),
-                title: const Text('退出登录'),
+                leading: _settingsIcon(
+                  context,
+                  Icons.logout_rounded,
+                  danger: true,
+                ),
+                title: Text(
+                  '退出登录',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
                 onTap: () async {
                   final confirmed = await showDialog<bool>(
                     context: context,
@@ -300,31 +466,14 @@ class _SettingsPageState extends State<SettingsPage> {
                 },
               ),
             ListTile(
-              leading: const Icon(Icons.info_outline),
+              leading: _settingsIcon(context, Icons.info_outline_rounded),
               title: const Text('关于'),
-              onTap: () async {
-                try {
-                  final info = await PackageInfo.fromPlatform();
-                  if (!context.mounted) return;
-                  showDialog<void>(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      title: const Text('关于'),
-                      content: Text(
-                          '使用 Flutter 开发的 轻之国度 第三方客户端\n当前版本: ${info.version}+${info.buildNumber}\n\n仓库地址:\nhttps://github.com/hesitation-snow/yomiru'),
-                      actions: [
-                        TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('好'))
-                      ],
-                    ),
-                  );
-                } catch (e) {
-                  if (context.mounted) showLkError(context, e);
-                }
-              },
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: _showAbout,
             ),
           ]),
+        ],
+      ),
     );
   }
 

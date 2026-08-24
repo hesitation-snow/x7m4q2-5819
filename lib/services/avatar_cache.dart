@@ -15,7 +15,10 @@ class YomiruAvatarCache {
   );
 
   static CachedNetworkImageProvider provider(String url) =>
-      CachedNetworkImageProvider(url, cacheManager: manager);
+      CachedNetworkImageProvider(
+        url,
+        cacheManager: manager,
+      );
 
   /// 预加载当前页面的头像。失败时静默处理，不阻塞页面内容。
   static void precache(BuildContext context, Iterable<String> urls) {
@@ -23,10 +26,8 @@ class YomiruAvatarCache {
         .map((url) => url.trim())
         .where((url) => url.isNotEmpty)
         .toSet()
-        .take(40);
-    for (final url in unique) {
-      unawaited(precacheImage(provider(url), context).catchError((_) {}));
-    }
+        .take(16);
+    _precacheLimited(context, unique.map(provider), concurrency: 4);
   }
 }
 
@@ -41,7 +42,10 @@ class YomiruMedalCache {
   );
 
   static CachedNetworkImageProvider provider(String url) =>
-      CachedNetworkImageProvider(url, cacheManager: manager);
+      CachedNetworkImageProvider(
+        url,
+        cacheManager: manager,
+      );
 
   /// 预加载勋章图到本地缓存，失败时不影响商城页面。
   static void precache(BuildContext context, Iterable<String> urls) {
@@ -49,9 +53,32 @@ class YomiruMedalCache {
         .map((url) => url.trim())
         .where((url) => url.isNotEmpty)
         .toSet()
-        .take(100);
-    for (final url in unique) {
-      unawaited(precacheImage(provider(url), context).catchError((_) {}));
+        .take(60);
+    _precacheLimited(context, unique.map(provider), concurrency: 6);
+  }
+}
+
+void _precacheLimited(
+  BuildContext context,
+  Iterable<ImageProvider> providers, {
+  required int concurrency,
+}) {
+  final queue = providers.toList(growable: false);
+  if (queue.isEmpty) return;
+  var next = 0;
+
+  Future<void> worker() async {
+    while (next < queue.length) {
+      final image = queue[next++];
+      try {
+        await precacheImage(image, context);
+      } catch (_) {
+        // 预加载失败不影响页面按需加载。
+      }
     }
   }
+
+  unawaited(Future.wait<void>([
+    for (var i = 0; i < concurrency.clamp(1, queue.length); i++) worker(),
+  ]));
 }

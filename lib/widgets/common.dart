@@ -7,6 +7,16 @@ import '../api/models.dart';
 const String kDefaultCover =
     'https://www.lightnovel.fun/sample-assets/legacy/default_article_cover_v.jpg';
 
+/// 将布局尺寸换算成图片解码尺寸，避免小卡片把网络原图完整解码进内存。
+int imageCacheDimension(BuildContext context, double logicalSize,
+    {int max = 2048}) {
+  if (!logicalSize.isFinite || logicalSize <= 0) return max;
+  return (logicalSize * MediaQuery.devicePixelRatioOf(context))
+      .ceil()
+      .clamp(1, max)
+      .toInt();
+}
+
 /// 页面级加载状态统一居中显示；[minHeight] 用于底部弹窗等固定高度区域。
 class LkLoadingIndicator extends StatelessWidget {
   final double? minHeight;
@@ -89,6 +99,7 @@ class CoverImage extends StatelessWidget {
           imageUrl: url.isEmpty ? kDefaultCover : url,
           width: width,
           height: height,
+          memCacheWidth: imageCacheDimension(context, width),
           fit: fit,
           placeholder: (_, __) => placeholder,
           errorWidget: (_, __, ___) => placeholder,

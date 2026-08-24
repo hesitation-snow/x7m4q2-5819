@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
+import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
@@ -39,6 +42,9 @@ class _UserProfilePageState extends State<UserProfilePage>
   bool _publicationLoading = false;
   bool _bookshelfLoading = false;
   bool _dynamicHasMore = true;
+  bool _followed = false;
+  bool _followBusy = false;
+  int _followersCount = 0;
   String? _error;
   String? _dynamicError;
   String? _bookshelfError;
@@ -73,44 +79,57 @@ class _UserProfilePageState extends State<UserProfilePage>
     setState(() => _globalMedals = cached);
   }
 
-  Future<void> _loadInitial() async {
+  Future<void> _loadInitial({bool forceRefresh = false}) async {
     if (mounted) {
       setState(() {
         _error = null;
       });
     }
     try {
-      final home = await LKApi.publicUserHome(widget.uid, 1, pageSize: 20);
+      final home = await LKApi.publicUserHome(widget.uid, 1,
+          pageSize: 20, forceRefresh: forceRefresh);
+      if (!mounted) return;
+      setState(() {
+        _home = home;
+        _followed = home.profile.followed;
+        _followersCount = home.profile.followersCount;
+        _error = null;
+        if (!home.profile.publicBookshelf) _bookshelf = null;
+      });
       if (mounted) {
         YomiruAvatarCache.precache(context, [home.profile.avatar]);
       }
       if (home.profile.medals.isNotEmpty) {
-        await LKStore.cacheGlobalMedals({
+        unawaited(LKStore.cacheGlobalMedals({
           home.profile.uid > 0 ? home.profile.uid : widget.uid:
               home.profile.medals,
-        });
+        }));
       }
-      LKPublicBookshelfPage? bookshelf;
+      final pending = <Future<void>>[_loadDynamics()];
       if (home.profile.publicBookshelf) {
-        try {
-          bookshelf =
-              await LKApi.publicUserBookshelf(widget.uid, 1, pageSize: 20);
-        } catch (_) {
-          _bookshelfError = '书架无法加载，请点击重试';
-        }
+        pending.add(_loadInitialBookshelf());
       }
-      if (!mounted) return;
-      setState(() {
-        _home = home;
-        _bookshelf = bookshelf;
-      });
-      _loadDynamics();
+      await Future.wait(pending);
     } catch (_) {
       if (mounted) {
         setState(() {
           _error = '用户主页加载失败，请点击重试';
         });
       }
+    }
+  }
+
+  Future<void> _loadInitialBookshelf() async {
+    try {
+      final bookshelf =
+          await LKApi.publicUserBookshelf(widget.uid, 1, pageSize: 20);
+      if (!mounted) return;
+      setState(() {
+        _bookshelf = bookshelf;
+        _bookshelfError = null;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _bookshelfError = '书架无法加载，请点击重试');
     }
   }
 
@@ -199,7 +218,42 @@ class _UserProfilePageState extends State<UserProfilePage>
     _dynamicCursor = '';
     _dynamicHasMore = true;
     _bookshelfError = null;
-    await _loadInitial();
+    await _loadInitial(forceRefresh: true);
+  }
+
+  bool _canShowFollow(LKPublicUserProfile profile) {
+    final session = LKClient.shared.session;
+    final targetUid = profile.uid > 0 ? profile.uid : widget.uid;
+    return session.isLoggedIn &&
+        targetUid > 0 &&
+        targetUid != session.uid &&
+        !profile.isSelf &&
+        (profile.canFollow || _followed);
+  }
+
+  Future<void> _toggleFollow() async {
+    if (_followBusy) return;
+    final profile = _home?.profile;
+    if (profile == null || !_canShowFollow(profile)) return;
+    final targetUid = profile.uid > 0 ? profile.uid : widget.uid;
+    final follow = !_followed;
+    setState(() => _followBusy = true);
+    try {
+      await LKApi.toggleFollow(targetUid, follow);
+      if (!mounted) return;
+      setState(() {
+        _followed = follow;
+        _followersCount =
+            (_followersCount + (follow ? 1 : -1)).clamp(0, 1 << 31);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(follow ? '已关注' : '已取消关注')),
+      );
+    } catch (e) {
+      if (mounted) showLkError(context, '操作失败：$e');
+    } finally {
+      if (mounted) setState(() => _followBusy = false);
+    }
   }
 
   @override
@@ -225,29 +279,48 @@ class _UserProfilePageState extends State<UserProfilePage>
     return Scaffold(
       appBar: AppBar(
         title: Text(profile.nickname.isEmpty ? '用户主页' : profile.nickname),
+        actions: [
+          if (_canShowFollow(profile))
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: TextButton(
+                onPressed: _followBusy ? null : _toggleFollow,
+                child: _followBusy
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(_followed ? '取消关注' : '关注'),
+              ),
+            ),
+        ],
       ),
-      body: Column(
-        children: [
-          _buildProfileHeader(profile),
-          TabBar(
-            controller: _tabs,
-            tabs: const [
-              Tab(text: '动态'),
-              Tab(text: '公开发布'),
-              Tab(text: '公开书架'),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              controller: _tabs,
-              children: [
-                _buildDynamicTab(),
-                _buildPublicationTab(),
-                _buildBookshelfTab(),
-              ],
+      body: NestedScrollView(
+        headerSliverBuilder: (context, _) => [
+          SliverToBoxAdapter(child: _buildProfileHeader(profile)),
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _ProfileTabsHeader(
+              backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+              tabBar: TabBar(
+                controller: _tabs,
+                tabs: const [
+                  Tab(text: '动态'),
+                  Tab(text: '公开发布'),
+                  Tab(text: '公开书架'),
+                ],
+              ),
             ),
           ),
         ],
+        body: TabBarView(
+          controller: _tabs,
+          children: [
+            _buildDynamicTab(),
+            _buildPublicationTab(),
+            _buildBookshelfTab(),
+          ],
+        ),
       ),
     );
   }
@@ -400,8 +473,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                                     backgroundColor:
                                         scheme.surfaceContainerHighest,
                                     backgroundImage: medal.image.isNotEmpty
-                                        ? YomiruAvatarCache.provider(
-                                            medal.image)
+                                        ? YomiruMedalCache.provider(medal.image)
                                         : null,
                                     child: medal.image.isEmpty
                                         ? Icon(Icons.military_tech,
@@ -428,7 +500,7 @@ class _UserProfilePageState extends State<UserProfilePage>
             const SizedBox(height: 12),
             Row(
               children: [
-                _stat('粉丝', profile.followersCount),
+                _stat('粉丝', _followersCount),
                 _stat('关注', profile.followingCount),
                 _stat('发布', profile.postCount),
               ],
@@ -687,6 +759,9 @@ class _UserProfilePageState extends State<UserProfilePage>
                   imageUrl: item.url,
                   width: width,
                   height: height,
+                  memCacheWidth: width == null
+                      ? null
+                      : imageCacheDimension(context, width),
                   fit: BoxFit.cover,
                   placeholder: (_, __) => ColoredBox(
                     color:
@@ -725,11 +800,7 @@ class _UserProfilePageState extends State<UserProfilePage>
   }
 
   String _eventLabel(String value) {
-    if (value.endsWith('book_created')) return '新作品';
-    if (value.contains('book')) return '作品';
-    if (value.endsWith('short_post_published')) return '动态';
-    if (value.contains('repost')) return '转发';
-    return value.replaceAll('_', ' ');
+    return dynamicEventLabel(value);
   }
 
   Widget _buildPublicationTab() {
@@ -838,4 +909,31 @@ class _UserProfilePageState extends State<UserProfilePage>
     if (value.length > 16) return value.substring(0, 16).replaceAll('T', ' ');
     return value;
   }
+}
+
+class _ProfileTabsHeader extends SliverPersistentHeaderDelegate {
+  final TabBar tabBar;
+  final Color backgroundColor;
+
+  const _ProfileTabsHeader({
+    required this.tabBar,
+    required this.backgroundColor,
+  });
+
+  @override
+  double get minExtent => tabBar.preferredSize.height;
+
+  @override
+  double get maxExtent => tabBar.preferredSize.height;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return ColoredBox(color: backgroundColor, child: tabBar);
+  }
+
+  @override
+  bool shouldRebuild(covariant _ProfileTabsHeader oldDelegate) =>
+      oldDelegate.tabBar.controller != tabBar.controller ||
+      oldDelegate.backgroundColor != backgroundColor;
 }

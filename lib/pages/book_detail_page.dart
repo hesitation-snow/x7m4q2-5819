@@ -45,6 +45,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   String _latestChapterTitle = '';
   bool _hasHistory = false;
   String? _error;
+  bool _volumesLoading = true;
   final _scroll = ScrollController();
   bool _fabVisible = true;
   double _lastOffset = 0;
@@ -75,37 +76,65 @@ class _BookDetailPageState extends State<BookDetailPage> {
   }
 
   Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _error = null;
+        _volumesLoading = true;
+      });
+    }
+    await Future.wait<void>([
+      _loadBook(),
+      _loadVolumes(),
+      _loadLibraryState(),
+    ]);
+  }
+
+  Future<void> _loadBook() async {
     try {
       final detailBook = await LKApi.bookDetail(widget.bookId);
       // 详情接口个别缓存/兼容响应可能缺少 book_id,但当前页面路由 ID 是可靠的。
       final book = detailBook.bookId > 0
           ? detailBook
           : LKBook.fromJson({...detailBook.toJson(), 'book_id': widget.bookId});
-      final vols = await LKApi.volumes(widget.bookId, 1);
       if (!mounted) return;
       setState(() {
         _book = book;
-        _volumes = vols;
         _error = null;
       });
-      if (LKClient.shared.session.isLoggedIn) {
-        try {
-          final st = await LKApi.client.post(
-              '/api/new-content-read/get-book-library-state',
-              LKApi.client.authed({'book_id': widget.bookId}));
-          if (!mounted) return;
-          setState(() {
-            _inShelf = (st['in_shelf'] as num?)?.toInt() == 1;
-            _hasHistory = (st['has_history'] as num?)?.toInt() == 1;
-            _latestChapterId = (st['latest_chapter_id'] as num?)?.toInt() ?? 0;
-            _latestChapterTitle = (st['latest_chapter_title'] as String?) ?? '';
-          });
-        } catch (_) {}
-      } else if (await LKStore.isLocalShelf(book.bookId) && mounted) {
-        setState(() => _inShelf = true);
-      }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  Future<void> _loadVolumes() async {
+    try {
+      final volumes = await LKApi.volumes(widget.bookId, 1);
+      if (mounted) setState(() => _volumes = volumes);
+    } catch (_) {
+      // 详情仍可先展示，目录区域保留为空并允许下拉刷新重试。
+    } finally {
+      if (mounted) setState(() => _volumesLoading = false);
+    }
+  }
+
+  Future<void> _loadLibraryState() async {
+    if (LKClient.shared.session.isLoggedIn) {
+      try {
+        final st = await LKApi.client.post(
+            '/api/new-content-read/get-book-library-state',
+            LKApi.client.authed({'book_id': widget.bookId}));
+        if (!mounted) return;
+        setState(() {
+          _inShelf = (st['in_shelf'] as num?)?.toInt() == 1;
+          _hasHistory = (st['has_history'] as num?)?.toInt() == 1;
+          _latestChapterId = (st['latest_chapter_id'] as num?)?.toInt() ?? 0;
+          _latestChapterTitle = (st['latest_chapter_title'] as String?) ?? '';
+        });
+      } catch (_) {}
+      return;
+    }
+    if (await LKStore.isLocalShelf(widget.bookId) && mounted) {
+      setState(() => _inShelf = true);
     }
   }
 
@@ -373,6 +402,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                         color: Colors.grey.shade500)),
                               ]),
                               const SizedBox(height: 8),
+                              if (_volumesLoading && _volumes.isEmpty)
+                                const LkLoadingIndicator(
+                                  minHeight: 72,
+                                  size: 22,
+                                  strokeWidth: 2,
+                                ),
                               ..._volumes.map((v) => _volumeCard(v)),
                               SizedBox(
                                   height: 90 +

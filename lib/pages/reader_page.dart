@@ -138,13 +138,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   double _progress = 0;
   double _lastScrollOffset = 0;
 
-  /// 翻页正文文字区域的指针跟踪。
+  /// 正文文字区域的指针跟踪。
   /// SelectionArea 会优先处理文字手势，这里用 Listener 旁路记录短按，
   /// 让点到文字时仍按翻页规则工作，同时保留长按选择复制。
-  Offset? _pagedTextPointerStart;
-  DateTime? _pagedTextPointerDownAt;
-  bool _pagedTextPointerMoved = false;
-  bool _pagedTextPointerHandled = false;
+  Offset? _textPointerStart;
+  DateTime? _textPointerDownAt;
+  bool _textPointerMoved = false;
+  bool _textPointerHandled = false;
+  bool _suppressNextTextTap = false;
+  int _textTapSerial = 0;
 
   /// 滚动进度通知(正文指示器实时刷新,无需整页重建)
   final ValueNotifier<double> _progressN = ValueNotifier<double>(0);
@@ -339,45 +341,31 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   Future<void> _loadPrefs() async {
-    final bg = await ReaderPrefs.bgPreset();
-    final bgSys = await ReaderPrefs.bgFollowSystem();
-    final fontSize = await ReaderPrefs.fontSize();
-    final lineHeight = await ReaderPrefs.lineHeight();
-    final keepOn = await ReaderPrefs.keepScreenOn();
-    final hideBar = await ReaderPrefs.hideStatusBar();
-    final tapTurn = await ReaderPrefs.tapTurnPage();
-    final autoMargin = await ReaderPrefs.autoMargin();
-    final mt = await ReaderPrefs.marginTop();
-    final mb = await ReaderPrefs.marginBottom();
-    final ml = await ReaderPrefs.marginLeft();
-    final mr = await ReaderPrefs.marginRight();
-    final ind = await ReaderPrefs.showIndicators();
-    final trad = await ReaderPrefs.traditional();
-    final simp = await ReaderPrefs.simplified();
-    final paged = await ReaderPrefs.pagedMode();
-    final tradChanged = _traditional != trad || _simplified != simp;
+    final prefs = await ReaderPrefs.loadAll();
+    final tradChanged =
+        _traditional != prefs.traditional || _simplified != prefs.simplified;
     if (!mounted) return;
     setState(() {
-      _fontSize = fontSize;
-      _lineHeight = lineHeight;
-      if (bg >= 0) {
-        _bg = bg;
+      _fontSize = prefs.fontSize;
+      _lineHeight = prefs.lineHeight;
+      if (prefs.bgPreset >= 0) {
+        _bg = prefs.bgPreset;
         _bgChosen = true;
         // 选过具体预设的老用户保持固定;新用户默认跟随系统
-        _bgFollowSystem = bgSys;
+        _bgFollowSystem = prefs.bgFollowSystem;
       }
-      _keepOn = keepOn;
-      _hideBar = hideBar;
-      _tapTurn = tapTurn;
-      _autoMargin = autoMargin;
-      _mt = mt;
-      _mb = mb;
-      _ml = ml;
-      _mr = mr;
-      _indicators = ind;
-      _traditional = trad;
-      _simplified = simp;
-      _paged = paged;
+      _keepOn = prefs.keepScreenOn;
+      _hideBar = prefs.hideStatusBar;
+      _tapTurn = prefs.tapTurnPage;
+      _autoMargin = prefs.autoMargin;
+      _mt = prefs.marginTop;
+      _mb = prefs.marginBottom;
+      _ml = prefs.marginLeft;
+      _mr = prefs.marginRight;
+      _indicators = prefs.showIndicators;
+      _traditional = prefs.traditional;
+      _simplified = prefs.simplified;
+      _paged = prefs.pagedMode;
     });
     // 偏好到达后,若章节已加载且简繁状态有变化,则本地重解析
     if (tradChanged && _detail != null) {
@@ -448,16 +436,20 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       setState(() => _loading = false);
 
       // 只缓存公开正文或当前账号已解锁的付费正文。
-      await ReaderContentCache.write(widget.bookId, d);
+      unawaited(ReaderContentCache.write(widget.bookId, d));
       if (d.locked && !d.unlocked) _refreshCoins();
       if (LKClient.shared.session.isLoggedIn && !d.locked) {
-        try {
-          await LKApi.saveHistory(
-              widget.bookId,
-              _effectiveVolumeId,
-              widget.chapterId,
-              (initialLoad ? restore : _progress * 100).round().clamp(0, 100));
-        } catch (_) {}
+        unawaited(() async {
+          try {
+            await LKApi.saveHistory(
+                widget.bookId,
+                _effectiveVolumeId,
+                widget.chapterId,
+                (initialLoad ? restore : _progress * 100)
+                    .round()
+                    .clamp(0, 100));
+          } catch (_) {}
+        }());
       }
       _resolveAdjacentOrPrefetch();
     } catch (e) {
@@ -683,15 +675,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         html = await ChineseConverter.convert(html, T2S());
       }
       final blocks = <_BodyBlock>[];
-      final imgRe = RegExp(r'<img[^>]*src="([^"]+)"[^>]*>');
       var pos = 0;
-      for (final m in imgRe.allMatches(html)) {
+      for (final m in _imageTagRe.allMatches(html)) {
         _addTextBlocks(blocks, html.substring(pos, m.start));
         final tag = m.group(0)!;
-        final w =
-            RegExp(r'(?:img-width|width)="(\d+)"').firstMatch(tag)?.group(1);
-        final h =
-            RegExp(r'(?:img-height|height)="(\d+)"').firstMatch(tag)?.group(1);
+        final w = _imageWidthRe.firstMatch(tag)?.group(1);
+        final h = _imageHeightRe.firstMatch(tag)?.group(1);
         final wi = int.tryParse(w ?? '') ?? 0;
         final hi = int.tryParse(h ?? '') ?? 0;
         final imageUrl = m.group(1)!.trim();
@@ -722,6 +711,20 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       r'<a\s+[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
       caseSensitive: false,
       dotAll: true);
+  static final RegExp _imageTagRe =
+      RegExp(r'<img[^>]*src="([^"]+)"[^>]*>', caseSensitive: false);
+  static final RegExp _imageWidthRe =
+      RegExp(r'(?:img-width|width)="(\d+)"', caseSensitive: false);
+  static final RegExp _imageHeightRe =
+      RegExp(r'(?:img-height|height)="(\d+)"', caseSensitive: false);
+  static final RegExp _resourceTagRe = RegExp(r'\[res\][^[]+\[/res\]');
+  static final RegExp _lineBreakTagRe =
+      RegExp(r'<br\s*/?>', caseSensitive: false);
+  static final RegExp _paragraphEndTagRe =
+      RegExp(r'</p>', caseSensitive: false);
+  static final RegExp _htmlTagRe = RegExp(r'<[^>]+>');
+  static final RegExp _trailingUrlPunctuationRe =
+      RegExp(r'[。，！？；、,;:!?)）】』」]+$');
   static final RegExp _urlRe = RegExp(r"(?:https?://|www\.)[^\s<>"
       "'（）()\[\]「」『』]+"); // ignore: unnecessary_string_escapes
 
@@ -735,9 +738,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         .replaceAll('&nbsp;', ' ')
         .replaceAll('&amp;', '&')
         // 正文里的资源占位符(如 [res]0,369356[/res])不展示
-        .replaceAll(RegExp(r'\[res\][^[]+\[/res\]'), '')
-        .replaceAll(RegExp(r'<br\s*/?>'), '\n')
-        .replaceAll(RegExp(r'</p>'), '\n');
+        .replaceAll(_resourceTagRe, '')
+        .replaceAll(_lineBreakTagRe, '\n')
+        .replaceAll(_paragraphEndTagRe, '\n');
     final paras =
         t.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
     for (final p in paras) {
@@ -754,7 +757,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     var pos = 0;
     for (final m in _aTagRe.allMatches(raw)) {
       _appendScanningUrls(buf, links, raw.substring(pos, m.start));
-      final label = m.group(2)!.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+      final label = m.group(2)!.replaceAll(_htmlTagRe, '').trim();
       final url = (m.group(1) ?? '').trim();
       if (label.isNotEmpty && url.isNotEmpty) {
         links.add((buf.length, buf.length + label.length, url));
@@ -769,13 +772,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   /// 去标签后,扫描裸 URL(www./http/https),附加为链接区间
   void _appendScanningUrls(
       StringBuffer buf, List<(int, int, String)> links, String seg) {
-    final clean = seg.replaceAll(RegExp(r'<[^>]+>'), '');
+    final clean = seg.replaceAll(_htmlTagRe, '');
     var pos = 0;
     for (final m in _urlRe.allMatches(clean)) {
       if (m.start > pos) buf.write(clean.substring(pos, m.start));
       var u = m.group(0)!;
       // 去掉结尾误吞的中文标点
-      u = u.replaceFirst(RegExp(r'[。，！？；、,;:!?)）】』」]+$'), '');
+      u = u.replaceFirst(_trailingUrlPunctuationRe, '');
       links.add((buf.length, buf.length + u.length, u));
       buf.write(u);
       pos = m.end;
@@ -1232,6 +1235,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                       child: CachedNetworkImage(
                         imageUrl: b.image!,
                         width: double.infinity,
+                        memCacheWidth: imageCacheDimension(
+                            context, MediaQuery.sizeOf(context).width),
                         fit: BoxFit.fitWidth,
                         placeholder: (_, __) => Container(
                           height: 180,
@@ -1257,13 +1262,20 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                   lockedBody && b.links.isEmpty && b.text == '(本章暂无内容)';
               return Padding(
                 padding: const EdgeInsets.only(bottom: 12),
-                child: SelectionArea(
-                  child: Text.rich(
-                    TextSpan(
-                      style: _bodyTextStyle,
-                      children: hint
-                          ? const [TextSpan(text: '本章需要轻币解锁')]
-                          : _spansFor(b),
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: _textPointerDown,
+                  onPointerMove: _textPointerMove,
+                  onPointerUp: _textPointerUp,
+                  onPointerCancel: _textPointerCancel,
+                  child: SelectionArea(
+                    child: Text.rich(
+                      TextSpan(
+                        style: _bodyTextStyle,
+                        children: hint
+                            ? const [TextSpan(text: '本章需要轻币解锁')]
+                            : _spansFor(b),
+                      ),
                     ),
                   ),
                 ),
@@ -1424,6 +1436,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                                 imageUrl: it.image!,
                                 width: contentW,
                                 height: availH,
+                                memCacheWidth:
+                                    imageCacheDimension(context, contentW),
                                 fit: BoxFit.contain,
                                 placeholder: (_, __) => Container(
                                   color: _isDarkBg
@@ -1453,10 +1467,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: Listener(
                           behavior: HitTestBehavior.translucent,
-                          onPointerDown: _pagedTextPointerDown,
-                          onPointerMove: _pagedTextPointerMove,
-                          onPointerUp: _pagedTextPointerUp,
-                          onPointerCancel: _pagedTextPointerCancel,
+                          onPointerDown: _textPointerDown,
+                          onPointerMove: _textPointerMove,
+                          onPointerUp: _textPointerUp,
+                          onPointerCancel: _textPointerCancel,
                           child: SelectionArea(
                             child: Text.rich(
                               TextSpan(
@@ -1646,7 +1660,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           // 翻页模式短按优先翻页；滚动模式仍可直接打开正文链接。
           recognizer: _paged
               ? null
-              : (TapGestureRecognizer()..onTap = () => _openLink(url))));
+              : (TapGestureRecognizer()
+                ..onTap = () {
+                  _suppressNextTextTap = true;
+                  _openLink(url);
+                })));
       pos = e;
     }
     if (pos < text.length) out.add(TextSpan(text: text.substring(pos)));
@@ -1679,6 +1697,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
     // 渲染时每个文本条目底部有 12px 段间距,分页高度计算必须计入,否则 BOTTOM OVERFLOW
     const gap = 12.0;
+    final maxTextHeight = (contentH - gap).clamp(1.0, contentH).toDouble();
     for (final b in _blocks) {
       if (b.image != null) {
         flush();
@@ -1686,9 +1705,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         continue;
       }
       if (b.text.trim().isEmpty) continue; // 空文本块不占页
-      for (final chunk in _splitTextBlock(b, contentW, contentH)) {
+      for (final (chunk, measuredHeight)
+          in _splitTextBlock(b, contentW, maxTextHeight)) {
         if (chunk.text.isEmpty) continue;
-        final h = _measureText(chunk.text, contentW) + gap;
+        final h = measuredHeight + gap;
         if (used + h > contentH && used > 0) flush();
         cur.add(_PageItem.text(chunk.text, chunk.links));
         used += h;
@@ -1710,7 +1730,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   /// 文本段按行切分(每页高度 contentH),链接区间随之重映射
-  List<_PageItem> _splitTextBlock(_BodyBlock b, double w, double h) {
+  List<(_PageItem, double)> _splitTextBlock(_BodyBlock b, double w, double h) {
     final tp = TextPainter(
       text: TextSpan(text: b.text, style: _bodyTextStyle),
       textDirection: TextDirection.ltr,
@@ -1718,14 +1738,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     )..layout(maxWidth: w);
     final lms = tp.computeLineMetrics();
     if (lms.isEmpty) {
-      return [_PageItem.text(b.text, b.links)];
+      return [(_PageItem.text(b.text, b.links), tp.height)];
     }
     int lineEnd(int idx) {
       final pos = tp.getPositionForOffset(Offset(0, lms[idx].baseline));
       return tp.getLineBoundary(pos).end;
     }
 
-    final out = <_PageItem>[];
+    final out = <(_PageItem, double)>[];
     var lineIdx = 0;
     var start = 0;
     var usedH = 0.0;
@@ -1734,8 +1754,11 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       if (usedH + lh > h && usedH > 0) {
         final end = lineEnd(lineIdx - 1);
         if (end > start) {
-          out.add(_PageItem.text(
-              b.text.substring(start, end), _remapLinks(b.links, start, end)));
+          out.add((
+            _PageItem.text(
+                b.text.substring(start, end), _remapLinks(b.links, start, end)),
+            usedH,
+          ));
         }
         start = end;
         usedH = 0;
@@ -1746,11 +1769,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     }
     final end = lineEnd(lms.length - 1);
     if (end > start) {
-      out.add(_PageItem.text(
-          b.text.substring(start, end), _remapLinks(b.links, start, end)));
+      out.add((
+        _PageItem.text(
+            b.text.substring(start, end), _remapLinks(b.links, start, end)),
+        usedH,
+      ));
     }
     if (end < b.text.length) {
-      out.add(_PageItem.text(b.text.substring(end), const []));
+      final tail = b.text.substring(end);
+      out.add((_PageItem.text(tail, const []), _measureText(tail, w)));
     }
     return out;
   }
@@ -1819,33 +1846,33 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         curve: Curves.easeOutCubic);
   }
 
-  void _pagedTextPointerDown(PointerDownEvent event) {
-    _pagedTextPointerStart = event.position;
-    _pagedTextPointerDownAt = DateTime.now();
-    _pagedTextPointerMoved = false;
-    _pagedTextPointerHandled = false;
+  void _textPointerDown(PointerDownEvent event) {
+    _textPointerStart = event.position;
+    _textPointerDownAt = DateTime.now();
+    _textPointerMoved = false;
+    _textPointerHandled = false;
   }
 
-  void _pagedTextPointerMove(PointerMoveEvent event) {
-    final down = _pagedTextPointerStart;
+  void _textPointerMove(PointerMoveEvent event) {
+    final down = _textPointerStart;
     if (down != null && (event.position - down).distance > 12) {
-      _pagedTextPointerMoved = true;
+      _textPointerMoved = true;
     }
   }
 
-  void _pagedTextPointerCancel(PointerCancelEvent event) {
-    _pagedTextPointerStart = null;
-    _pagedTextPointerDownAt = null;
-    _pagedTextPointerMoved = false;
-    _pagedTextPointerHandled = false;
+  void _textPointerCancel(PointerCancelEvent event) {
+    _textPointerStart = null;
+    _textPointerDownAt = null;
+    _textPointerMoved = false;
+    _textPointerHandled = false;
   }
 
-  void _pagedTextPointerUp(PointerUpEvent event) {
-    final startedAt = _pagedTextPointerDownAt;
-    final moved = _pagedTextPointerMoved;
-    _pagedTextPointerStart = null;
-    _pagedTextPointerDownAt = null;
-    _pagedTextPointerMoved = false;
+  void _textPointerUp(PointerUpEvent event) {
+    final startedAt = _textPointerDownAt;
+    final moved = _textPointerMoved;
+    _textPointerStart = null;
+    _textPointerDownAt = null;
+    _textPointerMoved = false;
     if (startedAt == null || moved) return;
     // 长按交给 SelectionArea，避免破坏正文复制。
     if (DateTime.now().difference(startedAt) >
@@ -1853,20 +1880,43 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       return;
     }
 
-    _pagedTextPointerHandled = true;
-    // 如果 SelectionArea 赢得手势竞技场，外层 onTapUp 不会触发；
-    // 只让这个标记存活到当前帧，避免下一次点空白区域被误吞。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _pagedTextPointerHandled = false;
+    _textPointerHandled = true;
+    final tapSerial = ++_textTapSerial;
+    final position = event.position;
+    // 等手势竞技场和链接识别器处理完本次事件，再执行阅读器手势。
+    scheduleMicrotask(() {
+      if (!mounted || tapSerial != _textTapSerial) return;
+      _textPointerHandled = false;
+      if (_suppressNextTextTap) {
+        _suppressNextTextTap = false;
+        return;
+      }
+      _handleBodyTap(position);
     });
+  }
+
+  void _handleBodyTap(Offset position) {
     final width = MediaQuery.of(context).size.width;
-    if (event.position.dx < width / 3) {
-      _turnPrev();
-    } else if (event.position.dx > width * 2 / 3) {
-      _turnNext();
-    } else if (mounted) {
-      setState(() => _chrome = !_chrome);
+    if (_paged) {
+      if (position.dx < width / 3) {
+        _turnPrev();
+        return;
+      }
+      if (position.dx > width * 2 / 3) {
+        _turnNext();
+        return;
+      }
+    } else if (_tapTurn) {
+      if (position.dx < width / 3) {
+        _pageUp();
+        return;
+      }
+      if (position.dx > width * 2 / 3) {
+        _pageDown();
+        return;
+      }
     }
+    if (mounted) setState(() => _chrome = !_chrome);
   }
 
   @override
@@ -1896,35 +1946,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           body: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapUp: (d) {
-              final w = MediaQuery.of(context).size.width;
-              if (_paged) {
-                if (_pagedTextPointerHandled) {
-                  _pagedTextPointerHandled = false;
-                  return;
-                }
-                // 翻页模式:左右 1/3 翻页,中间唤出/隐藏工具栏
-                if (d.globalPosition.dx < w / 3) {
-                  _turnPrev();
-                  return;
-                }
-                if (d.globalPosition.dx > w * 2 / 3) {
-                  _turnNext();
-                  return;
-                }
-                setState(() => _chrome = !_chrome);
+              if (_textPointerHandled) {
                 return;
               }
-              if (_tapTurn) {
-                if (d.globalPosition.dx < w / 3) {
-                  _pageUp();
-                  return;
-                }
-                if (d.globalPosition.dx > w * 2 / 3) {
-                  _pageDown();
-                  return;
-                }
-              }
-              setState(() => _chrome = !_chrome);
+              _handleBodyTap(d.globalPosition);
             },
             child: Stack(
               children: [

@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -99,12 +100,14 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                                         Navigator.pop(context, item.code),
                                     child: Padding(
                                       padding: const EdgeInsets.all(3),
-                                      child: Image.network(
-                                        _fixEmojiUrl(item.url),
+                                      child: CachedNetworkImage(
+                                        imageUrl: _fixEmojiUrl(item.url),
                                         width: 38,
                                         height: 38,
+                                        memCacheWidth:
+                                            imageCacheDimension(context, 38),
                                         fit: BoxFit.contain,
-                                        errorBuilder: (_, __, ___) =>
+                                        errorWidget: (_, __, ___) =>
                                             Text(item.code),
                                       ),
                                     ),
@@ -197,8 +200,13 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: Image.network(entry.value.url,
-                            width: 84, height: 84, fit: BoxFit.cover),
+                        child: CachedNetworkImage(
+                          imageUrl: entry.value.url,
+                          width: 84,
+                          height: 84,
+                          memCacheWidth: imageCacheDimension(context, 84),
+                          fit: BoxFit.cover,
+                        ),
                       ),
                       Positioned(
                         right: 0,

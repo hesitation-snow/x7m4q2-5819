@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
+import '../services/app_update_service.dart';
 import '../widgets/common.dart';
 import 'book_detail_page.dart';
 import 'channel_page.dart';
@@ -30,9 +32,10 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _tab = 0;
+  final Set<int> _loadedTabs = <int>{0};
 
   /// 顶栏/底栏可见比例 0..1,随首页滚动 1:1 伸缩(滑一点露一点)
-  double _barFrac = 1.0;
+  final ValueNotifier<double> _barFrac = ValueNotifier<double>(1.0);
 
   /// 顶栏可伸缩部分的高度(不含状态栏区域)
   static const double _barFlex = 104.0;
@@ -55,6 +58,9 @@ class _HomePageState extends State<HomePage> {
     // 登录/登出后刷新顶栏头像等会话相关 UI
     LKClient.sessionRev.addListener(_onSessionRev);
     _loadListMode();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(YomiruUpdateService.checkAtStartup(context));
+    });
   }
 
   Future<void> _loadListMode() async {
@@ -65,6 +71,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionRev);
+    _barFrac.dispose();
     super.dispose();
   }
 
@@ -84,10 +91,11 @@ class _HomePageState extends State<HomePage> {
       if (n.metrics.axis == Axis.horizontal) return;
       final delta = n.scrollDelta ?? 0.0;
       if (delta == 0) return;
-      final newFrac = (_barFrac - delta / _barFlex).clamp(0.0, 1.0);
-      final diff = newFrac - _barFrac;
+      final current = _barFrac.value;
+      final newFrac = (current - delta / _barFlex).clamp(0.0, 1.0);
+      final diff = newFrac - current;
       if (diff == 0) return;
-      setState(() => _barFrac = newFrac);
+      _barFrac.value = newFrac;
       // 首页的顶部搜索栏需要吸收这部分位移;书架/动态只收合底栏,
       // 由各自页面决定顶部内容如何滚动,避免同一段滚动被抵消两次。
       if (_tab == 0) {
@@ -95,9 +103,37 @@ class _HomePageState extends State<HomePage> {
       }
     } else if (n is OverscrollNotification) {
       // 顶部下拉回弹:让顶栏跟随露出
-      final newFrac = (_barFrac - n.overscroll / _barFlex).clamp(0.0, 1.0);
-      if (newFrac != _barFrac) setState(() => _barFrac = newFrac);
+      final current = _barFrac.value;
+      final newFrac = (current - n.overscroll / _barFlex).clamp(0.0, 1.0);
+      if (newFrac != current) _barFrac.value = newFrac;
     }
+  }
+
+  void _selectTab(int index) {
+    if (index == _tab && _loadedTabs.contains(index)) {
+      _barFrac.value = 1.0;
+      return;
+    }
+    setState(() {
+      _tab = index;
+      _loadedTabs.add(index);
+    });
+    _barFrac.value = 1.0;
+  }
+
+  Widget _tabBody(int index) {
+    if (!_loadedTabs.contains(index)) return const SizedBox.shrink();
+    return switch (index) {
+      0 => FeedTab(
+          channelCode: _channels[_channel].$1,
+          path: _channels[_channel].$3,
+          listMode: _listMode,
+        ),
+      1 => ShelfPage(embedded: true, listMode: _listMode),
+      2 => const DynamicPage(embedded: true),
+      3 => MyTab(onOpenShelf: () => _selectTab(1)),
+      _ => const SizedBox.shrink(),
+    };
   }
 
   @override
@@ -132,192 +168,203 @@ class _HomePageState extends State<HomePage> {
                         : const Color(0xFFF6F7FB)),
               ),
             ),
-            SizedBox(
-              height: _tab == 0 ? _barFlex * _barFrac : 0.0,
-              child: Stack(
-                clipBehavior: Clip.hardEdge,
-                children: [
-                  Positioned(
-                    top: _tab == 0 ? -_barFlex * (1.0 - _barFrac) : 0.0,
-                    left: 0,
-                    right: 0,
-                    height: _barFlex,
-                    child: ColoredBox(
-                      color: isDark ? const Color(0xFF1B1C21) : Colors.white,
-                      // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告
-                      child: SingleChildScrollView(
-                        physics: const NeverScrollableScrollPhysics(),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 8),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(20),
-                                      onTap: () => Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                              builder: (_) =>
-                                                  const SearchPage())),
-                                      child: Container(
-                                        height: 40,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 14),
-                                        alignment: Alignment.centerLeft,
-                                        decoration: BoxDecoration(
-                                          color: Theme.of(context).brightness ==
-                                                  Brightness.dark
-                                              ? const Color(0xFF1E2025)
-                                              : Colors.grey.shade100,
-                                          borderRadius:
-                                              BorderRadius.circular(20),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(Icons.search_rounded,
-                                                size: 19,
-                                                color: Colors.grey.shade500),
-                                            const SizedBox(width: 8),
-                                            Flexible(
-                                              child: Text(
-                                                '搜索书名 / 作者',
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                    fontSize: 13.5,
-                                                    color:
-                                                        Colors.grey.shade500),
+            ValueListenableBuilder<double>(
+              valueListenable: _barFrac,
+              builder: (context, barFrac, _) => SizedBox(
+                height: _tab == 0 ? _barFlex * barFrac : 0.0,
+                child: Stack(
+                  clipBehavior: Clip.hardEdge,
+                  children: [
+                    Positioned(
+                      top: _tab == 0 ? -_barFlex * (1.0 - barFrac) : 0.0,
+                      left: 0,
+                      right: 0,
+                      height: _barFlex,
+                      child: ColoredBox(
+                        color: isDark ? const Color(0xFF1B1C21) : Colors.white,
+                        // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告
+                        child: SingleChildScrollView(
+                          physics: const NeverScrollableScrollPhysics(),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(20),
+                                        onTap: () => Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                                builder: (_) =>
+                                                    const SearchPage())),
+                                        child: Container(
+                                          height: 40,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 14),
+                                          alignment: Alignment.centerLeft,
+                                          decoration: BoxDecoration(
+                                            color:
+                                                Theme.of(context).brightness ==
+                                                        Brightness.dark
+                                                    ? const Color(0xFF1E2025)
+                                                    : Colors.grey.shade100,
+                                            borderRadius:
+                                                BorderRadius.circular(20),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.search_rounded,
+                                                  size: 19,
+                                                  color: Colors.grey.shade500),
+                                              const SizedBox(width: 8),
+                                              Flexible(
+                                                child: Text(
+                                                  '搜索书名 / 作者',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                      fontSize: 13.5,
+                                                      color:
+                                                          Colors.grey.shade500),
+                                                ),
                                               ),
-                                            ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  // LK 用户头像:点击跳转"我的"
-                                  GestureDetector(
-                                    onTap: () => setState(() {
-                                      _tab = 3;
-                                      _barFrac = 1.0;
-                                    }),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(2),
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                            color: isDark
-                                                ? Colors.white54
-                                                : Colors.indigo.shade200,
-                                            width: 1.6),
-                                      ),
-                                      child: CircleAvatar(
-                                        radius: 15,
-                                        backgroundColor: Colors.indigo.shade100,
-                                        backgroundImage: LKClient.shared.session
-                                                .avatar.isNotEmpty
-                                            ? YomiruAvatarCache.provider(
-                                                LKClient.shared.session.avatar)
-                                            : null,
-                                        child: LKClient.shared.session.avatar
-                                                .isNotEmpty
-                                            ? null
-                                            : const Icon(Icons.person,
-                                                size: 18, color: Colors.indigo),
+                                    const SizedBox(width: 4),
+                                    // LK 用户头像:点击跳转"我的"
+                                    GestureDetector(
+                                      onTap: () => _selectTab(3),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(2),
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                              color: isDark
+                                                  ? Colors.white54
+                                                  : Colors.indigo.shade200,
+                                              width: 1.6),
+                                        ),
+                                        child: CircleAvatar(
+                                          radius: 15,
+                                          backgroundColor:
+                                              Colors.indigo.shade100,
+                                          backgroundImage: LKClient.shared
+                                                  .session.avatar.isNotEmpty
+                                              ? YomiruAvatarCache.provider(
+                                                  LKClient
+                                                      .shared.session.avatar)
+                                              : null,
+                                          child: LKClient.shared.session.avatar
+                                                  .isNotEmpty
+                                              ? null
+                                              : const Icon(Icons.person,
+                                                  size: 18,
+                                                  color: Colors.indigo),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 2),
-                                  // 首页排版切换(网格/单列)
-                                  IconButton(
-                                    tooltip: _listMode ? '切换为网格排版' : '切换为单列排版',
-                                    visualDensity: VisualDensity.compact,
-                                    icon: Icon(
-                                      _listMode
-                                          ? Icons.grid_view_rounded
-                                          : Icons.view_agenda_outlined,
-                                      size: 21,
+                                    const SizedBox(width: 2),
+                                    // 首页排版切换(网格/单列)
+                                    IconButton(
+                                      tooltip:
+                                          _listMode ? '切换为网格排版' : '切换为单列排版',
+                                      visualDensity: VisualDensity.compact,
+                                      icon: Icon(
+                                        _listMode
+                                            ? Icons.grid_view_rounded
+                                            : Icons.view_agenda_outlined,
+                                        size: 21,
+                                      ),
+                                      onPressed: () {
+                                        setState(() => _listMode = !_listMode);
+                                        ReaderPrefs.setFeedListMode(_listMode);
+                                      },
                                     ),
-                                    onPressed: () {
-                                      setState(() => _listMode = !_listMode);
-                                      ReaderPrefs.setFeedListMode(_listMode);
-                                    },
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                            // 频道胶囊(热门/最新),随顶栏一起滑出
-                            SizedBox(
-                              height: 40,
-                              child: ListView.separated(
-                                scrollDirection: Axis.horizontal,
-                                padding: const EdgeInsets.only(
-                                    left: 12, right: 12, bottom: 4),
-                                itemCount: _channels.length,
-                                separatorBuilder: (_, __) =>
-                                    const SizedBox(width: 8),
-                                itemBuilder: (_, i) {
-                                  final sel = i == _channel;
-                                  final scheme = Theme.of(context).colorScheme;
-                                  final isDark = Theme.of(context).brightness ==
-                                      Brightness.dark;
-                                  return GestureDetector(
-                                    onTap: () {
-                                      setState(() => _channel = i);
-                                    },
-                                    child: AnimatedContainer(
-                                      duration:
-                                          const Duration(milliseconds: 180),
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 16, vertical: 5),
-                                      alignment: Alignment.center,
-                                      decoration: BoxDecoration(
-                                        color: sel
-                                            ? scheme.primary
-                                            : (isDark
-                                                ? const Color(0xFF2A2C33)
-                                                : Colors.grey.shade100),
-                                        borderRadius: BorderRadius.circular(18),
-                                        boxShadow: sel
-                                            ? [
-                                                BoxShadow(
-                                                    color: scheme.primary
-                                                        .withValues(alpha: 0.3),
-                                                    blurRadius: 6,
-                                                    offset: const Offset(0, 2)),
-                                              ]
-                                            : null,
-                                      ),
-                                      child: Text(
-                                        _channels[i].$2,
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: sel
-                                              ? FontWeight.w600
-                                              : FontWeight.w400,
+                              // 频道胶囊(热门/最新),随顶栏一起滑出
+                              SizedBox(
+                                height: 40,
+                                child: ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  padding: const EdgeInsets.only(
+                                      left: 12, right: 12, bottom: 4),
+                                  itemCount: _channels.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(width: 8),
+                                  itemBuilder: (_, i) {
+                                    final sel = i == _channel;
+                                    final scheme =
+                                        Theme.of(context).colorScheme;
+                                    final isDark =
+                                        Theme.of(context).brightness ==
+                                            Brightness.dark;
+                                    return GestureDetector(
+                                      onTap: () {
+                                        setState(() => _channel = i);
+                                      },
+                                      child: AnimatedContainer(
+                                        duration:
+                                            const Duration(milliseconds: 180),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 16, vertical: 5),
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
                                           color: sel
-                                              ? Colors.white
+                                              ? scheme.primary
                                               : (isDark
-                                                  ? Colors.grey.shade300
-                                                  : Colors.grey.shade700),
+                                                  ? const Color(0xFF2A2C33)
+                                                  : Colors.grey.shade100),
+                                          borderRadius:
+                                              BorderRadius.circular(18),
+                                          boxShadow: sel
+                                              ? [
+                                                  BoxShadow(
+                                                      color: scheme.primary
+                                                          .withValues(
+                                                              alpha: 0.3),
+                                                      blurRadius: 6,
+                                                      offset:
+                                                          const Offset(0, 2)),
+                                                ]
+                                              : null,
+                                        ),
+                                        child: Text(
+                                          _channels[i].$2,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: sel
+                                                ? FontWeight.w600
+                                                : FontWeight.w400,
+                                            color: sel
+                                                ? Colors.white
+                                                : (isDark
+                                                    ? Colors.grey.shade300
+                                                    : Colors.grey.shade700),
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  );
-                                },
+                                    );
+                                  },
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
             Expanded(
@@ -329,58 +376,42 @@ class _HomePageState extends State<HomePage> {
                 },
                 child: IndexedStack(
                   index: _tab,
-                  children: [
-                    FeedTab(
-                      channelCode: _channels[_channel].$1,
-                      path: _channels[_channel].$3,
-                      listMode: _listMode,
-                    ),
-                    ShelfPage(embedded: true, listMode: _listMode),
-                    const DynamicPage(embedded: true),
-                    MyTab(
-                      onOpenShelf: () => setState(() {
-                        _tab = 1;
-                        _barFrac = 1.0;
-                      }),
-                    ),
-                  ],
+                  children: List<Widget>.generate(4, _tabBody),
                 ),
               ),
             ),
           ],
         ),
-        bottomNavigationBar: ClipRect(
-          // 底栏随顶栏一起 1:1 伸缩(仅首页;切 Tab 时重置为完整显示)
-          child: SizedBox(
-            height: (64 + MediaQuery.of(context).padding.bottom) * _barFrac,
-            child: SingleChildScrollView(
-              physics: const NeverScrollableScrollPhysics(),
-              child: NavigationBar(
-                selectedIndex: _tab,
-                onDestinationSelected: (i) {
-                  setState(() {
-                    _tab = i;
-                    _barFrac = 1.0;
-                  });
-                },
-                destinations: const [
-                  NavigationDestination(
-                      icon: Icon(Icons.home_outlined),
-                      selectedIcon: Icon(Icons.home),
-                      label: '首页'),
-                  NavigationDestination(
-                      icon: Icon(Icons.bookmark_border_rounded),
-                      selectedIcon: Icon(Icons.bookmark_rounded),
-                      label: '书架'),
-                  NavigationDestination(
-                      icon: Icon(Icons.dynamic_feed_outlined),
-                      selectedIcon: Icon(Icons.dynamic_feed),
-                      label: '动态'),
-                  NavigationDestination(
-                      icon: Icon(Icons.person_outline),
-                      selectedIcon: Icon(Icons.person),
-                      label: '我的'),
-                ],
+        bottomNavigationBar: ValueListenableBuilder<double>(
+          valueListenable: _barFrac,
+          builder: (context, barFrac, _) => ClipRect(
+            // 底栏随顶栏一起 1:1 伸缩；只重建底栏，不再重建四个页面。
+            child: SizedBox(
+              height: (64 + MediaQuery.of(context).padding.bottom) * barFrac,
+              child: SingleChildScrollView(
+                physics: const NeverScrollableScrollPhysics(),
+                child: NavigationBar(
+                  selectedIndex: _tab,
+                  onDestinationSelected: _selectTab,
+                  destinations: const [
+                    NavigationDestination(
+                        icon: Icon(Icons.home_outlined),
+                        selectedIcon: Icon(Icons.home),
+                        label: '首页'),
+                    NavigationDestination(
+                        icon: Icon(Icons.bookmark_border_rounded),
+                        selectedIcon: Icon(Icons.bookmark_rounded),
+                        label: '书架'),
+                    NavigationDestination(
+                        icon: Icon(Icons.dynamic_feed_outlined),
+                        selectedIcon: Icon(Icons.dynamic_feed),
+                        label: '动态'),
+                    NavigationDestination(
+                        icon: Icon(Icons.person_outline),
+                        selectedIcon: Icon(Icons.person),
+                        label: '我的'),
+                  ],
+                ),
               ),
             ),
           ),
@@ -414,8 +445,8 @@ class _FeedTabState extends State<FeedTab> {
   bool _loading = false;
   bool _hasMore = true;
   String? _error;
+  int _requestSerial = 0;
 
-  bool get _isRank => widget.path == 'rank';
   bool get _listMode => widget.listMode;
   bool get _showRecommend =>
       widget.channelCode == 'hot' ||
@@ -432,7 +463,8 @@ class _FeedTabState extends State<FeedTab> {
   /// 推荐卡只由信息流父状态加载一次，列表/网格模式共用同一份数据。
   Future<void> _loadRecommend() async {
     final p = await SharedPreferences.getInstance();
-    final raw = p.getString(_recommendCacheKey);
+    final raw =
+        _recommendBooks.isEmpty ? p.getString(_recommendCacheKey) : null;
     if (raw != null) {
       try {
         final cached = (jsonDecode(raw) as List)
@@ -447,16 +479,20 @@ class _FeedTabState extends State<FeedTab> {
       final books = await LKApi.homeRecommend(pageSize: 8);
       if (!mounted) return;
       if (books.isNotEmpty) setState(() => _recommendBooks = books);
-      await p.setString(
-        _recommendCacheKey,
-        jsonEncode(books
-            .map((b) => {
-                  'book_id': b.bookId,
-                  'title': b.title,
-                  'cover_url': b.coverUrl,
-                })
-            .toList()),
-      );
+      unawaited(() async {
+        try {
+          await p.setString(
+            _recommendCacheKey,
+            jsonEncode(books
+                .map((b) => {
+                      'book_id': b.bookId,
+                      'title': b.title,
+                      'cover_url': b.coverUrl,
+                    })
+                .toList()),
+          );
+        } catch (_) {}
+      }());
     } catch (_) {}
   }
 
@@ -464,26 +500,34 @@ class _FeedTabState extends State<FeedTab> {
   void didUpdateWidget(FeedTab old) {
     super.didUpdateWidget(old);
     if (old.channelCode != widget.channelCode || old.path != widget.path) {
+      _items.clear();
+      _page = 0;
+      _hasMore = true;
+      _error = null;
       if (_showRecommend) _loadRecommend();
       _load(1, false);
     }
   }
 
   Future<void> _load(int page, bool append) async {
-    if (_loading) return;
+    if (append && _loading) return;
+    final serial = append ? _requestSerial : ++_requestSerial;
+    final path = widget.path;
+    final channelCode = widget.channelCode;
+    final isRank = path == 'rank';
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final items = _isRank
+      final items = isRank
           ? await LKApi.rank(page, pageSize: 20)
-          : widget.path == '/api/bff/home-feed-v1'
-              ? await LKApi.homeFeed(widget.channelCode, page)
-              : widget.path == '/api/bff/home-recent-updates-feed-v1'
+          : path == '/api/bff/home-feed-v1'
+              ? await LKApi.homeFeed(channelCode, page)
+              : path == '/api/bff/home-recent-updates-feed-v1'
                   ? await LKApi.homeRecentUpdatesFeed(page)
-                  : await LKApi.channelFeed(widget.path, page);
-      if (!mounted) return;
+                  : await LKApi.channelFeed(path, page);
+      if (!mounted || serial != _requestSerial) return;
       setState(() {
         if (append) {
           _items.addAll(items);
@@ -497,9 +541,13 @@ class _FeedTabState extends State<FeedTab> {
         _error = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && serial == _requestSerial) {
+        setState(() => _error = e.toString());
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && serial == _requestSerial) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -1210,8 +1258,12 @@ class _MyTabState extends State<MyTab> {
       }
       return;
     }
-    final cachedProfile = await LKStore.cachedMyProfile(session.uid);
-    final cachedMedals = await LKStore.cachedMedals(session.uid);
+    final cached = await Future.wait<Object?>([
+      LKStore.cachedMyProfile(session.uid),
+      LKStore.cachedMedals(session.uid),
+    ]);
+    final cachedProfile = cached[0] as LKMyProfile?;
+    final cachedMedals = cached[1] as List<LKMedal>?;
     if (!mounted || request != _profileRequest) return;
     setState(() {
       if (cachedProfile != null) _profile = cachedProfile;
@@ -1219,36 +1271,50 @@ class _MyTabState extends State<MyTab> {
       _profileLoading = true;
       _profileError = null;
     });
+    final medalsFuture = _loadMedalsSafely();
     try {
       final profile = await LKApi.myProfile();
       if (mounted) {
         YomiruAvatarCache.precache(context, [profile.avatar, session.avatar]);
       }
-      var medals = profile.medals;
-      try {
-        final loaded = await LKApi.myMedals();
-        medals = loaded;
-        await LKStore.cacheMedals(session.uid, loaded);
-      } catch (_) {
-        // 用户资料已加载时，勋章接口失败不影响页面其余内容。
-        if (cachedMedals != null) medals = cachedMedals;
-        if (medals.isNotEmpty) {
-          await LKStore.cacheMedals(session.uid, medals);
-        }
-      }
-      await LKStore.cacheMyProfile(session.uid, profile);
       if (!mounted || request != _profileRequest) return;
+      final initialMedals = profile.medals.isNotEmpty
+          ? profile.medals
+          : (cachedMedals ?? const <LKMedal>[]);
       setState(() {
         _profile = profile;
-        _medals = medals;
+        _medals = initialMedals;
         _profileLoading = false;
       });
+      unawaited(LKStore.cacheMyProfile(session.uid, profile));
+
+      final loadedMedals = await medalsFuture;
+      if (!mounted || request != _profileRequest) return;
+      if (loadedMedals != null) {
+        setState(() => _medals = loadedMedals);
+        unawaited(LKStore.cacheMedals(session.uid, loadedMedals));
+      } else if (initialMedals.isNotEmpty) {
+        unawaited(LKStore.cacheMedals(session.uid, initialMedals));
+      }
     } catch (_) {
+      final loadedMedals = await medalsFuture;
       if (!mounted || request != _profileRequest) return;
       setState(() {
+        if (loadedMedals != null) _medals = loadedMedals;
         _profileLoading = false;
         _profileError = _profile == null ? '个人资料加载失败，点击重试' : null;
       });
+      if (loadedMedals != null) {
+        unawaited(LKStore.cacheMedals(session.uid, loadedMedals));
+      }
+    }
+  }
+
+  Future<List<LKMedal>?> _loadMedalsSafely() async {
+    try {
+      return await LKApi.myMedals();
+    } catch (_) {
+      return null;
     }
   }
 
@@ -1273,7 +1339,10 @@ class _MyTabState extends State<MyTab> {
               InkWell(
                 onTap: s.isLoggedIn && profileUid > 0
                     ? () => openUserProfile(context, profileUid)
-                    : null,
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const LoginPage()),
+                        ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -1352,13 +1421,6 @@ class _MyTabState extends State<MyTab> {
           ),
         ),
         const SizedBox(height: 16),
-        if (!s.isLoggedIn)
-          FilledButton(
-            onPressed: () => Navigator.push(
-                context, MaterialPageRoute(builder: (_) => const LoginPage())),
-            child: const Text('登录 / 注册'),
-          ),
-        const SizedBox(height: 8),
         if (s.isLoggedIn)
           _row(
               context,
@@ -1521,7 +1583,7 @@ class _MyTabState extends State<MyTab> {
                 backgroundColor:
                     Theme.of(context).colorScheme.surfaceContainerHighest,
                 backgroundImage: medal.image.isNotEmpty
-                    ? YomiruAvatarCache.provider(medal.image)
+                    ? YomiruMedalCache.provider(medal.image)
                     : null,
                 child: medal.image.isEmpty
                     ? const Icon(Icons.military_tech, size: 18)

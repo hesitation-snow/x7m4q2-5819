@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -15,23 +16,32 @@ class LKStore {
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
   static Future<void> load() async {
-    final p = await SharedPreferences.getInstance();
-    var securityKey = '';
-    var secureStorageReady = false;
-    try {
-      securityKey = await _secure.read(key: 'security_key') ?? '';
+    // 两个独立存储并行打开,缩短启动首屏前的等待时间。
+    final preferencesFuture = SharedPreferences.getInstance();
+    final secureKeyFuture = (() async {
+      try {
+        return (await _secure.read(key: 'security_key') ?? '', true);
+      } catch (_) {
+        return ('', false);
+      }
+    })();
+    final p = await preferencesFuture;
+    var (securityKey, secureStorageReady) = await secureKeyFuture;
+    if (secureStorageReady) {
       // 一次性迁移旧版本写入 SharedPreferences 的会话凭据。
       if (securityKey.isEmpty) {
         final legacyKey = p.getString('security_key') ?? '';
         if (legacyKey.isNotEmpty) {
-          await _secure.write(key: 'security_key', value: legacyKey);
-          securityKey = legacyKey;
+          try {
+            await _secure.write(key: 'security_key', value: legacyKey);
+            securityKey = legacyKey;
+          } catch (_) {
+            secureStorageReady = false;
+          }
         }
       }
-      secureStorageReady = true;
-    } catch (_) {
-      // Keychain/Keystore 不可用时不回退读取明文偏好，避免重新暴露凭据。
     }
+    // Keychain/Keystore 不可用时不回退读取明文偏好，避免重新暴露凭据。
     if (secureStorageReady) await p.remove('security_key');
     LKClient.shared.session
       ..securityKey = securityKey
@@ -65,7 +75,11 @@ class LKStore {
   static Future<void> clear() async {
     final p = await SharedPreferences.getInstance();
     final oldUid = LKClient.shared.session.uid;
-    await _secure.delete(key: 'security_key');
+    try {
+      await _secure.delete(key: 'security_key');
+    } catch (_) {
+      // 安全存储暂不可用时仍清理内存会话和其他本地账号资料。
+    }
     await p.remove('security_key');
     await p.remove('uid');
     await p.remove('nickname');
@@ -74,13 +88,60 @@ class LKStore {
       await p.remove(_profileCacheKey(oldUid));
       await p.remove(_medalCacheKey(oldUid));
     }
+    await LKClient.shared.clearResponseCache();
     LKClient.shared.session.clear();
     LKClient.sessionRev.value++;
+  }
+
+  /// 清除可重新从网络取得的资料缓存，保留账号、主题、书架与阅读进度。
+  static Future<void> clearContentCaches() async {
+    _globalMedalsWriteTimer?.cancel();
+    _globalMedalsWriteTimer = null;
+    _globalMedalsMemory = null;
+    _globalMedalsLoad = null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs
+          .getKeys()
+          .where((key) =>
+              key == _globalMedalsKey ||
+              key == 'home_recommend_v2' ||
+              key.startsWith('section_latest_') ||
+              key.startsWith('my_profile_cache_') ||
+              key.startsWith('my_medals_cache_'))
+          .toList(growable: false);
+      await Future.wait(keys.map(prefs.remove));
+    } catch (_) {
+      // 资料缓存失败不影响其他缓存清理。
+    }
+  }
+
+  static Future<int> contentCacheSizeBytes() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getKeys().where((key) =>
+          key == _globalMedalsKey ||
+          key == 'home_recommend_v2' ||
+          key.startsWith('section_latest_') ||
+          key.startsWith('my_profile_cache_') ||
+          key.startsWith('my_medals_cache_'));
+      var total = 0;
+      for (final key in keys) {
+        final value = prefs.get(key);
+        if (value is String) total += utf8.encode(value).length;
+      }
+      return total;
+    } catch (_) {
+      return 0;
+    }
   }
 
   static String _medalCacheKey(int uid) => 'my_medals_cache_$uid';
   static String _profileCacheKey(int uid) => 'my_profile_cache_$uid';
   static const _globalMedalsKey = 'global_user_medals_cache_v1';
+  static Map<int, List<LKMedal>>? _globalMedalsMemory;
+  static Future<Map<int, List<LKMedal>>>? _globalMedalsLoad;
+  static Timer? _globalMedalsWriteTimer;
   static const _localShelfKey = 'local_shelf_books_v1';
   static final ValueNotifier<int> localShelfRev = ValueNotifier<int>(0);
 
@@ -201,9 +262,20 @@ class LKStore {
 
   /// 读取所有动态/公开资料共用的用户勋章缓存，避免每个页面重复请求。
   static Future<Map<int, List<LKMedal>>> cachedGlobalMedals() async {
+    final memory = _globalMedalsMemory;
+    if (memory != null) return Map<int, List<LKMedal>>.from(memory);
+    return _globalMedalsLoad ??= _loadGlobalMedals().whenComplete(() {
+      _globalMedalsLoad = null;
+    });
+  }
+
+  static Future<Map<int, List<LKMedal>>> _loadGlobalMedals() async {
     final raw =
         (await SharedPreferences.getInstance()).getString(_globalMedalsKey);
-    if (raw == null || raw.isEmpty) return {};
+    if (raw == null || raw.isEmpty) {
+      _globalMedalsMemory = <int, List<LKMedal>>{};
+      return {};
+    }
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return {};
@@ -220,8 +292,10 @@ class LKStore {
             .toList();
         if (medals.isNotEmpty) result[uid] = medals;
       }
-      return result;
+      _globalMedalsMemory = result;
+      return Map<int, List<LKMedal>>.from(result);
     } catch (_) {
+      _globalMedalsMemory = <int, List<LKMedal>>{};
       return {};
     }
   }
@@ -233,17 +307,37 @@ class LKStore {
         .toList();
     if (updates.isEmpty) return;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final merged = <String, dynamic>{};
-      final raw = prefs.getString(_globalMedalsKey);
-      if (raw != null && raw.isNotEmpty) {
-        final decoded = jsonDecode(raw);
-        if (decoded is Map) {
-          merged.addAll(Map<String, dynamic>.from(decoded));
+      final merged = Map<int, List<LKMedal>>.from(
+          _globalMedalsMemory ?? await cachedGlobalMedals());
+      for (final entry in updates) {
+        // 已更新用户移动到 Map 末尾，使容量限制保留最近出现的用户。
+        merged.remove(entry.key);
+        merged[entry.key] = entry.value.take(5).toList();
+      }
+      // 控制缓存体积，只保留最近出现的最多 500 个用户。
+      final keys = merged.keys.toList();
+      if (keys.length > 500) {
+        for (final key in keys.take(keys.length - 500)) {
+          merged.remove(key);
         }
       }
-      for (final entry in updates) {
-        merged['${entry.key}'] = entry.value
+      _globalMedalsMemory = merged;
+      _globalMedalsWriteTimer?.cancel();
+      _globalMedalsWriteTimer = Timer(
+        const Duration(milliseconds: 600),
+        () => unawaited(_persistGlobalMedals()),
+      );
+    } catch (_) {
+      // 缓存失败不影响动态内容显示。
+    }
+  }
+
+  static Future<void> _persistGlobalMedals() async {
+    final memory = _globalMedalsMemory;
+    if (memory == null) return;
+    final encoded = <String, dynamic>{
+      for (final entry in memory.entries)
+        '${entry.key}': entry.value
             .take(5)
             .map((medal) => {
                   'medal_id': medal.medalId,
@@ -251,18 +345,13 @@ class LKStore {
                   'image': medal.image,
                   'equipped': medal.equipped,
                 })
-            .toList();
-      }
-      // 控制 SharedPreferences 体积，只保留最近一次合并中的最多 500 个用户。
-      final keys = merged.keys.toList();
-      if (keys.length > 500) {
-        for (final key in keys.take(keys.length - 500)) {
-          merged.remove(key);
-        }
-      }
-      await prefs.setString(_globalMedalsKey, jsonEncode(merged));
+            .toList(),
+    };
+    try {
+      await (await SharedPreferences.getInstance())
+          .setString(_globalMedalsKey, jsonEncode(encoded));
     } catch (_) {
-      // 缓存失败不影响动态内容显示。
+      // 后台持久化失败不影响当前进程内缓存。
     }
   }
 
@@ -276,6 +365,28 @@ class LKStore {
 /// 阅读器偏好(持久化)
 class ReaderPrefs {
   static Future<SharedPreferences> _p() => SharedPreferences.getInstance();
+
+  static Future<ReaderSettings> loadAll() async {
+    final prefs = await _p();
+    return ReaderSettings(
+      fontSize: prefs.getDouble('r_font') ?? 17,
+      lineHeight: prefs.getDouble('r_lh') ?? 1.7,
+      bgPreset: prefs.getInt('r_bg') ?? -1,
+      bgFollowSystem: prefs.getBool('r_bg_sys') ?? false,
+      keepScreenOn: prefs.getBool('r_keep_on') ?? false,
+      hideStatusBar: prefs.getBool('r_hide_bar') ?? false,
+      tapTurnPage: prefs.getBool('r_tap_turn') ?? false,
+      autoMargin: prefs.getBool('r_auto_margin') ?? true,
+      marginTop: prefs.getDouble('r_mt') ?? 56,
+      marginBottom: prefs.getDouble('r_mb') ?? 70,
+      marginLeft: prefs.getDouble('r_ml') ?? 20,
+      marginRight: prefs.getDouble('r_mr') ?? 20,
+      showIndicators: prefs.getBool('r_ind') ?? true,
+      traditional: prefs.getBool('r_trad') ?? false,
+      simplified: prefs.getBool('r_simp') ?? false,
+      pagedMode: prefs.getBool('r_paged') ?? false,
+    );
+  }
 
   static Future<double> fontSize() async =>
       (await _p()).getDouble('r_font') ?? 17;
@@ -368,4 +479,42 @@ class ReaderPrefs {
       (await _p()).getDouble('r_pos_$chapterId') ?? 0;
   static Future<void> setReadPosFrac(int chapterId, double frac) async =>
       (await _p()).setDouble('r_pos_$chapterId', frac.clamp(0.0, 1.0));
+}
+
+class ReaderSettings {
+  final double fontSize;
+  final double lineHeight;
+  final int bgPreset;
+  final bool bgFollowSystem;
+  final bool keepScreenOn;
+  final bool hideStatusBar;
+  final bool tapTurnPage;
+  final bool autoMargin;
+  final double marginTop;
+  final double marginBottom;
+  final double marginLeft;
+  final double marginRight;
+  final bool showIndicators;
+  final bool traditional;
+  final bool simplified;
+  final bool pagedMode;
+
+  const ReaderSettings({
+    required this.fontSize,
+    required this.lineHeight,
+    required this.bgPreset,
+    required this.bgFollowSystem,
+    required this.keepScreenOn,
+    required this.hideStatusBar,
+    required this.tapTurnPage,
+    required this.autoMargin,
+    required this.marginTop,
+    required this.marginBottom,
+    required this.marginLeft,
+    required this.marginRight,
+    required this.showIndicators,
+    required this.traditional,
+    required this.simplified,
+    required this.pagedMode,
+  });
 }

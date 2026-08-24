@@ -9,11 +9,11 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 首次启用时的匿名使用统计。
+/// 匿名安装/每日打开统计和用户主动提交的反馈。
 ///
-/// 该服务不会读取登录态、账号资料、书籍、阅读内容或网络地址。安装标识是
-/// 应用本地随机生成的值，并保存在系统安全存储中；请求失败时静默留待下次
-/// 启动重试，绝不影响应用本身的使用。
+/// 统计部分不会读取登录态、账号资料、书籍、阅读内容或网络地址。安装标识
+/// 是应用本地随机生成的值，并保存在系统安全存储中；请求失败时静默留待下
+/// 次启动重试，绝不影响应用本身的使用。反馈只会在用户主动提交后发送。
 class AnonymousTelemetry {
   AnonymousTelemetry._();
 
@@ -23,8 +23,68 @@ class AnonymousTelemetry {
   static const _secure = FlutterSecureStorage();
   static Future<void>? _inFlight;
 
+  /// 保留旧方法名；现在每次移动端启动发送一次幂等的每日打开事件。
   static Future<void> reportFirstActivation() {
     return _inFlight ??= _report().whenComplete(() => _inFlight = null);
+  }
+
+  static Future<void> submitFeedback(String content) async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      throw const AnonymousTelemetryException('当前平台暂不支持反馈');
+    }
+
+    final message = content
+        .replaceAll(
+          RegExp(r'[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]'),
+          '',
+        )
+        .trim();
+    if (message.isEmpty) {
+      throw const AnonymousTelemetryException('请先填写反馈内容');
+    }
+    if (message.length > 1600) {
+      throw const AnonymousTelemetryException('反馈内容不能超过 1600 字');
+    }
+
+    try {
+      final installationId = await _installationId();
+      final package = await PackageInfo.fromPlatform();
+      final system = await _systemDetails();
+      final payload = <String, Object?>{
+        'type': 'feedback',
+        'message': message,
+        'app': {
+          'version': package.version,
+          'build': package.buildNumber,
+          'platform': system.platform,
+        },
+        'system': {
+          'os': system.os,
+          'architecture': system.architecture,
+          'locale': system.locale,
+          'model': system.model,
+        },
+      };
+      if (installationId != null) {
+        payload['installation_id'] = installationId;
+      }
+
+      final response = await http
+          .post(
+            Uri.parse(_endpoint),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode == 429) {
+        throw const AnonymousTelemetryException('提交的次数太多了，请稍后再试吧。');
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw const AnonymousTelemetryException('反馈发送失败，请稍后重试');
+      }
+    } catch (_) {
+      throw const AnonymousTelemetryException('反馈发送失败，请检查网络后重试');
+    }
   }
 
   static Future<void> _report() async {
@@ -33,7 +93,6 @@ class AnonymousTelemetry {
       if (!Platform.isAndroid && !Platform.isIOS) return;
 
       final preferences = await SharedPreferences.getInstance();
-      if (preferences.getBool(_reportedKey) ?? false) return;
 
       final installationId = await _installationId();
       if (installationId == null) return;
@@ -45,6 +104,7 @@ class AnonymousTelemetry {
             Uri.parse(_endpoint),
             headers: const {'Content-Type': 'application/json'},
             body: jsonEncode({
+              'type': 'open',
               'installation_id': installationId,
               'app': {
                 'version': package.version,
@@ -143,6 +203,16 @@ class AnonymousTelemetry {
     if (compact.isEmpty) return fallback;
     return compact.length <= length ? compact : compact.substring(0, length);
   }
+}
+
+/// 反馈页面直接展示的异常，避免 StateError 的 “Bad state:” 前缀泄露到 UI。
+class AnonymousTelemetryException implements Exception {
+  final String message;
+
+  const AnonymousTelemetryException(this.message);
+
+  @override
+  String toString() => message;
 }
 
 class _SystemDetails {

@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -406,7 +409,7 @@ class _ShelfPageState extends State<ShelfPage> {
   bool _listMode = false;
   bool _localMode = false;
   int _loadSerial = 0;
-  double _topBarFrac = 1.0;
+  final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
   static const double _topBarFlex = 56.0;
 
   @override
@@ -423,6 +426,7 @@ class _ShelfPageState extends State<ShelfPage> {
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionRev);
     LKStore.localShelfRev.removeListener(_onLocalShelfRev);
+    _topBarFrac.dispose();
     super.dispose();
   }
 
@@ -462,17 +466,19 @@ class _ShelfPageState extends State<ShelfPage> {
         notification.dragDetails != null) {
       final delta = notification.scrollDelta ?? 0;
       if (delta.abs() < 0.5) return false;
-      final next = (_topBarFrac - delta / _topBarFlex).clamp(0.0, 1.0);
-      final diff = next - _topBarFrac;
+      final current = _topBarFrac.value;
+      final next = (current - delta / _topBarFlex).clamp(0.0, 1.0);
+      final diff = next - current;
       if (diff == 0 || !mounted) return false;
-      setState(() => _topBarFrac = next);
+      _topBarFrac.value = next;
       Scrollable.of(notification.context!)
           .position
           .correctBy(diff * _topBarFlex);
     } else if (notification is OverscrollNotification) {
+      final current = _topBarFrac.value;
       final next =
-          (_topBarFrac - notification.overscroll / _topBarFlex).clamp(0.0, 1.0);
-      if (next != _topBarFrac && mounted) setState(() => _topBarFrac = next);
+          (current - notification.overscroll / _topBarFlex).clamp(0.0, 1.0);
+      if (next != current && mounted) _topBarFrac.value = next;
     }
     return false;
   }
@@ -664,57 +670,61 @@ class _ShelfPageState extends State<ShelfPage> {
     );
     return Column(
       children: [
-        ClipRect(
-          child: SizedBox(
-            height: _topBarFlex * _topBarFrac,
-            child: Stack(
-              clipBehavior: Clip.hardEdge,
-              children: [
-                Positioned(
-                  top: -_topBarFlex * (1 - _topBarFrac),
-                  left: 0,
-                  right: 0,
-                  height: _topBarFlex,
-                  child: ColoredBox(
-                    color: Theme.of(context).scaffoldBackgroundColor,
-                    child: Padding(
-                      // 与动态顶栏的外层间距一致；标题自身再保留 8px
-                      // 内边距，避免书架文字比“动态”向左错位。
-                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-                      child: Row(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            child: Text(
-                              _localMode ? '本机书架' : '书架',
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
+        ValueListenableBuilder<double>(
+          valueListenable: _topBarFrac,
+          builder: (context, topBarFrac, _) => ClipRect(
+            child: SizedBox(
+              height: _topBarFlex * topBarFrac,
+              child: Stack(
+                clipBehavior: Clip.hardEdge,
+                children: [
+                  Positioned(
+                    top: -_topBarFlex * (1 - topBarFrac),
+                    left: 0,
+                    right: 0,
+                    height: _topBarFlex,
+                    child: ColoredBox(
+                      color: Theme.of(context).scaffoldBackgroundColor,
+                      child: Padding(
+                        // 与动态顶栏的外层间距一致；标题自身再保留 8px
+                        // 内边距，避免书架文字比“动态”向左错位。
+                        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+                        child: Row(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              child: Text(
+                                _localMode ? '本机书架' : '书架',
+                                style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
-                          ),
-                          const Spacer(),
-                          _shelfSourceButton(),
-                          IconButton(
-                            tooltip: _listMode ? '切换为网格排版' : '切换为单列排版',
-                            visualDensity: VisualDensity.compact,
-                            icon: Icon(_listMode
-                                ? Icons.grid_view_rounded
-                                : Icons.view_agenda_outlined),
-                            onPressed: () {
-                              final value = !_listMode;
-                              setState(() => _listMode = value);
-                              ReaderPrefs.setFeedListMode(value);
-                            },
-                          ),
-                        ],
+                            const Spacer(),
+                            _shelfSourceButton(),
+                            IconButton(
+                              tooltip: _listMode ? '切换为网格排版' : '切换为单列排版',
+                              visualDensity: VisualDensity.compact,
+                              icon: Icon(_listMode
+                                  ? Icons.grid_view_rounded
+                                  : Icons.view_agenda_outlined),
+                              onPressed: () {
+                                final value = !_listMode;
+                                setState(() => _listMode = value);
+                                ReaderPrefs.setFeedListMode(value);
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -760,6 +770,10 @@ class _CommentsPageState extends State<CommentsPage> {
   bool _uploadingImage = false;
   final Set<String> _selectedPollOptions = <String>{};
   bool _pollSubmitting = false;
+  final Map<int, List<LKComment>> _repliesByComment = {};
+  final Set<int> _loadingReplies = <int>{};
+  final Map<int, String> _replyErrors = <int, String>{};
+  LKComment? _replyTarget;
 
   bool get _isVolume => widget.volumeId > 0;
   bool get _isDynamic => widget.dynamicId > 0;
@@ -811,7 +825,15 @@ class _CommentsPageState extends State<CommentsPage> {
               ? await LKApi.volumeComments(widget.bookId, widget.volumeId, 1)
               : await LKApi.bookComments(widget.bookId, 1);
       if (!mounted) return;
-      setState(() => _comments = cs);
+      setState(() {
+        _comments = cs;
+        _repliesByComment
+          ..clear()
+          ..addEntries(cs
+              .where((comment) => comment.replies.isNotEmpty)
+              .map((comment) => MapEntry(comment.commentId, comment.replies)));
+        _replyErrors.clear();
+      });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
@@ -841,10 +863,11 @@ class _CommentsPageState extends State<CommentsPage> {
   Future<void> _publish() async {
     final content = _input.text.trim();
     if (content.isEmpty) return;
+    final replyTarget = _replyTarget;
     try {
       if (_isDynamic) {
         await LKApi.publishDynamicComment(widget.dynamicId, content,
-            media: _pendingMedia);
+            replyCommentId: replyTarget?.commentId ?? 0, media: _pendingMedia);
       } else if (_isVolume) {
         await LKApi.publishBookComment(widget.bookId, content,
             volumeId: widget.volumeId, media: _pendingMedia);
@@ -854,6 +877,7 @@ class _CommentsPageState extends State<CommentsPage> {
       }
       _input.clear();
       _pendingMedia.clear();
+      if (mounted) setState(() => _replyTarget = null);
       _load();
     } catch (e) {
       if (mounted) showLkError(context, e);
@@ -876,6 +900,31 @@ class _CommentsPageState extends State<CommentsPage> {
     }
   }
 
+  Future<void> _toggleReplies(LKComment comment) async {
+    if (comment.commentId <= 0 || _loadingReplies.contains(comment.commentId)) {
+      return;
+    }
+    if (_repliesByComment.containsKey(comment.commentId)) {
+      setState(() => _repliesByComment.remove(comment.commentId));
+      return;
+    }
+    setState(() {
+      _loadingReplies.add(comment.commentId);
+      _replyErrors.remove(comment.commentId);
+    });
+    try {
+      final replies = await LKApi.dynamicComments(widget.dynamicId,
+          commentId: comment.commentId);
+      if (!mounted) return;
+      setState(() => _repliesByComment[comment.commentId] = replies);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _replyErrors[comment.commentId] = e.toString());
+    } finally {
+      if (mounted) setState(() => _loadingReplies.remove(comment.commentId));
+    }
+  }
+
   /// 渲染评论内容:把表情代码({:xx:} / [s:数字] 等)替换为表情图片
   Widget _renderContent(String content) {
     final spans = <InlineSpan>[];
@@ -892,12 +941,13 @@ class _CommentsPageState extends State<CommentsPage> {
           alignment: PlaceholderAlignment.middle,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 1),
-            child: Image.network(
-              url,
+            child: CachedNetworkImage(
+              imageUrl: url,
               width: 24,
               height: 24,
+              memCacheWidth: imageCacheDimension(context, 24),
               fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) =>
+              errorWidget: (_, __, ___) =>
                   Text(code, style: const TextStyle(fontSize: 12)),
             ),
           ),
@@ -931,21 +981,44 @@ class _CommentsPageState extends State<CommentsPage> {
   /// 点赞/取消点赞(乐观更新,失败回滚)
   Future<void> _toggleLike(dynamic c) async {
     final wasLiked = c.liked as bool;
-    final idx = _comments.indexOf(c);
-    if (idx < 0) return;
+    final rootIndex = _comments.indexOf(c);
+    var replyIndex = -1;
+    var replyParentId = 0;
+    if (rootIndex < 0 && _isDynamic) {
+      for (final entry in _repliesByComment.entries) {
+        final index = entry.value.indexOf(c);
+        if (index >= 0) {
+          replyParentId = entry.key;
+          replyIndex = index;
+          break;
+        }
+      }
+    }
+    if (rootIndex < 0 && replyIndex < 0) return;
+    final updated = LKComment(
+      commentId: c.commentId,
+      rootCommentId: c.rootCommentId,
+      replyToCommentId: c.replyToCommentId,
+      userUid: c.userUid,
+      nickname: c.nickname,
+      replyToNickname: c.replyToNickname,
+      avatar: c.avatar,
+      content: c.content,
+      time: c.time,
+      likeCount: (c.likeCount as int) + (wasLiked ? -1 : 1),
+      liked: !wasLiked,
+      media: c.media,
+      replyCount: c.replyCount,
+      replies: c.replies,
+    );
     setState(() {
-      _comments[idx] = LKComment(
-        commentId: c.commentId,
-        userUid: c.userUid,
-        nickname: c.nickname,
-        avatar: c.avatar,
-        content: c.content,
-        time: c.time,
-        likeCount: (c.likeCount as int) + (wasLiked ? -1 : 1),
-        liked: !wasLiked,
-        media: c.media,
-        replyCount: c.replyCount,
-      );
+      if (rootIndex >= 0) {
+        _comments[rootIndex] = updated;
+      } else {
+        final replies = List<LKComment>.from(_repliesByComment[replyParentId]!);
+        replies[replyIndex] = updated;
+        _repliesByComment[replyParentId] = replies;
+      }
     });
     try {
       if (_isDynamic) {
@@ -958,7 +1031,16 @@ class _CommentsPageState extends State<CommentsPage> {
     } catch (e) {
       // 失败回滚
       if (!mounted) return;
-      setState(() => _comments[idx] = c);
+      setState(() {
+        if (rootIndex >= 0) {
+          _comments[rootIndex] = c;
+        } else {
+          final replies =
+              List<LKComment>.from(_repliesByComment[replyParentId]!);
+          replies[replyIndex] = c;
+          _repliesByComment[replyParentId] = replies;
+        }
+      });
       showLkError(context, e);
     }
   }
@@ -1007,8 +1089,13 @@ class _CommentsPageState extends State<CommentsPage> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
-                    child: Image.network(item.url,
-                        width: 92, height: 92, fit: BoxFit.cover),
+                    child: CachedNetworkImage(
+                      imageUrl: item.url,
+                      width: 92,
+                      height: 92,
+                      memCacheWidth: imageCacheDimension(context, 92),
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 ))
             .toList(),
@@ -1136,8 +1223,83 @@ class _CommentsPageState extends State<CommentsPage> {
     );
   }
 
+  Widget _replyControls(LKComment comment, {bool isReply = false}) {
+    if (!_isDynamic) {
+      return const SizedBox.shrink();
+    }
+    final expanded =
+        !isReply && _repliesByComment.containsKey(comment.commentId);
+    final loading = !isReply && _loadingReplies.contains(comment.commentId);
+    final error = !isReply ? _replyErrors[comment.commentId] : null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        children: [
+          TextButton.icon(
+            onPressed: () => setState(() => _replyTarget = comment),
+            icon: const Icon(Icons.reply_rounded, size: 17),
+            label: Text(
+                _replyTarget?.commentId == comment.commentId ? '正在回复' : '回复'),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+            ),
+          ),
+          if (!isReply && comment.replyCount > 0)
+            TextButton.icon(
+              onPressed: loading ? null : () => _toggleReplies(comment),
+              icon: Icon(expanded
+                  ? Icons.keyboard_arrow_up_rounded
+                  : Icons.keyboard_arrow_down_rounded),
+              label: Text(loading
+                  ? '加载回复…'
+                  : expanded
+                      ? '收起回复'
+                      : '查看 ${comment.replyCount} 条回复'),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+              ),
+            ),
+          if (error != null)
+            TextButton(
+              onPressed: () => _toggleReplies(comment),
+              child: const Text('重试'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _replyList(LKComment parent) {
+    final replies = _repliesByComment[parent.commentId];
+    if (replies == null) return const SizedBox.shrink();
+    if (replies.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 6),
+        child: Text('暂时没有可显示的回复',
+            style: TextStyle(fontSize: 12, color: Colors.grey)),
+      );
+    }
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(left: 8),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+        ),
+      ),
+      child: Column(
+        children:
+            replies.map((reply) => _commentItem(reply, isReply: true)).toList(),
+      ),
+    );
+  }
+
   /// 评论采用左侧头像 + 右侧正文布局，日期统一放在昵称下方。
-  Widget _commentItem(dynamic c) {
+  Widget _commentItem(dynamic c, {bool isReply = false}) {
     final avatar = CircleAvatar(
       radius: 24,
       backgroundImage:
@@ -1149,6 +1311,9 @@ class _CommentsPageState extends State<CommentsPage> {
       children: [
         Text(c.nickname,
             style: TextStyle(fontSize: 13, color: Colors.indigo.shade400)),
+        if (c.replyToNickname.isNotEmpty)
+          Text('回复 @${c.replyToNickname}',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
         if (c.time.isNotEmpty)
           Text(
             _formatCommentTime(c.time),
@@ -1183,6 +1348,8 @@ class _CommentsPageState extends State<CommentsPage> {
                   const SizedBox(height: 5),
                   _renderContent(c.content),
                   _mediaGallery(c.media),
+                  _replyControls(c, isReply: isReply),
+                  if (!isReply) _replyList(c),
                 ],
               ),
             ),
@@ -1242,6 +1409,12 @@ class _CommentsPageState extends State<CommentsPage> {
           emojiGroups: _emojiGroups,
           isVolume: _isVolume,
           hintText: _isDynamic ? '写下你的动态评论…' : null,
+          replyLabel: _replyTarget == null
+              ? null
+              : '回复 @${_replyTarget!.nickname.isEmpty ? '用户' : _replyTarget!.nickname}',
+          onCancelReply: _replyTarget == null
+              ? null
+              : () => setState(() => _replyTarget = null),
           onPickImage: _pickImage,
           pendingImageUrl:
               _pendingMedia.isEmpty ? null : _pendingMedia.last.url,
@@ -1261,6 +1434,8 @@ class _CommentsInputBar extends StatefulWidget {
   final List<LKEmojiGroup> emojiGroups;
   final bool isVolume;
   final String? hintText;
+  final String? replyLabel;
+  final VoidCallback? onCancelReply;
   final VoidCallback? onPickImage;
   final String? pendingImageUrl;
   final VoidCallback? onRemoveImage;
@@ -1271,6 +1446,8 @@ class _CommentsInputBar extends StatefulWidget {
     required this.emojiGroups,
     required this.isVolume,
     this.hintText,
+    this.replyLabel,
+    this.onCancelReply,
     this.onPickImage,
     this.pendingImageUrl,
     this.onRemoveImage,
@@ -1284,13 +1461,34 @@ class _CommentsInputBar extends StatefulWidget {
 class _CommentsInputBarState extends State<_CommentsInputBar> {
   final _focus = FocusNode();
   bool _showEmoji = false;
-  double _lastKeyboardH = 0;
   bool _keyboardReturning = false;
+  double _keyboardTransitionHeight = 0;
+  Timer? _keyboardTransitionTimer;
 
   @override
   void dispose() {
+    _keyboardTransitionTimer?.cancel();
     _focus.dispose();
     super.dispose();
+  }
+
+  double _emojiPanelHeight() =>
+      (MediaQuery.sizeOf(context).height * 0.42).clamp(300.0, 360.0).toDouble();
+
+  void _returnToKeyboard() {
+    _keyboardTransitionTimer?.cancel();
+    final reserveHeight = _emojiPanelHeight();
+    setState(() {
+      _showEmoji = false;
+      _keyboardReturning = true;
+      _keyboardTransitionHeight = reserveHeight;
+    });
+    _focus.requestFocus();
+    // 输入法出现期间继续占住表情面板高度，避免输入栏先落底再弹起。
+    _keyboardTransitionTimer = Timer(const Duration(milliseconds: 450), () {
+      if (!mounted) return;
+      setState(() => _keyboardReturning = false);
+    });
   }
 
   void _toggleEmoji() {
@@ -1299,12 +1497,14 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
       return;
     }
     if (_showEmoji) {
-      _keyboardReturning = true;
-      setState(() => _showEmoji = false);
-      _focus.requestFocus();
+      _returnToKeyboard();
     } else {
+      _keyboardTransitionTimer?.cancel();
       _focus.unfocus();
-      setState(() => _showEmoji = true);
+      setState(() {
+        _showEmoji = true;
+        _keyboardReturning = false;
+      });
     }
   }
 
@@ -1322,19 +1522,13 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
   Widget build(BuildContext context) {
     // 系统已经在动画中逐帧更新 viewInsets，不再叠加 AnimatedPadding。
     final inset = MediaQuery.viewInsetsOf(context).bottom;
-    if (inset > 0 && inset > _lastKeyboardH) _lastKeyboardH = inset;
-    final panelH =
-        _showEmoji ? (_lastKeyboardH > 0 ? _lastKeyboardH : 300.0) : 0.0;
+    final panelH = _showEmoji ? _emojiPanelHeight() : 0.0;
     final double bottomPad;
     if (_showEmoji) {
       bottomPad = panelH;
     } else if (_keyboardReturning) {
-      bottomPad = _lastKeyboardH;
-      if (inset >= _lastKeyboardH - 1) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _keyboardReturning = false;
-        });
-      }
+      bottomPad =
+          inset > _keyboardTransitionHeight ? inset : _keyboardTransitionHeight;
     } else {
       bottomPad = inset;
     }
@@ -1366,6 +1560,32 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
           child: Padding(
             padding: const EdgeInsets.all(8),
             child: Column(children: [
+              if (widget.replyLabel != null && widget.replyLabel!.isNotEmpty)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 6, left: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            widget.replyLabel!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          tooltip: '取消回复',
+                          icon: const Icon(Icons.close, size: 17),
+                          onPressed: widget.onCancelReply,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               if (widget.pendingImageUrl != null &&
                   widget.pendingImageUrl!.isNotEmpty)
                 Align(
@@ -1376,8 +1596,13 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(6),
-                          child: Image.network(widget.pendingImageUrl!,
-                              width: 56, height: 56, fit: BoxFit.cover),
+                          child: CachedNetworkImage(
+                            imageUrl: widget.pendingImageUrl!,
+                            width: 56,
+                            height: 56,
+                            memCacheWidth: imageCacheDimension(context, 56),
+                            fit: BoxFit.cover,
+                          ),
                         ),
                         Positioned(
                           right: -8,
@@ -1412,8 +1637,7 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
                     focusNode: _focus,
                     onTap: () {
                       if (_showEmoji) {
-                        _keyboardReturning = true;
-                        setState(() => _showEmoji = false);
+                        _returnToKeyboard();
                       }
                     },
                     decoration: InputDecoration(
@@ -1502,13 +1726,15 @@ class _EmojiPanelState extends State<_EmojiPanel> {
               borderRadius: BorderRadius.circular(8),
               onTap: () => widget.onPick(it.code),
               child: it.isImage
-                  ? Image.network(
-                      it.url.replaceFirst('api.lightnovel.fun/static/',
+                  ? CachedNetworkImage(
+                      imageUrl: it.url.replaceFirst(
+                          'api.lightnovel.fun/static/',
                           'static.lightnovel.fun/'),
                       width: 32,
                       height: 32,
+                      memCacheWidth: imageCacheDimension(context, 32),
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Icon(
+                      errorWidget: (_, __, ___) => const Icon(
                           Icons.broken_image_outlined,
                           size: 20,
                           color: Colors.grey),
