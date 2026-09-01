@@ -402,13 +402,17 @@ class _MedalShopPageState extends State<MedalShopPage> {
   }
 
   Future<void> _exchange(Map<String, dynamic> item) async {
-    final id =
-        _id(item, const ['medal_id', 'medalId', 'goods_id', 'goodsId', 'id']);
-    final key = 'exchange:$id';
-    if (id <= 0 || _busy.contains(key)) return;
+    final medalId = _id(item, const ['medal_id', 'medalId', 'id']);
+    final goodsId = _id(item, const ['goods_id', 'goodsId']);
+    final requestId = goodsId > 0 ? goodsId : medalId;
+    final key = 'exchange:$requestId';
+    if (requestId <= 0 || _busy.contains(key)) return;
     setState(() => _busy.add(key));
     try {
-      await LKApi.exchangeMedal(id);
+      await LKApi.exchangeMedal(
+        medalId > 0 ? medalId : requestId,
+        goodsId: goodsId > 0 ? goodsId : null,
+      );
       if (mounted) {
         showLkError(context, '兑换成功');
         await _load();

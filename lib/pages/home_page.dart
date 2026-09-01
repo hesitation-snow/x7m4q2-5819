@@ -13,12 +13,14 @@ import '../services/avatar_cache.dart';
 import '../services/app_update_service.dart';
 import '../widgets/common.dart';
 import 'book_detail_page.dart';
+import 'brave_quiz_page.dart';
 import 'channel_page.dart';
 import 'dm_chat_page.dart';
 import 'dynamic_page.dart';
 import 'follow_list_page.dart';
 import 'login_page.dart';
 import 'medal_center_page.dart';
+import 'messages_page.dart';
 import 'search_page.dart';
 import 'user_profile_page.dart';
 import 'welfare_page.dart';
@@ -1224,6 +1226,7 @@ class _MyTabState extends State<MyTab> {
   bool _profileLoading = false;
   String? _profileError;
   int _profileRequest = 0;
+  LKMessageSummary _messageSummary = const LKMessageSummary();
 
   @override
   void initState() {
@@ -1244,7 +1247,7 @@ class _MyTabState extends State<MyTab> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _reloadProfile() async {
+  Future<void> _reloadProfile({bool waitForMessages = false}) async {
     final session = LKClient.shared.session;
     final request = ++_profileRequest;
     if (!session.isLoggedIn) {
@@ -1254,10 +1257,13 @@ class _MyTabState extends State<MyTab> {
           _medals = const [];
           _profileLoading = false;
           _profileError = null;
+          _messageSummary = const LKMessageSummary();
         });
       }
       return;
     }
+    final messageSummaryFuture = _reloadMessageSummary(request);
+    if (!waitForMessages) unawaited(messageSummaryFuture);
     final cached = await Future.wait<Object?>([
       LKStore.cachedMyProfile(session.uid),
       LKStore.cachedMedals(session.uid),
@@ -1308,6 +1314,7 @@ class _MyTabState extends State<MyTab> {
         unawaited(LKStore.cacheMedals(session.uid, loadedMedals));
       }
     }
+    if (waitForMessages) await messageSummaryFuture;
   }
 
   Future<List<LKMedal>?> _loadMedalsSafely() async {
@@ -1315,6 +1322,16 @@ class _MyTabState extends State<MyTab> {
       return await LKApi.myMedals();
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<void> _reloadMessageSummary(int request) async {
+    try {
+      final summary = await LKApi.messageUnread();
+      if (!mounted || request != _profileRequest) return;
+      setState(() => _messageSummary = summary);
+    } catch (_) {
+      // 消息汇总失败不影响“我的”页面和消息中心入口。
     }
   }
 
@@ -1328,140 +1345,157 @@ class _MyTabState extends State<MyTab> {
     final nickname =
         profile?.nickname.isNotEmpty == true ? profile!.nickname : s.nickname;
     final profileUid = profile != null && profile.uid > 0 ? profile.uid : s.uid;
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        // 用户主页资料卡:用户信息、统计入口和勋章统一放在同一张卡片内。
-        Card(
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              InkWell(
-                onTap: s.isLoggedIn && profileUid > 0
-                    ? () => openUserProfile(context, profileUid)
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const LoginPage()),
-                        ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      Row(children: [
-                        Container(
-                          padding: const EdgeInsets.all(3),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                                color: scheme.outline.withValues(alpha: 0.55),
-                                width: 2),
+    return RefreshIndicator(
+      onRefresh: () => _reloadProfile(waitForMessages: true),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          // 用户主页资料卡:用户信息、统计入口和勋章统一放在同一张卡片内。
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                InkWell(
+                  onTap: s.isLoggedIn && profileUid > 0
+                      ? () => openUserProfile(context, profileUid)
+                      : () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const LoginPage()),
                           ),
-                          child: CircleAvatar(
-                            radius: 28,
-                            backgroundColor: scheme.surfaceContainerHighest,
-                            backgroundImage: avatar.isNotEmpty
-                                ? YomiruAvatarCache.provider(avatar)
-                                : null,
-                            child: avatar.isEmpty
-                                ? Icon(Icons.person,
-                                    size: 30, color: scheme.onSurfaceVariant)
-                                : null,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        Row(children: [
+                          Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: scheme.outline.withValues(alpha: 0.55),
+                                  width: 2),
+                            ),
+                            child: CircleAvatar(
+                              radius: 28,
+                              backgroundColor: scheme.surfaceContainerHighest,
+                              backgroundImage: avatar.isNotEmpty
+                                  ? YomiruAvatarCache.provider(avatar)
+                                  : null,
+                              child: avatar.isEmpty
+                                  ? Icon(Icons.person,
+                                      size: 30, color: scheme.onSurfaceVariant)
+                                  : null,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(s.isLoggedIn ? nickname : '未登录',
-                                    style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: scheme.onSurface)),
-                                const SizedBox(height: 3),
-                                Text(
-                                    s.isLoggedIn
-                                        ? 'UID: ${s.uid}'
-                                        : '登录后可同步书架、阅读进度、书评与消息',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: scheme.onSurfaceVariant)),
-                              ]),
-                        ),
-                        Icon(Icons.chevron_right_rounded,
-                            color: scheme.onSurfaceVariant),
-                      ]),
-                      if (s.isLoggedIn && _medals.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        _headerMedalStrip(_medals),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(s.isLoggedIn ? nickname : '未登录',
+                                      style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                          color: scheme.onSurface)),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                      s.isLoggedIn
+                                          ? 'UID: ${s.uid}'
+                                          : '登录后可同步书架、阅读进度、书评与消息',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: scheme.onSurfaceVariant)),
+                                ]),
+                          ),
+                          Icon(Icons.chevron_right_rounded,
+                              color: scheme.onSurfaceVariant),
+                        ]),
+                        if (s.isLoggedIn && _medals.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          _headerMedalStrip(_medals),
+                        ],
                       ],
-                    ],
-                  ),
-                ),
-              ),
-              if (s.isLoggedIn) ...[
-                Divider(height: 1, color: scheme.outlineVariant),
-                if (_profileLoading && profile == null)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                if (profile != null) _profileSummary(profile),
-                if (_profileError != null && profile == null)
-                  ListTile(
-                    leading: const Icon(Icons.info_outline),
-                    title: Text(_profileError!),
-                    trailing: TextButton(
-                      onPressed: _reloadProfile,
-                      child: const Text('重试'),
                     ),
                   ),
+                ),
+                if (s.isLoggedIn) ...[
+                  Divider(height: 1, color: scheme.outlineVariant),
+                  if (_profileLoading && profile == null)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  if (profile != null) _profileSummary(profile),
+                  if (_profileError != null && profile == null)
+                    ListTile(
+                      leading: const Icon(Icons.info_outline),
+                      title: Text(_profileError!),
+                      trailing: TextButton(
+                        onPressed: _reloadProfile,
+                        child: const Text('重试'),
+                      ),
+                    ),
+                ],
               ],
-            ],
+            ),
           ),
-        ),
-        const SizedBox(height: 16),
-        if (s.isLoggedIn)
+          const SizedBox(height: 16),
+          if (s.isLoggedIn)
+            _row(
+                context,
+                Icons.card_giftcard_outlined,
+                '任务中心',
+                () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const WelfarePage()))),
+          if (s.isLoggedIn)
+            _row(context, Icons.chat_bubble_outline, '消息中心', () async {
+              await Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const MessagesPage()));
+              if (mounted) {
+                unawaited(_reloadMessageSummary(_profileRequest));
+              }
+            }, badgeCount: _messageSummary.unreadCount),
+          if (s.isLoggedIn)
+            _row(
+                context,
+                Icons.military_tech_outlined,
+                '勋章中心',
+                () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const MedalCenterPage()))),
           _row(
               context,
-              Icons.card_giftcard_outlined,
-              '任务中心',
+              Icons.settings_outlined,
+              '设置',
               () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const WelfarePage()))),
-        if (s.isLoggedIn)
-          _row(
-              context,
-              Icons.chat_bubble_outline,
-              '消息中心',
-              () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const MessagesPage()))),
-        if (s.isLoggedIn)
-          _row(
-              context,
-              Icons.military_tech_outlined,
-              '勋章中心',
-              () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const MedalCenterPage()))),
-        _row(
-            context,
-            Icons.settings_outlined,
-            '设置',
-            () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const SettingsPage()))),
-      ],
+                  MaterialPageRoute(builder: (_) => const SettingsPage()))),
+        ],
+      ),
     );
   }
 
   Widget _row(
       BuildContext context, IconData icon, String title, VoidCallback onTap,
-      {String? subtitle}) {
+      {String? subtitle, int badgeCount = 0}) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
         leading: Icon(icon),
         title: Text(title),
         subtitle: subtitle == null ? null : Text(subtitle),
-        trailing: const Icon(Icons.chevron_right),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (badgeCount > 0) ...[
+              Badge(label: Text(badgeCount > 99 ? '99+' : '$badgeCount')),
+              const SizedBox(width: 8),
+            ],
+            const Icon(Icons.chevron_right),
+          ],
+        ),
         onTap: onTap,
       ),
     );
@@ -1471,6 +1505,34 @@ class _MyTabState extends State<MyTab> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(name.isEmpty ? '未知勋章' : name)),
     );
+  }
+
+  Future<void> _confirmOpenBraveQuiz() async {
+    final open = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('进入勇者考试？'),
+        content: const Text(
+          '完成 50 道轻国知识题并达到 60 分，即可获得勇者身份。每天仅可提交一次。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('暂不进入'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('进入考试'),
+          ),
+        ],
+      ),
+    );
+    if (open == true && mounted) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const BraveQuizPage()),
+      );
+    }
   }
 
   Widget _profileSummary(LKMyProfile profile) {
@@ -1491,6 +1553,7 @@ class _MyTabState extends State<MyTab> {
                 profile.isBrave ? Icons.shield_outlined : Icons.person_outline,
                 profile.isBrave ? '勇者' : '普通用户',
                 color: profile.isBrave ? Colors.deepOrange : null,
+                onTap: profile.isBrave ? null : _confirmOpenBraveQuiz,
               ),
             ],
           ),
@@ -1596,11 +1659,19 @@ class _MyTabState extends State<MyTab> {
     );
   }
 
-  Widget _profileChip(IconData icon, String label, {Color? color}) {
-    return Chip(
+  Widget _profileChip(IconData icon, String label,
+      {Color? color, VoidCallback? onTap}) {
+    final chip = Chip(
       avatar: Icon(icon, size: 18, color: color),
       label: Text(label),
       visualDensity: VisualDensity.compact,
     );
+    return onTap == null
+        ? chip
+        : InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: chip,
+          );
   }
 }

@@ -11,6 +11,8 @@ import '../api/models.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
 import '../services/avatar_cache.dart';
+import '../services/emoji_catalog.dart';
+import '../widgets/emoji_text.dart';
 import 'book_detail_page.dart';
 import 'media_viewer_page.dart';
 import 'user_profile_page.dart';
@@ -100,6 +102,7 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Future<void> _search(int page, bool append) async {
+    if (append && (_loading || !_hasMore)) return;
     var query = _controller.text.trim();
     if (query.isEmpty && _tag == null && _channel == null) return;
     var preset = '';
@@ -163,169 +166,180 @@ class _SearchPageState extends State<SearchPage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 0,
-        title: Container(
-          height: 38,
-          margin: const EdgeInsets.only(right: 8),
-          child: TextField(
-            controller: _controller,
-            autofocus: true,
-            textInputAction: TextInputAction.search,
-            onSubmitted: (_) => _search(0, false),
-            style: const TextStyle(fontSize: 14),
-            decoration: InputDecoration(
-              hintText: '搜索书名 / 作者 / 标签',
-              isDense: true,
-              fillColor: isDark ? const Color(0xFF2A2C33) : Colors.white,
-              prefixIcon: const Icon(Icons.search_rounded, size: 19),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(20),
-                borderSide: BorderSide.none,
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverAppBar(
+              floating: true,
+              pinned: false,
+              snap: false,
+              titleSpacing: 0,
+              title: Container(
+                height: 38,
+                margin: const EdgeInsets.only(right: 8),
+                child: TextField(
+                  controller: _controller,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => _search(0, false),
+                  style: const TextStyle(fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: '搜索书名 / 作者 / 标签',
+                    isDense: true,
+                    fillColor: isDark ? const Color(0xFF2A2C33) : Colors.white,
+                    prefixIcon: const Icon(Icons.search_rounded, size: 19),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => _search(0, false),
-            child: const Text('搜索'),
-          ),
-        ],
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 排序
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-            child: Row(
-              children: [
-                _segBtn('相关', 'relevance'),
-                const SizedBox(width: 8),
-                _segBtn('最新', 'new'),
+              actions: [
+                TextButton(
+                  onPressed: () => _search(0, false),
+                  child: const Text('搜索'),
+                ),
               ],
             ),
-          ),
-          // 分类
-          SizedBox(
-            height: 42,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              children: [
-                _chip('全部', _channel == null, () {
-                  setState(() => _channel = null);
-                  _search(0, false);
-                }),
-                for (final c in _channels)
-                  _chip(c['label']!, _channel == c['code'], () {
-                    setState(() {
-                      _channel = c['code'];
-                      _tag = null;
-                    });
-                    _search(0, false);
-                  }),
-              ],
-            ),
-          ),
-          // 标签(含最近更新)
-          if (_tags.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 6,
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _chip('全部标签', _tag == null, () {
-                    setState(() => _tag = null);
-                    _search(0, false);
-                  }, trailingPadding: false),
-                  for (final t in _tags)
-                    _chip(
-                      t['title']!,
-                      _tag == t['jumpValue'],
-                      () {
-                        setState(() {
-                          _tag = t['jumpValue'];
-                          _channel = null;
-                        });
-                        _search(0, false);
-                      },
-                      trailingPadding: false,
+                  // 排序
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    child: Row(
+                      children: [
+                        _segBtn('相关', 'relevance'),
+                        const SizedBox(width: 8),
+                        _segBtn('最新', 'new'),
+                      ],
+                    ),
+                  ),
+                  // 分类
+                  SizedBox(
+                    height: 42,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      children: [
+                        _chip('全部', _channel == null, () {
+                          setState(() => _channel = null);
+                          _search(0, false);
+                        }),
+                        for (final c in _channels)
+                          _chip(c['label']!, _channel == c['code'], () {
+                            setState(() {
+                              _channel = c['code'];
+                              _tag = null;
+                            });
+                            _search(0, false);
+                          }),
+                      ],
+                    ),
+                  ),
+                  // 标签(含最近更新)
+                  if (_tags.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          _chip('全部标签', _tag == null, () {
+                            setState(() => _tag = null);
+                            _search(0, false);
+                          }, trailingPadding: false),
+                          for (final t in _tags)
+                            _chip(
+                              t['title']!,
+                              _tag == t['jumpValue'],
+                              () {
+                                setState(() {
+                                  _tag = t['jumpValue'];
+                                  _channel = null;
+                                });
+                                _search(0, false);
+                              },
+                              trailingPadding: false,
+                            ),
+                        ],
+                      ),
                     ),
                 ],
               ),
             ),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _refresh,
-              child: _error != null && _items.isEmpty
-                  ? _refreshableMessage(_error!)
-                  : _items.isEmpty && _loading
-                      ? ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          children: [
-                            SizedBox(
-                              height: MediaQuery.sizeOf(context).height * 0.65,
-                              child: const Center(child: LkLoadingIndicator()),
-                            ),
-                          ],
-                        )
-                      : _items.isEmpty && !_loading
-                          ? _refreshableMessage(_controller.text.isEmpty &&
-                                  _tag == null &&
-                                  _channel == null
-                              ? '输入关键词,或选择标签 / 分类 / 更新时间'
-                              : '没有找到相关作品')
-                          : GridView.builder(
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              padding: EdgeInsets.fromLTRB(12, 4, 12,
-                                  12 + MediaQuery.of(context).padding.bottom),
-                              gridDelegate: bookGridDelegate(),
-                              itemCount: _items.length + (_hasMore ? 1 : 0),
-                              itemBuilder: (_, i) {
-                                if (i >= _items.length) {
-                                  WidgetsBinding.instance
-                                      .addPostFrameCallback((_) {
-                                    if (mounted) _search(_page + 1, true);
-                                  });
-                                  return const LkLoadingIndicator();
-                                }
-                                final b = _items[i];
-                                return BookGridCard(
-                                  book: b,
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                        builder: (_) =>
-                                            BookDetailPage(bookId: b.bookId)),
-                                  ),
-                                );
-                              },
-                            ),
-            ),
-          ),
-        ],
+            ..._resultSlivers(context),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _refreshableMessage(String message) {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.6,
-          child: Center(
-            child: Text(message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.grey)),
+  List<Widget> _resultSlivers(BuildContext context) {
+    if (_error != null && _items.isEmpty) {
+      return [_messageSliver(_error!)];
+    }
+    if (_items.isEmpty && _loading) {
+      return const [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(child: LkLoadingIndicator()),
+        ),
+      ];
+    }
+    if (_items.isEmpty) {
+      return [
+        _messageSliver(
+          _controller.text.isEmpty && _tag == null && _channel == null
+              ? '输入关键词,或选择标签 / 分类 / 更新时间'
+              : '没有找到相关作品',
+        ),
+      ];
+    }
+    return [
+      SliverPadding(
+        padding: EdgeInsets.fromLTRB(
+            12, 4, 12, 12 + MediaQuery.of(context).padding.bottom),
+        sliver: SliverGrid(
+          gridDelegate: bookGridDelegate(),
+          delegate: SliverChildBuilderDelegate(
+            (_, i) {
+              if (i >= _items.length) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _search(_page + 1, true);
+                });
+                return const LkLoadingIndicator();
+              }
+              final b = _items[i];
+              return BookGridCard(
+                book: b,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => BookDetailPage(bookId: b.bookId)),
+                ),
+              );
+            },
+            childCount: _items.length + (_hasMore ? 1 : 0),
           ),
         ),
-      ],
-    );
+      ),
+    ];
   }
+
+  Widget _messageSliver(String message) => SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(
+          child: Text(message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.grey)),
+        ),
+      );
 
   Widget _segBtn(String label, String value) {
     final sel = _sort == value;
@@ -400,6 +414,10 @@ class ShelfPage extends StatefulWidget {
   State<ShelfPage> createState() => _ShelfPageState();
 }
 
+enum _ShelfSort { serverOrder, recentlyUpdated, title }
+
+enum _ShelfFilter { all, unread, serializing, completed }
+
 class _ShelfPageState extends State<ShelfPage> {
   List<LKBook> _items = [];
   String? _error;
@@ -408,6 +426,10 @@ class _ShelfPageState extends State<ShelfPage> {
   bool _loading = false;
   bool _listMode = false;
   bool _localMode = false;
+  bool _reloadAfterCurrent = false;
+  final Set<int> _statusVerificationInFlight = <int>{};
+  _ShelfSort _sort = _ShelfSort.serverOrder;
+  _ShelfFilter _filter = _ShelfFilter.all;
   int _loadSerial = 0;
   final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
   static const double _topBarFlex = 56.0;
@@ -445,7 +467,15 @@ class _ShelfPageState extends State<ShelfPage> {
   }
 
   void _onLocalShelfRev() {
-    if (!_localMode || !mounted) return;
+    if (!mounted) return;
+    if (!_localMode && LKClient.shared.session.isLoggedIn) {
+      if (_loading) {
+        _reloadAfterCurrent = true;
+      } else {
+        unawaited(_load());
+      }
+      return;
+    }
     // 本地书架不需要重新走完整加载流程;即使首次加载尚未结束,也直接同步最新数据。
     LKStore.localShelf().then((items) {
       if (!mounted || !_localMode) return;
@@ -521,7 +551,8 @@ class _ShelfPageState extends State<ShelfPage> {
       if (!mounted || requestSerial != _loadSerial || _localMode) return;
       setState(() {
         if (append) {
-          _items.addAll(items);
+          final seen = _items.map((item) => item.bookId).toSet();
+          _items.addAll(items.where((item) => seen.add(item.bookId)));
         } else {
           _items = [...items];
         }
@@ -529,6 +560,7 @@ class _ShelfPageState extends State<ShelfPage> {
         _hasMore = items.length >= 50;
         _error = null;
       });
+      unawaited(_verifyServerBookStatuses(items));
     } catch (e) {
       if (mounted && requestSerial == _loadSerial) {
         setState(() => _error = e.toString());
@@ -536,8 +568,93 @@ class _ShelfPageState extends State<ShelfPage> {
     } finally {
       if (mounted && requestSerial == _loadSerial) {
         setState(() => _loading = false);
+        if (_reloadAfterCurrent) {
+          _reloadAfterCurrent = false;
+          unawaited(_load());
+        }
       }
     }
+  }
+
+  Future<void> _verifyServerBookStatuses(List<LKBook> books) async {
+    final ownerUid = LKClient.shared.session.uid;
+    if (ownerUid <= 0 || _localMode) return;
+    final candidates = books
+        .where((book) =>
+            book.bookId > 0 &&
+            book.isCompleted &&
+            book.serialStatus.trim().isEmpty &&
+            _statusVerificationInFlight.add(book.bookId))
+        .toList(growable: false);
+    if (candidates.isEmpty) return;
+
+    try {
+      // bookshelf-v1 only exposes is_completed and can disagree with the
+      // authoritative detail response. Verify likely false positives in small
+      // background batches so the shelf remains responsive.
+      const batchSize = 3;
+      for (var offset = 0; offset < candidates.length; offset += batchSize) {
+        final end = (offset + batchSize).clamp(0, candidates.length);
+        final batch = candidates.sublist(offset, end);
+        final entries = await Future.wait<MapEntry<int, LKBook>?>(
+          batch.map((book) async {
+            try {
+              return MapEntry(book.bookId, await LKApi.bookDetail(book.bookId));
+            } catch (_) {
+              return null;
+            }
+          }),
+        );
+        if (!mounted || _localMode || LKClient.shared.session.uid != ownerUid) {
+          return;
+        }
+        final verified = <int, LKBook>{
+          for (final entry in entries)
+            if (entry != null) entry.key: entry.value,
+        };
+        if (verified.isEmpty) continue;
+        setState(() {
+          _items = _items.map((book) {
+            final detail = verified[book.bookId];
+            if (detail == null) return book;
+            return LKBook.fromJson({
+              ...book.toJson(),
+              'serial_status': detail.serialStatus,
+              'is_completed': detail.isCompleted ? 1 : 0,
+            });
+          }).toList(growable: false);
+        });
+      }
+    } finally {
+      _statusVerificationInFlight
+          .removeAll(candidates.map((book) => book.bookId));
+    }
+  }
+
+  List<LKBook> get _visibleItems {
+    final filtered = _items.where((book) {
+      return switch (_filter) {
+        _ShelfFilter.all => true,
+        _ShelfFilter.unread => book.unreadChapterCount > 0,
+        _ShelfFilter.serializing => bookStatusLabel(book) == '连载',
+        _ShelfFilter.completed => bookStatusLabel(book) == '完结',
+      };
+    }).toList(growable: true);
+    switch (_sort) {
+      case _ShelfSort.serverOrder:
+        break;
+      case _ShelfSort.recentlyUpdated:
+        filtered.sort((a, b) {
+          final byTime = b.updatedAt.compareTo(a.updatedAt);
+          return byTime != 0 ? byTime : a.title.compareTo(b.title);
+        });
+        break;
+      case _ShelfSort.title:
+        filtered.sort(
+            (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+        break;
+    }
+    return filtered;
   }
 
   void _toggleShelfSource() {
@@ -572,8 +689,89 @@ class _ShelfPageState extends State<ShelfPage> {
     );
   }
 
+  Widget _shelfFilterButton() {
+    final active =
+        _filter != _ShelfFilter.all || _sort != _ShelfSort.serverOrder;
+    return PopupMenuButton<String>(
+      tooltip: '筛选与排序',
+      icon: Badge(
+        isLabelVisible: active,
+        smallSize: 7,
+        child: const Icon(Icons.tune_rounded),
+      ),
+      onSelected: (value) {
+        setState(() {
+          switch (value) {
+            case 'filter:all':
+              _filter = _ShelfFilter.all;
+              break;
+            case 'filter:unread':
+              _filter = _ShelfFilter.unread;
+              break;
+            case 'filter:serializing':
+              _filter = _ShelfFilter.serializing;
+              break;
+            case 'filter:completed':
+              _filter = _ShelfFilter.completed;
+              break;
+            case 'sort:server':
+              _sort = _ShelfSort.serverOrder;
+              break;
+            case 'sort:updated':
+              _sort = _ShelfSort.recentlyUpdated;
+              break;
+            case 'sort:title':
+              _sort = _ShelfSort.title;
+              break;
+          }
+        });
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(enabled: false, child: Text('筛选')),
+        CheckedPopupMenuItem(
+          value: 'filter:all',
+          checked: _filter == _ShelfFilter.all,
+          child: const Text('全部作品'),
+        ),
+        CheckedPopupMenuItem(
+          value: 'filter:unread',
+          checked: _filter == _ShelfFilter.unread,
+          child: const Text('有更新'),
+        ),
+        CheckedPopupMenuItem(
+          value: 'filter:serializing',
+          checked: _filter == _ShelfFilter.serializing,
+          child: const Text('连载中'),
+        ),
+        CheckedPopupMenuItem(
+          value: 'filter:completed',
+          checked: _filter == _ShelfFilter.completed,
+          child: const Text('已完结'),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(enabled: false, child: Text('排序')),
+        CheckedPopupMenuItem(
+          value: 'sort:server',
+          checked: _sort == _ShelfSort.serverOrder,
+          child: const Text('默认顺序'),
+        ),
+        CheckedPopupMenuItem(
+          value: 'sort:updated',
+          checked: _sort == _ShelfSort.recentlyUpdated,
+          child: const Text('最近更新'),
+        ),
+        CheckedPopupMenuItem(
+          value: 'sort:title',
+          checked: _sort == _ShelfSort.title,
+          child: const Text('按书名'),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final visibleItems = _visibleItems;
     final body = _error != null && _items.isEmpty
         ? Center(
             child: Text(_error!, style: const TextStyle(color: Colors.grey)))
@@ -589,58 +787,86 @@ class _ShelfPageState extends State<ShelfPage> {
                       ),
                     ],
                   )
-                : _listMode
-                    ? ListView.builder(
+                : visibleItems.isEmpty
+                    ? ListView(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        padding: EdgeInsets.fromLTRB(8, 4, 8,
-                            12 + MediaQuery.of(context).padding.bottom),
-                        itemCount: _items.length + (_hasMore ? 1 : 0),
-                        itemBuilder: (_, i) {
-                          if (i >= _items.length) {
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) _load(page: _page + 1, append: true);
-                            });
-                            return const LkLoadingIndicator();
-                          }
-                          final b = _items[i];
-                          return BookCard(
-                            book: b,
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) =>
-                                      BookDetailPage(bookId: b.bookId)),
+                        children: [
+                          SizedBox(
+                            height: MediaQuery.sizeOf(context).height * 0.55,
+                            child: Center(
+                              child: Text(
+                                _items.isEmpty ? '书架还是空的' : '没有符合当前筛选的作品',
+                                style: const TextStyle(color: Colors.grey),
+                              ),
                             ),
-                          );
-                        },
+                          ),
+                          if (_hasMore)
+                            Builder(builder: (_) {
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  _load(page: _page + 1, append: true);
+                                }
+                              });
+                              return const LkLoadingIndicator();
+                            }),
+                        ],
                       )
-                    : GridView.builder(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: EdgeInsets.fromLTRB(12, 8, 12,
-                            12 + MediaQuery.of(context).padding.bottom),
-                        gridDelegate: bookGridDelegate(),
-                        itemCount: _items.length + (_hasMore ? 1 : 0),
-                        itemBuilder: (_, i) {
-                          if (i >= _items.length) {
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) {
-                                _load(page: _page + 1, append: true);
+                    : _listMode
+                        ? ListView.builder(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: EdgeInsets.fromLTRB(8, 4, 8,
+                                12 + MediaQuery.of(context).padding.bottom),
+                            itemCount: visibleItems.length + (_hasMore ? 1 : 0),
+                            itemBuilder: (_, i) {
+                              if (i >= visibleItems.length) {
+                                WidgetsBinding.instance
+                                    .addPostFrameCallback((_) {
+                                  if (mounted) {
+                                    _load(page: _page + 1, append: true);
+                                  }
+                                });
+                                return const LkLoadingIndicator();
                               }
-                            });
-                            return const LkLoadingIndicator();
-                          }
-                          final b = _items[i];
-                          return BookGridCard(
-                            book: b,
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) =>
-                                      BookDetailPage(bookId: b.bookId)),
-                            ),
-                          );
-                        },
-                      ),
+                              final b = visibleItems[i];
+                              return BookCard(
+                                book: b,
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) =>
+                                          BookDetailPage(bookId: b.bookId)),
+                                ),
+                              );
+                            },
+                          )
+                        : GridView.builder(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: EdgeInsets.fromLTRB(12, 8, 12,
+                                12 + MediaQuery.of(context).padding.bottom),
+                            gridDelegate: bookGridDelegate(),
+                            itemCount: visibleItems.length + (_hasMore ? 1 : 0),
+                            itemBuilder: (_, i) {
+                              if (i >= visibleItems.length) {
+                                WidgetsBinding.instance
+                                    .addPostFrameCallback((_) {
+                                  if (mounted) {
+                                    _load(page: _page + 1, append: true);
+                                  }
+                                });
+                                return const LkLoadingIndicator();
+                              }
+                              final b = visibleItems[i];
+                              return BookGridCard(
+                                book: b,
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) =>
+                                          BookDetailPage(bookId: b.bookId)),
+                                ),
+                              );
+                            },
+                          ),
           );
     if (!widget.embedded) {
       return Scaffold(
@@ -648,6 +874,7 @@ class _ShelfPageState extends State<ShelfPage> {
           title: Text(_localMode ? '本机书架' : '我的书架'),
           actions: [
             _shelfSourceButton(),
+            _shelfFilterButton(),
             IconButton(
               tooltip: _listMode ? '切换为网格排版' : '切换为单列排版',
               icon: Icon(_listMode
@@ -706,6 +933,7 @@ class _ShelfPageState extends State<ShelfPage> {
                             ),
                             const Spacer(),
                             _shelfSourceButton(),
+                            _shelfFilterButton(),
                             IconButton(
                               tooltip: _listMode ? '切换为网格排版' : '切换为单列排版',
                               visualDensity: VisualDensity.compact,
@@ -756,9 +984,16 @@ class CommentsPage extends StatefulWidget {
 }
 
 class _CommentsPageState extends State<CommentsPage> {
-  List<dynamic> _comments = [];
+  static const int _pageSize = 20;
+  List<LKComment> _comments = [];
   String? _error;
   bool _loading = true;
+  bool _loadingMore = false;
+  String? _loadMoreError;
+  int _page = 0;
+  String _cursor = '';
+  bool _hasMore = true;
+  int _loadSerial = 0;
   final _input = TextEditingController();
 
   /// 表情包(code → 图片地址),评论渲染与表情面板共用
@@ -771,16 +1006,17 @@ class _CommentsPageState extends State<CommentsPage> {
   final Set<String> _selectedPollOptions = <String>{};
   bool _pollSubmitting = false;
   final Map<int, List<LKComment>> _repliesByComment = {};
+  final Set<int> _expandedReplies = <int>{};
   final Set<int> _loadingReplies = <int>{};
   final Map<int, String> _replyErrors = <int, String>{};
+  final Map<int, int> _replyPages = <int, int>{};
+  final Map<int, String> _replyCursors = <int, String>{};
+  final Map<int, bool> _replyHasMore = <int, bool>{};
   LKComment? _replyTarget;
+  int _replyParentCommentId = 0;
 
   bool get _isVolume => widget.volumeId > 0;
   bool get _isDynamic => widget.dynamicId > 0;
-
-  /// api.lightnovel.fun/static/... 会 500,统一换 static 域
-  static String _fixEmojiUrl(String u) =>
-      u.replaceFirst('api.lightnovel.fun/static/', 'static.lightnovel.fun/');
 
   @override
   void initState() {
@@ -798,46 +1034,132 @@ class _CommentsPageState extends State<CommentsPage> {
 
   Future<void> _loadEmojis() async {
     try {
-      final groups = await LKApi.commentEmojis();
+      final groups = await YomiruEmojiCatalog.load();
       if (!mounted) return;
-      final map = <String, String>{};
-      for (final g in groups) {
-        for (final it in g.items) {
-          // code 是官网评论里实际使用的格式({:neko3:}、[s:1]、{:df000:} 等)
-          if (it.isImage && it.code.isNotEmpty) {
-            map[it.code] = _fixEmojiUrl(it.url);
-          }
-        }
-      }
       setState(() {
         _emojiGroups = groups;
-        _emojiUrl.addAll(map);
+        _emojiUrl
+          ..clear()
+          ..addAll(YomiruEmojiCatalog.urls);
       });
     } catch (_) {}
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<LKCommentPage> _requestCommentPage({
+    required int page,
+    required String cursor,
+    int commentId = 0,
+  }) {
+    if (_isDynamic) {
+      return LKApi.dynamicCommentPage(
+        widget.dynamicId,
+        commentId: commentId,
+        cursor: cursor,
+        page: page,
+        pageSize: _pageSize,
+      );
+    }
+    if (_isVolume) {
+      return LKApi.volumeCommentPage(
+        widget.bookId,
+        widget.volumeId,
+        page,
+        pageSize: _pageSize,
+        commentId: commentId,
+      );
+    }
+    return LKApi.bookCommentPage(
+      widget.bookId,
+      page,
+      pageSize: _pageSize,
+      commentId: commentId,
+    );
+  }
+
+  static List<LKComment> _mergeComments(
+      Iterable<LKComment> first, Iterable<LKComment> second) {
+    final seen = <int>{};
+    return [...first, ...second]
+        .where(
+            (comment) => comment.commentId <= 0 || seen.add(comment.commentId))
+        .toList(growable: false);
+  }
+
+  void _seedReplyPreviews(Iterable<LKComment> comments) {
+    for (final comment in comments) {
+      if (comment.commentId <= 0 ||
+          comment.replies.isEmpty ||
+          _repliesByComment.containsKey(comment.commentId)) {
+        continue;
+      }
+      _repliesByComment[comment.commentId] = comment.replies;
+      _replyPages[comment.commentId] = 0;
+      _replyCursors[comment.commentId] = '';
+      _replyHasMore[comment.commentId] =
+          comment.replyCount > comment.replies.length;
+      _expandedReplies.add(comment.commentId);
+    }
+  }
+
+  Future<void> _load({bool reset = true}) async {
+    if (!reset && (_loading || _loadingMore || !_hasMore)) return;
+    final requestSerial = reset ? ++_loadSerial : _loadSerial;
+    final targetPage = reset ? 1 : _page + 1;
+    final targetCursor = reset ? '' : _cursor;
+    setState(() {
+      if (reset) {
+        _loading = _comments.isEmpty;
+        _error = null;
+        _loadMoreError = null;
+      } else {
+        _loadingMore = true;
+        _loadMoreError = null;
+      }
+    });
     try {
-      final cs = _isDynamic
-          ? await LKApi.dynamicComments(widget.dynamicId)
-          : _isVolume
-              ? await LKApi.volumeComments(widget.bookId, widget.volumeId, 1)
-              : await LKApi.bookComments(widget.bookId, 1);
-      if (!mounted) return;
+      final result =
+          await _requestCommentPage(page: targetPage, cursor: targetCursor);
+      if (!mounted || requestSerial != _loadSerial) return;
       setState(() {
-        _comments = cs;
-        _repliesByComment
-          ..clear()
-          ..addEntries(cs
-              .where((comment) => comment.replies.isNotEmpty)
-              .map((comment) => MapEntry(comment.commentId, comment.replies)));
-        _replyErrors.clear();
+        if (reset) {
+          _comments = result.items;
+          _repliesByComment.clear();
+          _expandedReplies.clear();
+          _replyErrors.clear();
+          _replyPages.clear();
+          _replyCursors.clear();
+          _replyHasMore.clear();
+          _seedReplyPreviews(result.items);
+        } else {
+          final before = _comments.length;
+          _comments = _mergeComments(_comments, result.items);
+          _seedReplyPreviews(result.items);
+          if (_comments.length == before && result.items.isNotEmpty) {
+            _hasMore = false;
+          }
+        }
+        _page = result.page;
+        _cursor = result.nextCursor;
+        if (reset || _hasMore) _hasMore = result.hasMore;
+        _error = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && requestSerial == _loadSerial) {
+        setState(() {
+          if (reset && _comments.isEmpty) {
+            _error = e.toString();
+          } else {
+            _loadMoreError = e.toString();
+          }
+        });
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && requestSerial == _loadSerial) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+        });
+      }
     }
   }
 
@@ -864,21 +1186,62 @@ class _CommentsPageState extends State<CommentsPage> {
     final content = _input.text.trim();
     if (content.isEmpty) return;
     final replyTarget = _replyTarget;
+    final replyIds = replyTarget == null
+        ? (rootCommentId: 0, replyCommentId: 0)
+        : resolveBookCommentReplyIds(
+            replyTarget,
+            parentCommentId: _replyParentCommentId,
+          );
+    final replyRootId = replyTarget == null
+        ? 0
+        : _isDynamic
+            ? (_replyParentCommentId > 0
+                ? _replyParentCommentId
+                : replyTarget.rootCommentId > 0
+                    ? replyTarget.rootCommentId
+                    : replyTarget.commentId)
+            : replyIds.rootCommentId;
     try {
       if (_isDynamic) {
         await LKApi.publishDynamicComment(widget.dynamicId, content,
             replyCommentId: replyTarget?.commentId ?? 0, media: _pendingMedia);
       } else if (_isVolume) {
         await LKApi.publishBookComment(widget.bookId, content,
-            volumeId: widget.volumeId, media: _pendingMedia);
+            volumeId: widget.volumeId,
+            rootCommentId: replyIds.rootCommentId,
+            replyCommentId: replyIds.replyCommentId,
+            media: _pendingMedia);
       } else {
         await LKApi.publishBookComment(widget.bookId, content,
+            rootCommentId: replyIds.rootCommentId,
+            replyCommentId: replyIds.replyCommentId,
             media: _pendingMedia);
       }
       _input.clear();
       _pendingMedia.clear();
-      if (mounted) setState(() => _replyTarget = null);
-      _load();
+      if (mounted) {
+        setState(() {
+          _replyTarget = null;
+          _replyParentCommentId = 0;
+        });
+      }
+      if (replyRootId > 0 && mounted) {
+        LKComment? root;
+        for (final comment in _comments) {
+          if (comment.commentId == replyRootId) {
+            root = comment;
+            break;
+          }
+        }
+        if (root != null) {
+          setState(() => _expandedReplies.add(replyRootId));
+          await _loadReplies(root, reset: true);
+        } else {
+          await _load();
+        }
+      } else {
+        await _load();
+      }
     } catch (e) {
       if (mounted) showLkError(context, e);
     }
@@ -904,64 +1267,53 @@ class _CommentsPageState extends State<CommentsPage> {
     if (comment.commentId <= 0 || _loadingReplies.contains(comment.commentId)) {
       return;
     }
-    if (_repliesByComment.containsKey(comment.commentId)) {
-      setState(() => _repliesByComment.remove(comment.commentId));
+    if (_expandedReplies.contains(comment.commentId)) {
+      setState(() => _expandedReplies.remove(comment.commentId));
       return;
     }
+    setState(() => _expandedReplies.add(comment.commentId));
+    if (_repliesByComment.containsKey(comment.commentId) &&
+        (_replyPages[comment.commentId] ?? 0) > 0) {
+      return;
+    }
+    await _loadReplies(comment, reset: true);
+  }
+
+  Future<void> _loadReplies(LKComment comment, {bool reset = false}) async {
+    final commentId = comment.commentId;
+    if (commentId <= 0 || _loadingReplies.contains(commentId)) return;
+    if (!reset && !(_replyHasMore[commentId] ?? false)) return;
+    final page = reset ? 1 : (_replyPages[commentId] ?? 0) + 1;
+    final cursor = reset ? '' : (_replyCursors[commentId] ?? '');
     setState(() {
-      _loadingReplies.add(comment.commentId);
-      _replyErrors.remove(comment.commentId);
+      _loadingReplies.add(commentId);
+      _replyErrors.remove(commentId);
     });
     try {
-      final replies = await LKApi.dynamicComments(widget.dynamicId,
-          commentId: comment.commentId);
+      final result = await _requestCommentPage(
+          page: page, cursor: cursor, commentId: commentId);
       if (!mounted) return;
-      setState(() => _repliesByComment[comment.commentId] = replies);
+      setState(() {
+        final existing = _repliesByComment[commentId] ?? const <LKComment>[];
+        final merged = reset
+            ? _mergeComments(result.items, existing)
+            : _mergeComments(existing, result.items);
+        _repliesByComment[commentId] = merged;
+        _replyPages[commentId] = result.page;
+        _replyCursors[commentId] = result.nextCursor;
+        _replyHasMore[commentId] = result.hasMore;
+      });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _replyErrors[comment.commentId] = e.toString());
+      setState(() => _replyErrors[commentId] = e.toString());
     } finally {
-      if (mounted) setState(() => _loadingReplies.remove(comment.commentId));
+      if (mounted) setState(() => _loadingReplies.remove(commentId));
     }
   }
 
   /// 渲染评论内容:把表情代码({:xx:} / [s:数字] 等)替换为表情图片
-  Widget _renderContent(String content) {
-    final spans = <InlineSpan>[];
-    final re = RegExp(r'\{:[^:]+:\}|\[[a-zA-Z]+:\d+\]');
-    var pos = 0;
-    for (final m in re.allMatches(content)) {
-      if (m.start > pos) {
-        spans.add(TextSpan(text: content.substring(pos, m.start)));
-      }
-      final code = m.group(0)!;
-      final url = _emojiUrl[code];
-      if (url != null) {
-        spans.add(WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 1),
-            child: CachedNetworkImage(
-              imageUrl: url,
-              width: 24,
-              height: 24,
-              memCacheWidth: imageCacheDimension(context, 24),
-              fit: BoxFit.contain,
-              errorWidget: (_, __, ___) =>
-                  Text(code, style: const TextStyle(fontSize: 12)),
-            ),
-          ),
-        ));
-      } else {
-        spans.add(TextSpan(text: code));
-      }
-      pos = m.end;
-    }
-    if (pos < content.length) {
-      spans.add(TextSpan(text: content.substring(pos)));
-    }
-    return Text.rich(TextSpan(children: spans));
-  }
+  Widget _renderContent(String content) =>
+      LkEmojiText(text: content, emojiUrls: _emojiUrl);
 
   String _formatCommentTime(String raw) {
     final value = raw.trim();
@@ -984,7 +1336,7 @@ class _CommentsPageState extends State<CommentsPage> {
     final rootIndex = _comments.indexOf(c);
     var replyIndex = -1;
     var replyParentId = 0;
-    if (rootIndex < 0 && _isDynamic) {
+    if (rootIndex < 0) {
       for (final entry in _repliesByComment.entries) {
         final index = entry.value.indexOf(c);
         if (index >= 0) {
@@ -1026,7 +1378,9 @@ class _CommentsPageState extends State<CommentsPage> {
             widget.dynamicId, c.commentId, !wasLiked);
       } else {
         await LKApi.likeBookComment(widget.bookId, c.commentId, !wasLiked,
-            volumeId: widget.volumeId);
+            volumeId: widget.volumeId,
+            rootCommentId:
+                c.rootCommentId > 0 ? c.rootCommentId : replyParentId);
       }
     } catch (e) {
       // 失败回滚
@@ -1141,7 +1495,7 @@ class _CommentsPageState extends State<CommentsPage> {
                   style: const TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 4),
             ],
-            if (item.summary.isNotEmpty) Text(item.summary),
+            if (item.summary.isNotEmpty) _renderContent(item.summary),
             _mediaGallery(item.media),
             if (poll != null) _pollCard(poll),
             const SizedBox(height: 8),
@@ -1223,14 +1577,10 @@ class _CommentsPageState extends State<CommentsPage> {
     );
   }
 
-  Widget _replyControls(LKComment comment, {bool isReply = false}) {
-    if (!_isDynamic) {
-      return const SizedBox.shrink();
-    }
-    final expanded =
-        !isReply && _repliesByComment.containsKey(comment.commentId);
+  Widget _replyControls(LKComment comment,
+      {bool isReply = false, int parentCommentId = 0}) {
+    final expanded = !isReply && _expandedReplies.contains(comment.commentId);
     final loading = !isReply && _loadingReplies.contains(comment.commentId);
-    final error = !isReply ? _replyErrors[comment.commentId] : null;
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Wrap(
@@ -1238,7 +1588,10 @@ class _CommentsPageState extends State<CommentsPage> {
         spacing: 8,
         children: [
           TextButton.icon(
-            onPressed: () => setState(() => _replyTarget = comment),
+            onPressed: () => setState(() {
+              _replyTarget = comment;
+              _replyParentCommentId = isReply ? parentCommentId : 0;
+            }),
             icon: const Icon(Icons.reply_rounded, size: 17),
             label: Text(
                 _replyTarget?.commentId == comment.commentId ? '正在回复' : '回复'),
@@ -1247,7 +1600,9 @@ class _CommentsPageState extends State<CommentsPage> {
               padding: const EdgeInsets.symmetric(horizontal: 4),
             ),
           ),
-          if (!isReply && comment.replyCount > 0)
+          if (!isReply &&
+              (comment.replyCount > 0 ||
+                  (_repliesByComment[comment.commentId]?.isNotEmpty ?? false)))
             TextButton.icon(
               onPressed: loading ? null : () => _toggleReplies(comment),
               icon: Icon(expanded
@@ -1263,19 +1618,36 @@ class _CommentsPageState extends State<CommentsPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 4),
               ),
             ),
-          if (error != null)
-            TextButton(
-              onPressed: () => _toggleReplies(comment),
-              child: const Text('重试'),
-            ),
         ],
       ),
     );
   }
 
   Widget _replyList(LKComment parent) {
-    final replies = _repliesByComment[parent.commentId];
-    if (replies == null) return const SizedBox.shrink();
+    if (!_expandedReplies.contains(parent.commentId)) {
+      return const SizedBox.shrink();
+    }
+    final replies = _repliesByComment[parent.commentId] ?? const <LKComment>[];
+    final loading = _loadingReplies.contains(parent.commentId);
+    final error = _replyErrors[parent.commentId];
+    if (replies.isEmpty) {
+      if (loading) {
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Center(child: LkLoadingIndicator()),
+        );
+      }
+      if (error != null) {
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => _loadReplies(parent, reset: true),
+            icon: const Icon(Icons.refresh_rounded, size: 17),
+            label: const Text('回复加载失败，点击重试'),
+          ),
+        );
+      }
+    }
     if (replies.isEmpty) {
       return const Padding(
         padding: EdgeInsets.only(top: 6),
@@ -1292,14 +1664,71 @@ class _CommentsPageState extends State<CommentsPage> {
         ),
       ),
       child: Column(
-        children:
-            replies.map((reply) => _commentItem(reply, isReply: true)).toList(),
+        children: [
+          ...replies.map((reply) => _commentItem(reply,
+              isReply: true, parentCommentId: parent.commentId)),
+          if (error != null)
+            TextButton.icon(
+              onPressed: () => _loadReplies(parent),
+              icon: const Icon(Icons.refresh_rounded, size: 17),
+              label: const Text('继续加载失败，点击重试'),
+            )
+          else if (loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: Center(child: LkLoadingIndicator()),
+            )
+          else if (_replyHasMore[parent.commentId] ?? false)
+            TextButton.icon(
+              onPressed: () => _loadReplies(parent),
+              icon: const Icon(Icons.expand_more_rounded, size: 18),
+              label: const Text('加载更多回复'),
+            ),
+        ],
       ),
     );
   }
 
+  bool _onCommentScroll(ScrollNotification notification) {
+    if (notification.metrics.axis == Axis.vertical &&
+        notification.metrics.extentAfter < 480 &&
+        !_loading &&
+        !_loadingMore &&
+        _hasMore) {
+      unawaited(_load(reset: false));
+    }
+    return false;
+  }
+
+  Widget _commentPageFooter() {
+    if (_loadMoreError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Center(
+          child: TextButton.icon(
+            onPressed: () => _load(reset: false),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('加载更多失败，点击重试'),
+          ),
+        ),
+      );
+    }
+    if (!_loadingMore) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_loadingMore && _hasMore) {
+          unawaited(_load(reset: false));
+        }
+      });
+    }
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 18),
+      child: Center(child: LkLoadingIndicator()),
+    );
+  }
+
   /// 评论采用左侧头像 + 右侧正文布局，日期统一放在昵称下方。
-  Widget _commentItem(dynamic c, {bool isReply = false}) {
+  Widget _commentItem(dynamic c,
+      {bool isReply = false, int parentCommentId = 0}) {
     final avatar = CircleAvatar(
       radius: 24,
       backgroundImage:
@@ -1348,7 +1777,8 @@ class _CommentsPageState extends State<CommentsPage> {
                   const SizedBox(height: 5),
                   _renderContent(c.content),
                   _mediaGallery(c.media),
-                  _replyControls(c, isReply: isReply),
+                  _replyControls(c,
+                      isReply: isReply, parentCommentId: parentCommentId),
                   if (!isReply) _replyList(c),
                 ],
               ),
@@ -1375,33 +1805,45 @@ class _CommentsPageState extends State<CommentsPage> {
           child: _loading
               ? const LkLoadingIndicator()
               : RefreshIndicator(
-                  onRefresh: _load,
-                  child: _comments.isEmpty && !_isDynamic
-                      ? ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          children: [
-                            SizedBox(
-                              height: 280,
-                              child: Center(
-                                child: Text(
-                                    _error ??
-                                        (_isVolume ? '本卷还没有评论' : '还没有书评,来抢沙发'),
-                                    style: const TextStyle(color: Colors.grey)),
+                  onRefresh: () => _load(),
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: _onCommentScroll,
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: EdgeInsets.only(
+                          bottom: MediaQuery.paddingOf(context).bottom),
+                      itemCount: (_isDynamic ? 1 : 0) +
+                          (_comments.isEmpty ? 1 : _comments.length) +
+                          (_hasMore || _loadingMore || _loadMoreError != null
+                              ? 1
+                              : 0),
+                      itemBuilder: (_, i) {
+                        if (_isDynamic && i == 0) return _dynamicHeader();
+                        final contentIndex = i - (_isDynamic ? 1 : 0);
+                        if (_comments.isEmpty && contentIndex == 0) {
+                          return SizedBox(
+                            height: 240,
+                            child: Center(
+                              child: Text(
+                                _error ??
+                                    (_isDynamic
+                                        ? '还没有评论'
+                                        : _isVolume
+                                            ? '本卷还没有评论'
+                                            : '还没有书评，来抢沙发'),
+                                style: const TextStyle(color: Colors.grey),
                               ),
                             ),
-                          ],
-                        )
-                      : ListView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: EdgeInsets.only(
-                              bottom: MediaQuery.paddingOf(context).bottom),
-                          itemCount: _comments.length + (_isDynamic ? 1 : 0),
-                          itemBuilder: (_, i) {
-                            if (_isDynamic && i == 0) return _dynamicHeader();
-                            final c = _comments[i - (_isDynamic ? 1 : 0)];
-                            return _commentItem(c);
-                          },
-                        ),
+                          );
+                        }
+                        if (contentIndex >= _comments.length) {
+                          return _commentPageFooter();
+                        }
+                        final c = _comments[contentIndex];
+                        return _commentItem(c);
+                      },
+                    ),
+                  ),
                 ),
         ),
         _CommentsInputBar(
@@ -1414,7 +1856,10 @@ class _CommentsPageState extends State<CommentsPage> {
               : '回复 @${_replyTarget!.nickname.isEmpty ? '用户' : _replyTarget!.nickname}',
           onCancelReply: _replyTarget == null
               ? null
-              : () => setState(() => _replyTarget = null),
+              : () => setState(() {
+                    _replyTarget = null;
+                    _replyParentCommentId = 0;
+                  }),
           onPickImage: _pickImage,
           pendingImageUrl:
               _pendingMedia.isEmpty ? null : _pendingMedia.last.url,

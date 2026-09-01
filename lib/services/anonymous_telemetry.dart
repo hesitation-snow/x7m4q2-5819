@@ -82,6 +82,9 @@ class AnonymousTelemetry {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw const AnonymousTelemetryException('反馈发送失败，请稍后重试');
       }
+    } on AnonymousTelemetryException {
+      // Preserve actionable server responses such as the feedback rate limit.
+      rethrow;
     } catch (_) {
       throw const AnonymousTelemetryException('反馈发送失败，请检查网络后重试');
     }

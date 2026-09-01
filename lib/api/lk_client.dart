@@ -56,7 +56,12 @@ class LKClient {
   static Future<SharedPreferences>? _cachePrefs;
   static final Map<String, _CachedResponse> _memoryCache = {};
   static final Map<String, Future<Map<String, dynamic>>> _inFlight = {};
+  static final Map<String, int> _cacheVersions = {};
   static const _maxMemoryCacheEntries = 128;
+  static const _errorCodeCatalogPath = '/api/bff/pc-error-code-list-v1';
+  static const _errorCodeCatalogCacheKey = 'error_code_catalog_v1';
+  static Map<int, String> _remoteErrorHints = const {};
+  Future<void>? _errorCodeWarmup;
 
   static Future<SharedPreferences> _responsePrefs() =>
       _cachePrefs ??= SharedPreferences.getInstance();
@@ -85,8 +90,15 @@ class LKClient {
       {String? accessErrorMessage,
       String? cacheKey,
       Duration? cacheTtl,
-      bool forceRefresh = false}) async {
-    final cached = cacheKey == null ? null : await _readCached(cacheKey);
+      bool forceRefresh = false,
+      Duration requestTimeout = const Duration(seconds: 30)}) async {
+    final cacheVersion = cacheKey == null ? 0 : (_cacheVersions[cacheKey] ?? 0);
+    final cachedCandidate =
+        cacheKey == null ? null : await _readCached(cacheKey);
+    final cached =
+        cacheKey == null || (_cacheVersions[cacheKey] ?? 0) == cacheVersion
+            ? cachedCandidate
+            : null;
     if (cached != null &&
         !forceRefresh &&
         cacheTtl != null &&
@@ -102,7 +114,7 @@ class LKClient {
         resp = await _http
             .post(Uri.parse('$base$path'),
                 headers: _headers, body: jsonEncode(body))
-            .timeout(const Duration(seconds: 30));
+            .timeout(requestTimeout);
       } on TimeoutException {
         if (cached != null) return cached.data;
         throw LKException(-1, '连接超时，请检查网络后重试');
@@ -135,7 +147,7 @@ class LKClient {
       }
       final data = obj['data'];
       if (data is Map<String, dynamic>) {
-        if (cacheKey != null) _writeCached(cacheKey, data);
+        if (cacheKey != null) _writeCached(cacheKey, data, cacheVersion);
         return data;
       }
       if (accessErrorMessage != null) {
@@ -159,6 +171,63 @@ class LKClient {
       }
     }
     return fetch();
+  }
+
+  /// 在后台读取官网维护的错误码说明。
+  ///
+  /// 目录属于公开只读数据，使用普通响应缓存且不携带登录凭据。刷新失败时
+  /// 保留内置提示，不影响应用启动或其他请求。
+  Future<void> warmErrorCodeHints({bool forceRefresh = false}) {
+    final running = _errorCodeWarmup;
+    if (running != null) return running;
+    final future = () async {
+      try {
+        final data = await post(
+          _errorCodeCatalogPath,
+          const {},
+          cacheKey: _errorCodeCatalogCacheKey,
+          cacheTtl: const Duration(days: 1),
+          forceRefresh: forceRefresh,
+          requestTimeout: const Duration(seconds: 12),
+        );
+        final parsed = parseErrorCodeCatalog(data);
+        if (parsed.isNotEmpty) _remoteErrorHints = parsed;
+      } catch (_) {
+        // 错误码目录不可用时继续使用内置提示。
+      }
+    }();
+    _errorCodeWarmup = future;
+    return future.whenComplete(() {
+      if (identical(_errorCodeWarmup, future)) _errorCodeWarmup = null;
+    });
+  }
+
+  /// 兼容官网当前的 list 结构以及早期键值表结构。
+  @visibleForTesting
+  static Map<int, String> parseErrorCodeCatalog(Map<String, dynamic> data) {
+    final result = <int, String>{};
+    final list = data['list'];
+    if (list is List) {
+      for (final raw in list.whereType<Map>()) {
+        final codeValue = raw['code'];
+        final code = codeValue is num
+            ? codeValue.toInt()
+            : int.tryParse(codeValue?.toString() ?? '');
+        final message = raw['message']?.toString().trim() ?? '';
+        if (code != null && message.isNotEmpty) result[code] = message;
+      }
+    }
+    if (result.isNotEmpty) return result;
+
+    for (final entry in data.entries) {
+      final code = int.tryParse(entry.key);
+      final value = entry.value;
+      final message = value is Map
+          ? value['message']?.toString().trim() ?? ''
+          : value?.toString().trim() ?? '';
+      if (code != null && message.isNotEmpty) result[code] = message;
+    }
+    return result;
   }
 
   /// 只处理发出请求时仍对应当前会话的失效响应，防止旧请求清除新登录态。
@@ -205,11 +274,13 @@ class LKClient {
     }
   }
 
-  void _writeCached(String key, Map<String, dynamic> data) {
+  void _writeCached(
+      String key, Map<String, dynamic> data, int expectedVersion) {
+    if ((_cacheVersions[key] ?? 0) != expectedVersion) return;
     final savedAt = DateTime.now().millisecondsSinceEpoch;
     final cached = _CachedResponse(savedAt, Map<String, dynamic>.from(data));
     _rememberCached(key, cached);
-    unawaited(_persistCached(key, cached));
+    unawaited(_persistCached(key, cached, expectedVersion));
   }
 
   static void _rememberCached(String key, _CachedResponse cached) {
@@ -221,26 +292,38 @@ class LKClient {
   }
 
   /// 写操作后清理相关只读缓存，避免页面在缓存有效期内回显旧状态。
-  void invalidateCachePrefix(String keyPrefix) {
+  Future<void> invalidateCachePrefix(String keyPrefix) async {
+    final affectedKeys = <String>{
+      ..._memoryCache.keys.where((key) => key.startsWith(keyPrefix)),
+      ..._inFlight.keys.where((key) => key.startsWith(keyPrefix)),
+      ..._cacheVersions.keys.where((key) => key.startsWith(keyPrefix)),
+    };
+    for (final key in affectedKeys) {
+      _cacheVersions[key] = (_cacheVersions[key] ?? 0) + 1;
+    }
     _memoryCache.removeWhere((key, _) => key.startsWith(keyPrefix));
-    unawaited(() async {
-      try {
-        final prefs = await _responsePrefs();
-        final storedPrefix = '$_responseCachePrefix$keyPrefix';
-        final keys = prefs
-            .getKeys()
-            .where((key) => key.startsWith(storedPrefix))
-            .toList(growable: false);
-        await Future.wait(keys.map(prefs.remove));
-      } catch (_) {
-        // 缓存清理失败不影响关注操作本身。
-      }
-    }());
+    _inFlight.removeWhere((key, _) => key.startsWith(keyPrefix));
+    try {
+      final prefs = await _responsePrefs();
+      final storedPrefix = '$_responseCachePrefix$keyPrefix';
+      final keys = prefs
+          .getKeys()
+          .where((key) => key.startsWith(storedPrefix))
+          .toList(growable: false);
+      await Future.wait(keys.map(prefs.remove));
+    } catch (_) {
+      // Cache invalidation failure must not undo the completed mutation.
+    }
   }
 
   /// 清除全部公开接口响应缓存，不影响登录会话或安全存储中的凭据。
   Future<void> clearResponseCache() async {
+    final affectedKeys = <String>{..._memoryCache.keys, ..._inFlight.keys};
+    for (final key in affectedKeys) {
+      _cacheVersions[key] = (_cacheVersions[key] ?? 0) + 1;
+    }
     _memoryCache.clear();
+    _inFlight.clear();
     try {
       final prefs = await _responsePrefs();
       final keys = prefs
@@ -269,8 +352,10 @@ class LKClient {
     }
   }
 
-  Future<void> _persistCached(String key, _CachedResponse cached) async {
+  Future<void> _persistCached(
+      String key, _CachedResponse cached, int expectedVersion) async {
     try {
+      if ((_cacheVersions[key] ?? 0) != expectedVersion) return;
       await (await _responsePrefs()).setString(
         '$_responseCachePrefix$key',
         jsonEncode({
@@ -278,6 +363,9 @@ class LKClient {
           'data': cached.data,
         }),
       );
+      if ((_cacheVersions[key] ?? 0) != expectedVersion) {
+        await (await _responsePrefs()).remove('$_responseCachePrefix$key');
+      }
     } catch (_) {
       // 缓存写入失败不影响正常请求结果。
     }
@@ -289,6 +377,13 @@ class LKClient {
   }
 
   static String _extractMessage(dynamic data) {
+    if (data is String && data.trim().isNotEmpty) return data.trim();
+    if (data is List) {
+      for (final value in data) {
+        final message = _extractMessage(value);
+        if (message.isNotEmpty) return message;
+      }
+    }
     if (data is Map<String, dynamic>) {
       final m = data['message'];
       if (m is String && m.isNotEmpty) return m;
@@ -303,12 +398,18 @@ class LKClient {
   }
 
   /// 常见错误码的友好提示
-  static String _codeHint(int code) => switch (code) {
-        8 => '登录状态已失效,请重新登录',
+  static String _codeHint(int code) =>
+      _remoteErrorHints[code] ??
+      switch (code) {
+        2 => '密码错误，请重新输入',
+        3 => '参数错误，请检查输入内容',
+        6 => '权限不足，无法执行此操作',
+        8 => '登录状态已失效，请重新登录',
         403 => '没有权限执行此操作',
         404 => '内容不存在或已删除',
-        429 => '操作太频繁,请稍后再试',
-        500 => '服务器开小差了,请稍后再试',
+        429 => '操作太频繁，请稍后再试',
+        500 => '服务器开小差了，请稍后再试',
+        1001 => '用户不存在',
         _ => '请求失败(错误码 $code)',
       };
 
@@ -340,7 +441,8 @@ class LKClient {
     final code = (obj['code'] as num?)?.toInt() ?? -1;
     if (code != 0) {
       if (code == 8) await expireSessionIfCurrent(key);
-      throw LKException(code, _extractMessage(obj['data']));
+      final message = _extractMessage(obj['data']);
+      throw LKException(code, message.isEmpty ? _codeHint(code) : message);
     }
     final d = (obj['data'] as Map<String, dynamic>?) ?? {};
     return (d['url'] as String?) ?? (d['avatar'] as String?) ?? '';

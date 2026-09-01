@@ -326,6 +326,373 @@ class LKMedal {
       );
 }
 
+/// 勇者考试当前状态。
+///
+/// 题库接口的字段由站点统一返回，但不同版本可能把状态包在 status/state
+/// 下，或使用 snake_case/camelCase。这里集中做兼容解析，页面只关心稳定字段。
+class LKBraveQuizStatus {
+  final bool answered;
+  final bool available;
+  final bool passed;
+  final int score;
+  final int passingScore;
+  final int questionCount;
+  final String message;
+
+  const LKBraveQuizStatus({
+    this.answered = false,
+    this.available = true,
+    this.passed = false,
+    this.score = 0,
+    this.passingScore = 60,
+    this.questionCount = 50,
+    this.message = '',
+  });
+
+  factory LKBraveQuizStatus.fromJson(Map<String, dynamic> json) {
+    final nested = _jsonMap(json['status']) ??
+        _jsonMap(json['state']) ??
+        _jsonMap(json['result']) ??
+        const <String, dynamic>{};
+
+    dynamic pick(List<String> keys) {
+      for (final key in keys) {
+        if (nested.containsKey(key)) return nested[key];
+        if (json.containsKey(key)) return json[key];
+      }
+      return null;
+    }
+
+    final explicitAnswered = pick(const [
+      'is_answered',
+      'isAnswered',
+      'answered',
+      'already_answered',
+      'alreadyAnswered',
+      'today_answered',
+      'todayAnswered',
+      'completed',
+      'done',
+    ]);
+    final attemptedToday = pick(const ['attempted_today', 'attemptedToday']);
+    // 当前接口用 attempted_today/can_start 表示每日答题状态，而不是
+    // is_answered/available。优先使用明确字段，兼容旧版本字段名。
+    final answered = explicitAnswered == null
+        ? _jsonFlag(attemptedToday)
+        : _jsonFlag(explicitAnswered);
+    final availableValue = pick(const [
+      'available',
+      'can_answer',
+      'canAnswer',
+      'is_available',
+      'isAvailable',
+      'enabled',
+    ]);
+    final canStartValue = pick(const ['can_start', 'canStart']);
+    return LKBraveQuizStatus(
+      answered: answered,
+      available: canStartValue != null
+          ? _jsonFlag(canStartValue)
+          : availableValue == null
+              ? !answered
+              : _jsonFlag(availableValue),
+      passed: _jsonFlag(pick(const [
+        'passed',
+        'is_passed',
+        'isPassed',
+        'pass',
+      ])),
+      score: _jsonInt(pick(const ['score', 'score_snapshot'])),
+      passingScore: _jsonInt(pick(const [
+                'passing_score',
+                'passingScore',
+                'pass_score',
+              ])) >
+              0
+          ? _jsonInt(pick(const [
+              'passing_score',
+              'passingScore',
+              'pass_score',
+            ]))
+          : 60,
+      questionCount: _jsonInt(pick(const [
+                'question_count',
+                'questionCount',
+                'total_questions',
+                'count',
+              ])) >
+              0
+          ? _jsonInt(pick(const [
+              'question_count',
+              'questionCount',
+              'total_questions',
+            ]))
+          : 50,
+      message:
+          (pick(const ['message', 'msg', 'reason', 'notice']) ?? '').toString(),
+    );
+  }
+}
+
+class LKBraveQuizOption {
+  final int optionId;
+  final String optionKey;
+  final String text;
+
+  const LKBraveQuizOption({
+    this.optionId = 0,
+    this.optionKey = '',
+    this.text = '',
+  });
+
+  /// 保留服务端返回的数值 id 或 key，交卷时优先使用数值 id。
+  dynamic get submissionValue => optionId > 0
+      ? optionId
+      : optionKey.isNotEmpty
+          ? optionKey
+          : text;
+
+  String get stableKey => optionId > 0
+      ? 'id:$optionId'
+      : optionKey.isNotEmpty
+          ? 'key:$optionKey'
+          : 'text:$text';
+
+  factory LKBraveQuizOption.fromJson(dynamic raw) {
+    if (raw is String) {
+      return LKBraveQuizOption(optionKey: raw, text: raw);
+    }
+    final json = _jsonMap(raw) ?? const <String, dynamic>{};
+    final id = _jsonInt(
+        json['option_id'] ?? json['optionId'] ?? json['id'] ?? json['value']);
+    final rawKey = json['option_key'] ??
+        json['optionKey'] ??
+        json['key'] ??
+        json['code'] ??
+        (id > 0 ? '' : json['value']);
+    final text = (json['text'] ??
+            json['label'] ??
+            json['content'] ??
+            json['title'] ??
+            json['name'] ??
+            '')
+        .toString();
+    return LKBraveQuizOption(
+      optionId: id,
+      optionKey: rawKey?.toString() ?? '',
+      text: text,
+    );
+  }
+}
+
+class LKBraveQuizQuestion {
+  final int questionId;
+  final String prompt;
+  final List<LKBraveQuizOption> options;
+
+  const LKBraveQuizQuestion({
+    this.questionId = 0,
+    this.prompt = '',
+    this.options = const [],
+  });
+
+  factory LKBraveQuizQuestion.fromJson(Map<String, dynamic> json) {
+    final rawOptions = json['options'] ??
+        json['option_list'] ??
+        json['optionList'] ??
+        json['choices'] ??
+        const [];
+    final options = rawOptions is List
+        ? rawOptions
+            .map(LKBraveQuizOption.fromJson)
+            .where((option) =>
+                option.text.isNotEmpty || option.optionKey.isNotEmpty)
+            .toList(growable: false)
+        : const <LKBraveQuizOption>[];
+    return LKBraveQuizQuestion(
+      questionId: _jsonInt(json['question_id'] ??
+          json['questionId'] ??
+          json['id'] ??
+          json['qid']),
+      prompt: (json['question'] ??
+              json['title'] ??
+              json['content'] ??
+              json['stem'] ??
+              json['text'] ??
+              '')
+          .toString(),
+      options: options,
+    );
+  }
+}
+
+class LKBraveQuizPaper {
+  final String sessionId;
+  final String status;
+  final String expiresAt;
+  final int ttl;
+  final List<LKBraveQuizQuestion> questions;
+  final int passingScore;
+  final int pointsPerQuestion;
+
+  const LKBraveQuizPaper({
+    this.sessionId = '',
+    this.status = '',
+    this.expiresAt = '',
+    this.ttl = 0,
+    this.questions = const [],
+    this.passingScore = 60,
+    this.pointsPerQuestion = 0,
+  });
+
+  factory LKBraveQuizPaper.fromJson(Map<String, dynamic> json) {
+    final paper = _jsonMap(json['paper']) ??
+        _jsonMap(json['quiz']) ??
+        _jsonMap(json['data']) ??
+        json;
+    final rawQuestions = paper['questions'] ??
+        json['questions'] ??
+        paper['list'] ??
+        json['list'] ??
+        paper['items'] ??
+        json['items'] ??
+        const [];
+    final questions = rawQuestions is List
+        ? rawQuestions
+            .whereType<Map>()
+            .map((item) =>
+                LKBraveQuizQuestion.fromJson(Map<String, dynamic>.from(item)))
+            .where((question) => question.prompt.isNotEmpty)
+            .toList(growable: false)
+        : const <LKBraveQuizQuestion>[];
+    int positiveInt(List<String> keys, int fallback) {
+      for (final key in keys) {
+        final value = _jsonInt(paper[key] ?? json[key]);
+        if (value > 0) return value;
+      }
+      return fallback;
+    }
+
+    String stringValue(List<String> keys) {
+      for (final key in keys) {
+        final value = paper[key] ?? json[key];
+        if (value != null && value.toString().trim().isNotEmpty) {
+          return value.toString();
+        }
+      }
+      return '';
+    }
+
+    String findSessionId(dynamic value, {bool allowPlainId = false}) {
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(value);
+        for (final key in const [
+          'session_id',
+          'sessionId',
+          'quiz_session_id',
+          'quizSessionId',
+          'exam_session_id',
+          'examSessionId',
+        ]) {
+          final raw = map[key];
+          if (raw != null && raw.toString().trim().isNotEmpty) {
+            return raw.toString();
+          }
+        }
+        if (allowPlainId) {
+          final raw = map['id'];
+          if (raw != null && raw.toString().trim().isNotEmpty) {
+            return raw.toString();
+          }
+        }
+        for (final key in const [
+          'session',
+          'quiz_session',
+          'quizSession',
+          'exam_session',
+          'examSession',
+        ]) {
+          final raw = map[key];
+          if (raw is String && raw.trim().isNotEmpty) return raw;
+          if (raw is num) return raw.toString();
+          final nested = findSessionId(raw, allowPlainId: true);
+          if (nested.isNotEmpty) return nested;
+        }
+        for (final key in const ['paper', 'quiz', 'data', 'payload']) {
+          final nested = findSessionId(map[key]);
+          if (nested.isNotEmpty) return nested;
+        }
+        for (final child in map.values) {
+          final nested = findSessionId(child);
+          if (nested.isNotEmpty) return nested;
+        }
+      } else if (value is List) {
+        for (final item in value) {
+          final nested = findSessionId(item);
+          if (nested.isNotEmpty) return nested;
+        }
+      }
+      return '';
+    }
+
+    return LKBraveQuizPaper(
+      sessionId: findSessionId(json),
+      status: stringValue(const ['status', 'state']),
+      expiresAt: stringValue(const ['expires_at', 'expiresAt']),
+      ttl: positiveInt(const ['ttl', 'expires_in', 'expiresIn'], 0),
+      questions: questions,
+      passingScore: positiveInt(
+          const ['passing_score', 'passingScore', 'pass_score'], 60),
+      pointsPerQuestion:
+          positiveInt(const ['points_per_question', 'pointsPerQuestion'], 0),
+    );
+  }
+}
+
+class LKBraveQuizResult {
+  final bool passed;
+  final int score;
+  final int correctCount;
+  final int points;
+  final String message;
+
+  const LKBraveQuizResult({
+    this.passed = false,
+    this.score = 0,
+    this.correctCount = 0,
+    this.points = 0,
+    this.message = '',
+  });
+
+  factory LKBraveQuizResult.fromJson(Map<String, dynamic> json) {
+    final result = _jsonMap(json['result']) ??
+        _jsonMap(json['score']) ??
+        _jsonMap(json['data']) ??
+        json;
+    dynamic pick(List<String> keys) {
+      for (final key in keys) {
+        if (result.containsKey(key)) return result[key];
+        if (json.containsKey(key)) return json[key];
+      }
+      return null;
+    }
+
+    return LKBraveQuizResult(
+      passed: _jsonFlag(pick(const [
+        'passed',
+        'is_passed',
+        'isPassed',
+        'pass',
+        'brave',
+      ])),
+      score: _jsonInt(pick(const ['score', 'score_snapshot'])),
+      correctCount: _jsonInt(pick(const ['correct_count', 'correctCount'])),
+      points: _jsonInt(pick(const ['points', 'reward_points'])),
+      message: (pick(const ['message', 'msg', 'notice']) ?? '').toString(),
+    );
+  }
+}
+
 /// 公开用户主页资料
 class LKPublicUserProfile {
   final int uid;
@@ -652,8 +1019,8 @@ class LKBook {
         chapterCount: (j['chapter_count'] as num?)?.toInt() ?? 0,
         defaultVolumeId: (j['default_volume_id'] as num?)?.toInt() ?? 0,
         defaultChapterId: (j['default_chapter_id'] as num?)?.toInt() ?? 0,
-        serialStatus: (j['serial_status'] as String?) ?? '',
-        isCompleted: (j['is_completed'] as num?)?.toInt() == 1,
+        serialStatus: _bookSerialStatus(j),
+        isCompleted: _jsonFlag(j['is_completed'] ?? j['isCompleted']),
         lastReadChapterTitle: (j['last_read_chapter_title'] as String?) ?? '',
         unreadChapterCount: (j['unread_chapter_count'] as num?)?.toInt() ?? 0,
         ratingScore: (j['rating_score'] as num?)?.toDouble() ?? 0,
@@ -683,35 +1050,182 @@ class LKBook {
       };
 }
 
+String _bookSerialStatus(Map<String, dynamic> json) {
+  final explicit = json['serial_status'] ??
+      json['serialStatus'] ??
+      json['status_text'] ??
+      json['statusText'];
+  final explicitText = explicit?.toString().trim() ?? '';
+  if (explicitText.isNotEmpty) return explicitText;
+
+  // Some feeds expose a textual status/state instead of serial_status. Numeric
+  // status values describe publication visibility, so they must not be treated
+  // as the serialization state.
+  for (final value in [json['status'], json['state']]) {
+    if (value is String && _knownBookStatus(value)) return value.trim();
+  }
+  return '';
+}
+
+bool _knownBookStatus(String value) {
+  final status = value.trim().toLowerCase().replaceAll('-', '_');
+  return const {
+    'serial',
+    'serializing',
+    'ongoing',
+    'in_progress',
+    'publishing',
+    'complete',
+    'completed',
+    'finished',
+    'done',
+    'ended',
+    'end',
+    '连载',
+    '连载中',
+    '未完结',
+    '完结',
+    '已完结',
+    '完本',
+  }.contains(status);
+}
+
+/// 阅读入口聚合数据。该接口只负责书籍壳、书架状态和有效阅读目标，
+/// 正文与完整目录仍由各自接口渐进加载。
+class LKReaderBootstrap {
+  final LKBook book;
+  final bool inShelf;
+  final bool hasHistory;
+  final int readVolumeId;
+  final int readChapterId;
+  final String readChapterTitle;
+  final bool resumeAvailable;
+
+  const LKReaderBootstrap({
+    required this.book,
+    this.inShelf = false,
+    this.hasHistory = false,
+    this.readVolumeId = 0,
+    this.readChapterId = 0,
+    this.readChapterTitle = '',
+    this.resumeAvailable = false,
+  });
+
+  factory LKReaderBootstrap.fromJson(Map<String, dynamic> j) {
+    final rawBook = _jsonMap(j['book']) ?? const <String, dynamic>{};
+    final summary = _jsonMap(j['book_summary']) ?? const <String, dynamic>{};
+    final stats = _jsonMap(j['book_stats']) ?? const <String, dynamic>{};
+    final readTarget = _jsonMap(j['read_target']) ?? const <String, dynamic>{};
+    final effective =
+        _jsonMap(j['effective_read_target']) ?? const <String, dynamic>{};
+    final library = _jsonMap(j['library_state']) ?? const <String, dynamic>{};
+    final defaultVolume =
+        _jsonMap(j['default_volume']) ?? const <String, dynamic>{};
+
+    final rawSummary = j['book_summary'];
+    final fullSummary =
+        (summary['summary'] ?? (rawSummary is String ? rawSummary : ''))
+            .toString()
+            .trim();
+    final shortSummary =
+        (summary['summary_short'] ?? rawBook['summary_short'] ?? '')
+            .toString()
+            .trim();
+    final mergedBook = <String, dynamic>{
+      ...rawBook,
+      if (fullSummary.isNotEmpty) 'summary': fullSummary,
+      if (fullSummary.isEmpty && shortSummary.isNotEmpty)
+        'summary_short': shortSummary,
+      if (_jsonInt(rawBook['volume_count']) <= 0)
+        'volume_count': stats['volume_count'],
+      if (_jsonInt(rawBook['chapter_count']) <= 0)
+        'chapter_count': stats['chapter_count'],
+      if (_jsonInt(rawBook['default_volume_id']) <= 0)
+        'default_volume_id':
+            readTarget['default_volume_id'] ?? defaultVolume['volume_id'],
+      if (_jsonInt(rawBook['default_chapter_id']) <= 0)
+        'default_chapter_id': readTarget['default_chapter_id'] ??
+            defaultVolume['first_chapter_id'],
+    };
+    final book = LKBook.fromJson(mergedBook);
+    final readVolumeId = _jsonInt(effective['volume_id'] ??
+        library['last_read_volume_id'] ??
+        book.defaultVolumeId);
+    final readChapterId = _jsonInt(effective['chapter_id'] ??
+        library['last_read_chapter_id'] ??
+        book.defaultChapterId);
+    final resumeAvailable = _jsonFlag(effective['resume_available']) ||
+        (effective['source'] ?? '').toString() == 'history';
+
+    return LKReaderBootstrap(
+      book: book,
+      inShelf: _jsonFlag(library['in_shelf']),
+      hasHistory: _jsonFlag(library['has_history']) || resumeAvailable,
+      readVolumeId: readVolumeId,
+      readChapterId: readChapterId,
+      readChapterTitle: (effective['chapter_title'] ??
+              library['last_read_chapter_title'] ??
+              book.lastReadChapterTitle)
+          .toString(),
+      resumeAvailable: resumeAvailable,
+    );
+  }
+}
+
 String bookStatusLabel(LKBook book) {
-  if (book.isCompleted) return '完结';
-  final status = book.serialStatus.trim().toLowerCase();
-  if (status.isEmpty ||
-      const {
-        'serial',
-        'serializing',
-        'ongoing',
-        'in_progress',
-        'publishing',
-      }.contains(status)) {
+  final status = book.serialStatus.trim().toLowerCase().replaceAll('-', '_');
+  if (const {
+    'serial',
+    'serializing',
+    'ongoing',
+    'in_progress',
+    'publishing',
+    '0',
+    '连载',
+    '连载中',
+    '未完结',
+  }.contains(status)) {
     return '连载';
   }
-  if (const {'complete', 'completed', 'finished', 'done', 'ended', 'end'}
-      .contains(status)) {
+  if (const {
+    'complete',
+    'completed',
+    'finished',
+    'done',
+    'ended',
+    'end',
+    '1',
+    '完结',
+    '已完结',
+    '完本',
+  }.contains(status)) {
     return '完结';
   }
-  return book.serialStatus;
+  return book.isCompleted ? '完结' : '连载';
 }
 
 class LKVolume {
   final int volumeId;
   final String title;
   final String intro;
-  LKVolume({this.volumeId = 0, this.title = '', this.intro = ''});
+  final int chapterCount;
+  final int firstChapterId;
+  final int lastChapterId;
+  LKVolume({
+    this.volumeId = 0,
+    this.title = '',
+    this.intro = '',
+    this.chapterCount = 0,
+    this.firstChapterId = 0,
+    this.lastChapterId = 0,
+  });
   factory LKVolume.fromJson(Map<String, dynamic> j) => LKVolume(
         volumeId: (j['volume_id'] as num?)?.toInt() ?? 0,
         title: (j['title'] as String?) ?? '',
         intro: (j['intro'] as String?) ?? '',
+        chapterCount: _jsonInt(j['chapter_count']),
+        firstChapterId: _jsonInt(j['first_chapter_id']),
+        lastChapterId: _jsonInt(j['last_chapter_id']),
       );
 }
 
@@ -746,8 +1260,74 @@ class LKChapter {
   bool get braveOnly => accessType.toLowerCase() == 'brave';
 }
 
+class LKChapterPage {
+  final List<LKChapter> items;
+  final int page;
+  final int pageSize;
+  final int total;
+  final bool hasMore;
+
+  const LKChapterPage({
+    this.items = const [],
+    this.page = 1,
+    this.pageSize = 50,
+    this.total = 0,
+    this.hasMore = false,
+  });
+
+  factory LKChapterPage.fromJson(Map<String, dynamic> j,
+      {int fallbackPage = 1, int fallbackPageSize = 50}) {
+    final rawList = j['list'] ?? j['items'] ?? const [];
+    final items = rawList is List
+        ? rawList
+            .whereType<Map>()
+            .map((item) => LKChapter.fromJson(Map<String, dynamic>.from(item)))
+            .toList(growable: false)
+        : const <LKChapter>[];
+    final pagination = _jsonMap(j['pagination']) ?? const <String, dynamic>{};
+    final pageInfo = _jsonMap(j['page_info']) ?? const <String, dynamic>{};
+    final page = _jsonInt(pagination['page'] ??
+        pagination['current_page'] ??
+        pageInfo['cur'] ??
+        j['page'] ??
+        fallbackPage);
+    final pageSize = _jsonInt(pagination['page_size'] ??
+        pagination['pageSize'] ??
+        pagination['per_page'] ??
+        pageInfo['size'] ??
+        j['page_size'] ??
+        j['pageSize'] ??
+        fallbackPageSize);
+    final total = _jsonInt(pagination['total'] ??
+        pagination['total_count'] ??
+        pageInfo['count'] ??
+        j['chapter_count'] ??
+        j['total']);
+    final rawHasMore = pagination['has_more'] ??
+        pagination['hasMore'] ??
+        pagination['has_next'] ??
+        pageInfo['has_next'] ??
+        j['has_more'] ??
+        j['hasMore'] ??
+        j['has_next'];
+    final effectivePage = page > 0 ? page : fallbackPage;
+    final effectivePageSize = pageSize > 0 ? pageSize : fallbackPageSize;
+    return LKChapterPage(
+      items: items,
+      page: effectivePage,
+      pageSize: effectivePageSize,
+      total: total,
+      hasMore: rawHasMore == null
+          ? total > effectivePage * effectivePageSize ||
+              items.length >= effectivePageSize
+          : _jsonFlag(rawHasMore),
+    );
+  }
+}
+
 class LKChapterDetail {
   final int chapterId;
+  final int chapterNo;
   final int volumeId;
   final String title;
   final String bookTitle;
@@ -764,6 +1344,7 @@ class LKChapterDetail {
   final int? nextVolumeId;
   LKChapterDetail({
     this.chapterId = 0,
+    this.chapterNo = 0,
     this.volumeId = 0,
     this.title = '',
     this.bookTitle = '',
@@ -783,6 +1364,7 @@ class LKChapterDetail {
   /// 本地正文缓存专用序列化,不包含登录凭据或其他会话信息。
   Map<String, dynamic> toCacheJson() => {
         'chapter_id': chapterId,
+        'chapter_no': chapterNo,
         'volume_id': volumeId,
         'title': title,
         'book_title': bookTitle,
@@ -802,6 +1384,7 @@ class LKChapterDetail {
   factory LKChapterDetail.fromCacheJson(Map<String, dynamic> j) =>
       LKChapterDetail(
         chapterId: (j['chapter_id'] as num?)?.toInt() ?? 0,
+        chapterNo: (j['chapter_no'] as num?)?.toInt() ?? 0,
         volumeId: (j['volume_id'] as num?)?.toInt() ?? 0,
         title: (j['title'] as String?) ?? '',
         bookTitle: (j['book_title'] as String?) ?? '',
@@ -860,6 +1443,7 @@ class LKChapterDetail {
     }
     return LKChapterDetail(
       chapterId: (j['chapter_id'] as num?)?.toInt() ?? 0,
+      chapterNo: (j['chapter_no'] as num?)?.toInt() ?? 0,
       volumeId: (j['volume_id'] as num?)?.toInt() ?? 0,
       title: (j['title'] as String?) ?? '',
       bookTitle: (j['book_title'] as String?) ?? '',
@@ -1057,6 +1641,124 @@ class LKComment {
       replies: parseReplies ? _parseReplies(rawReplies) : const [],
     );
   }
+}
+
+/// A page of root comments or replies.
+///
+/// Book comments use page numbers while dynamic comments use cursors. Keeping
+/// both signals avoids guessing pagination from the number of returned rows.
+class LKCommentPage {
+  final List<LKComment> items;
+  final int page;
+  final int pageSize;
+  final int total;
+  final String nextCursor;
+  final bool hasMore;
+  final LKComment? rootComment;
+
+  const LKCommentPage({
+    this.items = const [],
+    this.page = 1,
+    this.pageSize = 20,
+    this.total = 0,
+    this.nextCursor = '',
+    this.hasMore = false,
+    this.rootComment,
+  });
+
+  factory LKCommentPage.fromJson(
+    Map<String, dynamic> j, {
+    int fallbackPage = 1,
+    int fallbackPageSize = 20,
+  }) {
+    dynamic rawList = j['list'] ??
+        j['comments'] ??
+        j['replies'] ??
+        j['reply_list'] ??
+        j['items'];
+    if (rawList is Map) {
+      rawList = rawList['list'] ??
+          rawList['comments'] ??
+          rawList['replies'] ??
+          rawList['items'];
+    }
+    final items = rawList is List
+        ? rawList
+            .whereType<Map>()
+            .map((item) => LKComment.fromJson(Map<String, dynamic>.from(item)))
+            .toList(growable: false)
+        : const <LKComment>[];
+    final pageInfo = _jsonMap(j['page_info']) ??
+        _jsonMap(j['pagination']) ??
+        const <String, dynamic>{};
+    final page = _jsonInt(pageInfo['cur'] ??
+        pageInfo['page'] ??
+        pageInfo['current_page'] ??
+        j['page'] ??
+        fallbackPage);
+    final pageSize = _jsonInt(pageInfo['size'] ??
+        pageInfo['page_size'] ??
+        pageInfo['pageSize'] ??
+        j['page_size'] ??
+        j['pageSize'] ??
+        fallbackPageSize);
+    final total = _jsonInt(pageInfo['count'] ??
+        pageInfo['total'] ??
+        pageInfo['total_count'] ??
+        j['total']);
+    final nextCursor =
+        (j['next_cursor'] ?? pageInfo['next_cursor'] ?? '').toString();
+    final rawHasMore = j['has_more'] ??
+        j['hasMore'] ??
+        j['has_next'] ??
+        pageInfo['has_more'] ??
+        pageInfo['hasMore'] ??
+        pageInfo['has_next'];
+    final effectivePage = page > 0 ? page : fallbackPage;
+    final effectivePageSize = pageSize > 0 ? pageSize : fallbackPageSize;
+    final rawRoot = _jsonMap(j['root_comment']);
+    final rootComment =
+        rawRoot != null && _jsonInt(rawRoot['comment_id'] ?? rawRoot['id']) > 0
+            ? LKComment.fromJson(rawRoot)
+            : null;
+    return LKCommentPage(
+      items: items,
+      page: effectivePage,
+      pageSize: effectivePageSize,
+      total: total,
+      nextCursor: nextCursor,
+      hasMore: rawHasMore == null
+          ? nextCursor.isNotEmpty ||
+              total > effectivePage * effectivePageSize ||
+              items.length >= effectivePageSize
+          : _jsonFlag(rawHasMore),
+      rootComment: rootComment,
+    );
+  }
+}
+
+typedef LKBookCommentReplyIds = ({
+  int rootCommentId,
+  int replyCommentId,
+});
+
+LKBookCommentReplyIds resolveBookCommentReplyIds(
+  LKComment target, {
+  int parentCommentId = 0,
+}) {
+  if (target.commentId <= 0) {
+    return (rootCommentId: 0, replyCommentId: 0);
+  }
+  final isNested = parentCommentId > 0 || target.rootCommentId > 0;
+  final rootCommentId = parentCommentId > 0
+      ? parentCommentId
+      : target.rootCommentId > 0
+          ? target.rootCommentId
+          : target.commentId;
+  return (
+    rootCommentId: rootCommentId,
+    replyCommentId: isNested ? target.commentId : 0,
+  );
 }
 
 class LKHistoryItem {
@@ -1437,6 +2139,7 @@ class LKConversation {
   final String peerAvatar;
   final String lastMessage;
   final int unread;
+  final String updatedAt;
   LKConversation({
     this.conversationId = 0,
     this.peerUid = 0,
@@ -1444,21 +2147,37 @@ class LKConversation {
     this.peerAvatar = '',
     this.lastMessage = '',
     this.unread = 0,
+    this.updatedAt = '',
   });
   factory LKConversation.fromJson(Map<String, dynamic> j) {
-    final peerRaw = j['peer'] ?? j['user'];
-    final peer =
-        peerRaw is Map<String, dynamic> ? peerRaw : const <String, dynamic>{};
+    final peerRaw = j['peer'] ?? j['user'] ?? j['target_user'];
+    final peer = _jsonMap(peerRaw) ?? const <String, dynamic>{};
+    final lastMessage = _jsonMap(j['last_message']);
     return LKConversation(
-      conversationId: (j['conversation_id'] as num?)?.toInt() ?? 0,
-      peerUid: (j['peer_uid'] as num?)?.toInt() ??
-          (peer['uid'] as num?)?.toInt() ??
-          0,
-      peerName: (peer['nickname'] as String?) ?? '',
-      peerAvatar: (peer['avatar'] as String?) ?? '',
-      // last_message 是对象 {message_id, preview, sender_uid, time}
-      lastMessage: _msgText(j['last_message']),
-      unread: (j['unread'] as num?)?.toInt() ?? 0,
+      conversationId:
+          _jsonInt(j['conversation_id'] ?? j['thread_id'] ?? j['id']),
+      peerUid: _jsonInt(j['peer_uid'] ?? peer['uid'] ?? peer['id']),
+      peerName: (peer['nickname'] ??
+              peer['username'] ??
+              j['peer_name'] ??
+              j['nickname'] ??
+              '')
+          .toString(),
+      peerAvatar:
+          (peer['avatar'] ?? peer['avatar_url'] ?? j['peer_avatar'] ?? '')
+              .toString(),
+      lastMessage: _msgText(j['last_message'] ??
+          j['last_message_text'] ??
+          j['summary'] ??
+          j['content']),
+      unread: _jsonInt(j['unread_count'] ?? j['unreadCount'] ?? j['unread']),
+      updatedAt: (j['updated_at'] ??
+              j['last_message_at'] ??
+              lastMessage?['created_at'] ??
+              lastMessage?['time'] ??
+              j['time'] ??
+              '')
+          .toString(),
     );
   }
 }
@@ -1467,7 +2186,15 @@ class LKConversation {
 String _msgText(dynamic v) {
   if (v is String) return v;
   if (v is Map) {
-    for (final k in const ['preview', 'content', 'text', 'summary']) {
+    for (final k in const [
+      'preview',
+      'content',
+      'content_text',
+      'text',
+      'summary',
+      'message',
+      'title',
+    ]) {
       final s = v[k];
       if (s is String && s.isNotEmpty) return s;
     }
@@ -1484,42 +2211,356 @@ class LKDMMessage {
   LKDMMessage(
       {this.id = 0, this.senderUid = 0, this.content = '', this.time = ''});
   factory LKDMMessage.fromJson(Map<String, dynamic> j) => LKDMMessage(
-        id: (j['id'] as num?)?.toInt() ??
-            (j['message_id'] as num?)?.toInt() ??
-            0,
-        senderUid: (j['sender_uid'] as num?)?.toInt() ?? 0,
-        content:
-            (j['content_text'] as String?) ?? (j['content'] as String?) ?? '',
-        time: (j['created_at'] as String?) ?? '',
+        id: _jsonInt(j['message_id'] ?? j['id']),
+        senderUid: _jsonInt(j['sender_uid'] ??
+            _jsonMap(j['sender'])?['uid'] ??
+            _jsonMap(j['user'])?['uid']),
+        content: _msgText(
+            j['content_text'] ?? j['content'] ?? j['body'] ?? j['text']),
+        time: (j['created_at'] ?? j['sent_at'] ?? j['time'] ?? '').toString(),
+      );
+}
+
+class LKMessageSummary {
+  final int unreadCount;
+  final int replyCount;
+  final int mentionCount;
+  final int likeCount;
+  final int fanCount;
+  final int systemCount;
+  final int dmCount;
+
+  const LKMessageSummary({
+    this.unreadCount = 0,
+    this.replyCount = 0,
+    this.mentionCount = 0,
+    this.likeCount = 0,
+    this.fanCount = 0,
+    this.systemCount = 0,
+    this.dmCount = 0,
+  });
+
+  factory LKMessageSummary.fromJson(Map<String, dynamic> j) {
+    final counts = _jsonMap(j['counts']) ??
+        _jsonMap(j['unread']) ??
+        const <String, dynamic>{};
+    dynamic value(List<String> keys) {
+      for (final key in keys) {
+        if (j.containsKey(key)) return j[key];
+        if (counts.containsKey(key)) return counts[key];
+      }
+      return null;
+    }
+
+    final reply = _jsonInt(value(const ['reply_count', 'replies']));
+    final mention = _jsonInt(value(const ['mention_count', 'mentions']));
+    final like = _jsonInt(value(const ['like_count', 'likes']));
+    final fan = _jsonInt(value(const ['fan_count', 'fans', 'follow_count']));
+    final system = _jsonInt(
+        value(const ['system_count', 'notifications', 'notice_count']));
+    final dm = _jsonInt(
+        value(const ['dm_count', 'dm_unread', 'direct_message_count']));
+    final totalValue =
+        value(const ['unread_count', 'unreadCount', 'total_unread', 'total']);
+    return LKMessageSummary(
+      unreadCount: totalValue == null
+          ? reply + mention + like + fan + system + dm
+          : _jsonInt(totalValue),
+      replyCount: reply,
+      mentionCount: mention,
+      likeCount: like,
+      fanCount: fan,
+      systemCount: system,
+      dmCount: dm,
+    );
+  }
+
+  int countFor(String type) => switch (type) {
+        'reply' => replyCount,
+        'mention' => mentionCount,
+        'like' => likeCount,
+        'fan' => fanCount,
+        'system' => systemCount,
+        'dm' => dmCount,
+        _ => unreadCount,
+      };
+
+  LKMessageSummary clearCategory(String type) {
+    final cleared = LKMessageSummary(
+      replyCount: type == 'reply' ? 0 : replyCount,
+      mentionCount: type == 'mention' ? 0 : mentionCount,
+      likeCount: type == 'like' ? 0 : likeCount,
+      fanCount: type == 'fan' ? 0 : fanCount,
+      systemCount: type == 'system' ? 0 : systemCount,
+      dmCount: dmCount,
+    );
+    return cleared._withCalculatedTotal();
+  }
+
+  LKMessageSummary clearNotifications() =>
+      LKMessageSummary(dmCount: dmCount, unreadCount: dmCount);
+
+  LKMessageSummary _withCalculatedTotal() => LKMessageSummary(
+        unreadCount: replyCount +
+            mentionCount +
+            likeCount +
+            fanCount +
+            systemCount +
+            dmCount,
+        replyCount: replyCount,
+        mentionCount: mentionCount,
+        likeCount: likeCount,
+        fanCount: fanCount,
+        systemCount: systemCount,
+        dmCount: dmCount,
       );
 }
 
 class LKMessageItem {
+  final int id;
+  final String type;
+  final String messageKind;
+  final String categoryCode;
   final String title;
   final String content;
+  final String quoteText;
+  final String relatedTitle;
+  final String categoryText;
+  final String sourceName;
+  final String sourceAvatar;
+  final int uid;
   final String nickname;
   final String avatar;
   final String time;
-  LKMessageItem(
-      {this.title = '',
-      this.content = '',
-      this.nickname = '',
-      this.avatar = '',
-      this.time = ''});
-  factory LKMessageItem.fromJson(Map<String, dynamic> j) {
-    // user 可能是对象、也可能是空数组(如系统消息),安全转换
+  final String targetType;
+  final String targetUrl;
+  final String contentTargetUrl;
+  final int targetBookId;
+  final int targetVolumeId;
+  final int targetChapterId;
+  final int targetDynamicId;
+  final int targetCommentId;
+  final int targetReplyId;
+  final int rootCommentId;
+  final bool unread;
+
+  const LKMessageItem({
+    this.id = 0,
+    this.type = '',
+    this.messageKind = '',
+    this.categoryCode = '',
+    this.title = '',
+    this.content = '',
+    this.quoteText = '',
+    this.relatedTitle = '',
+    this.categoryText = '',
+    this.sourceName = '',
+    this.sourceAvatar = '',
+    this.uid = 0,
+    this.nickname = '',
+    this.avatar = '',
+    this.time = '',
+    this.targetType = '',
+    this.targetUrl = '',
+    this.contentTargetUrl = '',
+    this.targetBookId = 0,
+    this.targetVolumeId = 0,
+    this.targetChapterId = 0,
+    this.targetDynamicId = 0,
+    this.targetCommentId = 0,
+    this.targetReplyId = 0,
+    this.rootCommentId = 0,
+    this.unread = false,
+  });
+
+  factory LKMessageItem.fromJson(Map<String, dynamic> j, {String type = ''}) {
     final userRaw = j['user'] ?? j['author'];
-    final peer =
-        userRaw is Map<String, dynamic> ? userRaw : const <String, dynamic>{};
+    final peer = _jsonMap(userRaw ?? j['sender']) ?? const <String, dynamic>{};
+    final source = _jsonMap(j['source']) ?? const <String, dynamic>{};
+    final target = _jsonMap(j['target']) ?? const <String, dynamic>{};
+    final book = _jsonMap(j['book']) ?? const <String, dynamic>{};
+    final volume = _jsonMap(j['volume']) ?? const <String, dynamic>{};
+    final chapter = _jsonMap(j['chapter']) ?? const <String, dynamic>{};
+    final dynamicItem = _jsonMap(j['dynamic']) ?? const <String, dynamic>{};
+    final comment = _jsonMap(j['comment']) ?? const <String, dynamic>{};
+    final reply = _jsonMap(j['reply']) ?? const <String, dynamic>{};
+    final rootComment =
+        _jsonMap(j['root_comment']) ?? const <String, dynamic>{};
+    final targetUrl = (j['target_url'] ?? '').toString();
+    final contentTargetUrl = (j['content_target_url'] ?? '').toString();
+    int idFromUrl(RegExp pattern) {
+      final match = pattern.firstMatch('$targetUrl $contentTargetUrl');
+      return _jsonInt(match?.group(1));
+    }
+
+    int firstPositiveId(Iterable<dynamic> values) {
+      for (final value in values) {
+        final id = _jsonInt(value);
+        if (id > 0) return id;
+      }
+      return 0;
+    }
+
+    final urlCommentId = idFromUrl(RegExp(r'[?&]comment_id=(\d+)'));
+    final urlReplyId = idFromUrl(RegExp(r'[?&]reply_id=(\d+)'));
+
+    final unreadValue = j['unread'];
+    final unread = unreadValue != null
+        ? _jsonFlag(unreadValue)
+        : j.containsKey('is_read')
+            ? !_jsonFlag(j['is_read'])
+            : false;
+
+    final fallbackTitle = switch (type) {
+      'reply' => '回复我的',
+      'mention' => '提及我的',
+      'like' => '收到的赞',
+      'fan' => '新的粉丝',
+      _ => '系统通知',
+    };
     return LKMessageItem(
-      title: (j['title'] as String?) ?? '',
-      content: (j['content'] as String?) ??
-          (j['summary'] as String?) ??
-          (j['body'] as String?) ??
-          '',
-      nickname: (peer['nickname'] as String?) ?? '',
-      avatar: (peer['avatar'] as String?) ?? '',
-      time: (j['created_at'] as String?) ?? '',
+      id: _jsonInt(j['message_id'] ?? j['id']),
+      type: type,
+      messageKind: (j['message_kind'] ?? '').toString(),
+      categoryCode: (j['category_code'] ?? '').toString(),
+      title: (j['title'] ?? j['category_text'] ?? fallbackTitle).toString(),
+      content: _msgText(j['content'] ??
+          j['content_text'] ??
+          j['message'] ??
+          j['summary'] ??
+          j['body']),
+      quoteText: (j['quote_text'] ?? '').toString(),
+      relatedTitle: (j['related_title'] ?? '').toString(),
+      categoryText: (j['category_text'] ?? '').toString(),
+      sourceName: (j['source_name'] ??
+              source['nickname'] ??
+              source['name'] ??
+              peer['nickname'] ??
+              '')
+          .toString(),
+      sourceAvatar: (j['source_avatar'] ??
+              source['avatar'] ??
+              source['avatar_url'] ??
+              peer['avatar'] ??
+              peer['avatar_url'] ??
+              '')
+          .toString(),
+      uid: _jsonInt(j['source_uid'] ??
+          source['uid'] ??
+          source['id'] ??
+          peer['uid'] ??
+          peer['id']),
+      nickname: (peer['nickname'] ?? peer['username'] ?? peer['name'] ?? '')
+          .toString(),
+      avatar: (peer['avatar'] ?? peer['avatar_url'] ?? '').toString(),
+      time: (j['created_at'] ?? j['time'] ?? '').toString(),
+      targetType: (j['target_type'] ?? '').toString(),
+      targetUrl: targetUrl,
+      contentTargetUrl: contentTargetUrl,
+      targetBookId: firstPositiveId([
+        j['target_book_id'],
+        target['book_id'],
+        book['book_id'],
+        dynamicItem['book_id'],
+        idFromUrl(RegExp(r'/book/(\d+)')),
+        idFromUrl(RegExp(r'/reader/(\d+)/\d+')),
+      ]),
+      targetVolumeId: firstPositiveId([
+        j['target_volume_id'],
+        target['volume_id'],
+        volume['volume_id'],
+        volume['id'],
+      ]),
+      targetChapterId: firstPositiveId([
+        j['target_chapter_id'],
+        target['chapter_id'],
+        chapter['chapter_id'],
+        chapter['id'],
+        idFromUrl(RegExp(r'/reader/\d+/(\d+)')),
+      ]),
+      targetDynamicId: firstPositiveId([
+        j['target_dynamic_id'],
+        target['dynamic_id'],
+        dynamicItem['dynamic_id'],
+        dynamicItem['id'],
+        idFromUrl(RegExp(r'/activity/(\d+)')),
+      ]),
+      targetCommentId: firstPositiveId([
+        j['target_comment_id'],
+        comment['comment_id'],
+        comment['id'],
+        urlCommentId,
+      ]),
+      targetReplyId: firstPositiveId([
+        j['target_reply_id'],
+        reply['reply_id'],
+        reply['id'],
+        urlReplyId,
+      ]),
+      rootCommentId: firstPositiveId([
+        j['root_comment_id'],
+        rootComment['comment_id'],
+        rootComment['id'],
+        urlCommentId,
+      ]),
+      unread: unread,
+    );
+  }
+}
+
+class LKMessagePage {
+  final List<LKMessageItem> items;
+  final int page;
+  final int pageSize;
+  final int total;
+  final bool hasMore;
+
+  const LKMessagePage({
+    this.items = const [],
+    this.page = 1,
+    this.pageSize = 20,
+    this.total = 0,
+    this.hasMore = false,
+  });
+
+  factory LKMessagePage.fromJson(Map<String, dynamic> j,
+      {required String type, int fallbackPage = 1, int fallbackPageSize = 20}) {
+    final rawList = j['items'] ?? j['list'] ?? j['cards'] ?? const [];
+    final items = rawList is List
+        ? rawList
+            .whereType<Map>()
+            .map((item) => LKMessageItem.fromJson(
+                Map<String, dynamic>.from(item),
+                type: type))
+            .toList(growable: false)
+        : const <LKMessageItem>[];
+    final pagination = _jsonMap(j['pagination']) ??
+        _jsonMap(j['page_info']) ??
+        const <String, dynamic>{};
+    final pageSize = _jsonInt(pagination['page_size'] ??
+        pagination['pageSize'] ??
+        j['page_size'] ??
+        fallbackPageSize);
+    final total = _jsonInt(pagination['total'] ??
+        pagination['total_count'] ??
+        j['total'] ??
+        items.length);
+    final rawHasMore = pagination['has_next'] ??
+        pagination['has_more'] ??
+        pagination['hasMore'] ??
+        j['has_next'] ??
+        j['has_more'] ??
+        j['hasMore'];
+    final effectivePageSize = pageSize > 0 ? pageSize : fallbackPageSize;
+    return LKMessagePage(
+      items: items,
+      page: fallbackPage,
+      pageSize: effectivePageSize,
+      total: total,
+      hasMore: rawHasMore == null
+          ? total > fallbackPage * effectivePageSize ||
+              items.length >= effectivePageSize
+          : _jsonFlag(rawHasMore),
     );
   }
 }

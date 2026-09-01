@@ -17,4 +17,10 @@ void main() {
   test('narrow tablet split view falls back to one column', () {
     expect(dynamicFeedColumnCount(const Size(520, 1024)), 1);
   });
+
+  test('logging out leaves the account-only feed', () {
+    expect(normalizedDynamicFeedTab('follow', loggedIn: false), 'mixed');
+    expect(normalizedDynamicFeedTab('mixed', loggedIn: false), 'mixed');
+    expect(normalizedDynamicFeedTab('follow', loggedIn: true), 'follow');
+  });
 }

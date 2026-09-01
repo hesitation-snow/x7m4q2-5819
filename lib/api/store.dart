@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'lk_client.dart';
 import 'models.dart';
+import 'reader_cache.dart';
+import '../reader/reading_position.dart';
 
 /// 会话与主题持久化
 class LKStore {
@@ -73,8 +75,11 @@ class LKStore {
   }
 
   static Future<void> clear() async {
-    final p = await SharedPreferences.getInstance();
     final oldUid = LKClient.shared.session.uid;
+    // Invalidate reader content before any awaited account cleanup so an
+    // in-flight chapter response cannot repopulate the previous scope.
+    final readerCacheClear = ReaderContentCache.clear();
+    final p = await SharedPreferences.getInstance();
     try {
       await _secure.delete(key: 'security_key');
     } catch (_) {
@@ -89,6 +94,7 @@ class LKStore {
       await p.remove(_medalCacheKey(oldUid));
     }
     await LKClient.shared.clearResponseCache();
+    await readerCacheClear;
     LKClient.shared.session.clear();
     LKClient.sessionRev.value++;
   }
@@ -479,6 +485,23 @@ class ReaderPrefs {
       (await _p()).getDouble('r_pos_$chapterId') ?? 0;
   static Future<void> setReadPosFrac(int chapterId, double frac) async =>
       (await _p()).setDouble('r_pos_$chapterId', frac.clamp(0.0, 1.0));
+
+  /// 正文锚点位置。旧版只保存百分比，保留旧键作为兼容回退。
+  static Future<ReadingPosition?> readPosition(int chapterId) async {
+    final raw = (await _p()).getString('r_pos_v2_$chapterId');
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return ReadingPosition.fromJson(jsonDecode(raw));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> setPosition(
+      int chapterId, ReadingPosition position) async {
+    await (await _p())
+        .setString('r_pos_v2_$chapterId', jsonEncode(position.toJson()));
+  }
 }
 
 class ReaderSettings {

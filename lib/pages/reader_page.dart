@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
 import 'package:gal/gal.dart';
@@ -18,7 +21,10 @@ import '../api/reader_cache.dart';
 import '../api/reading_session.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
+import '../reader/scroll_layout_index.dart';
+import 'catalog_paging.dart';
 import 'login_page.dart';
+import '../reader/reading_position.dart';
 import 'search_page.dart';
 
 /// 正文块:文本(可含链接区间)或插画
@@ -37,19 +43,40 @@ class _BodyBlock {
         links = const [];
 }
 
+@visibleForTesting
+Future<List<({String? image, String text, double? aspect})>>
+    parseReaderHtmlForTesting(String html) async {
+  final blocks = await _ReaderPageState._parseHtmlOffMainIsolate(html);
+  return blocks
+      .map((block) =>
+          (image: block.image, text: block.text, aspect: block.aspect))
+      .toList(growable: false);
+}
+
 /// 翻页模式:一页内的条目(切分后的文本/插画)
 class _PageItem {
   final String? image;
   final double? aspect;
   final String text;
   final List<(int, int, String)> links;
-  _PageItem.text(this.text, this.links)
+  final int blockIndex;
+  final int startOffset;
+  final int endOffset;
+  _PageItem.text(this.text, this.links,
+      {required this.blockIndex,
+      required this.startOffset,
+      required this.endOffset})
       : image = null,
         aspect = null;
-  _PageItem.image(this.image, {this.aspect})
+  _PageItem.image(this.image, {this.aspect, required this.blockIndex})
       : text = '',
+        startOffset = 0,
+        endOffset = 0,
         links = const [];
 }
+
+/// 保留内部名称，避免把正文分页代码和 UI 细节耦合到具体模型名称。
+typedef _ReadingAnchor = ReadingPosition;
 
 /// 翻页模式:一页
 class _Page {
@@ -82,6 +109,10 @@ class ReaderPage extends StatefulWidget {
 }
 
 class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
+  static const int _parsedChapterCacheLimit = 8;
+  static final LinkedHashMap<String, List<_BodyBlock>> _parsedChapterCache =
+      LinkedHashMap<String, List<_BodyBlock>>();
+  static int _parsedCacheGeneration = ReaderContentCache.generation;
   String _title = '';
   List<_BodyBlock> _blocks = [_BodyBlock.text('加载中…')];
   int? _prevId;
@@ -106,6 +137,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   List<_Page> _pages = [_Page(const [], chapterEnd: true)];
   int _pageIndex = 0;
   bool _chapterSwitching = false;
+  _ReadingAnchor? _pendingPagedAnchor;
+  int? _pendingPositionTransitionId;
+  bool _restoringPagedProgress = false;
 
   /// 翻页模式分页缓存键(内容/尺寸变化时重建分页)
   String _pagedKey = '';
@@ -132,11 +166,34 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   /// 缓存的章节详情(切换简繁时本地重解析,不重新请求)
   LKChapterDetail? _detail;
+  LKChapterDetail? _parsedDetail;
+  int _parsedMode = -1;
+  List<_BodyBlock>? _parsedBlocks;
+  late final Future<void> _prefsReady;
+
+  Future<void>? _adjacentResolutionFuture;
+  final Set<int> _prefetchingChapterIds = <int>{};
+  Future<void>? _catalogWarmFuture;
+  Future<List<LKVolume>>? _volumesFuture;
+  List<LKVolume>? _volumesCache;
+  final Map<String, Future<LKChapterPage>> _chapterPageFutures = {};
+  final Map<String, LKChapterPage> _chapterPageCache = {};
 
   final _sc = ScrollController();
   final _shareButtonKey = GlobalKey();
-  double _progress = 0;
-  double _lastScrollOffset = 0;
+  List<GlobalKey> _scrollTextKeys = const [];
+  List<double> _blockProgressOffsets = const [0, 1];
+  ReaderScrollLayoutIndex? _scrollLayoutIndex;
+  String _scrollLayoutIndexKey = '';
+  final ReadingPositionController _positionController =
+      ReadingPositionController();
+  int _positionRestoreSerial = 0;
+  int _scrollProgressGeneration = 0;
+  bool _restoringScrollAnchor = false;
+  bool _progressUpdateScheduled = false;
+  Timer? _positionPersistTimer;
+  double _scrollLayoutWidth = 0;
+  bool _scrollLayoutLockedBody = false;
 
   /// 正文文字区域的指针跟踪。
   /// SelectionArea 会优先处理文字手势，这里用 Listener 旁路记录短按，
@@ -168,6 +225,54 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   Color get _textColor => _presets[_bgEff].$2;
   bool get _isDarkBg => _bgEff >= 2;
 
+  _ReadingAnchor? get _logicalAnchor => _positionController.value;
+
+  /// 进度始终从正文锚点推导，避免“百分比”和真实位置分别维护后漂移。
+  double get _progress {
+    final anchor = _positionController.value;
+    return anchor == null ? 0 : _progressForAnchor(anchor);
+  }
+
+  void _syncProgressUi(_ReadingAnchor anchor, {bool updateSession = true}) {
+    final progress = _progressForAnchor(anchor);
+    _progressN.value = progress;
+    if (updateSession) {
+      LKReadingSession.shared
+          .update(volumeId: _effectiveVolumeId, progress: progress);
+    }
+  }
+
+  bool _publishPosition(_ReadingAnchor anchor,
+      {int? transitionId,
+      bool updateSession = true,
+      bool persist = true,
+      bool syncUi = true}) {
+    final normalized = _normalizeAnchor(anchor);
+    final accepted =
+        _positionController.update(normalized, transitionId: transitionId);
+    if (!accepted) return false;
+    if (syncUi) {
+      _syncProgressUi(normalized, updateSession: updateSession);
+    }
+    if (persist) _schedulePositionPersist();
+    return true;
+  }
+
+  bool _completePositionTransition(int transitionId, _ReadingAnchor anchor) {
+    final normalized = _normalizeAnchor(anchor);
+    final accepted =
+        _positionController.completeTransition(transitionId, normalized);
+    if (!accepted) return false;
+    _syncProgressUi(normalized);
+    _schedulePositionPersist();
+    return true;
+  }
+
+  void _schedulePositionPersist() {
+    _positionPersistTimer?.cancel();
+    _positionPersistTimer = Timer(const Duration(milliseconds: 300), _savePos);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -175,42 +280,518 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _title = widget.chapterTitle;
     _effectiveVolumeId = widget.volumeId;
     _sc.addListener(_onScroll);
+    _prefsReady = _loadPrefs();
     _load();
-    _loadPrefs();
   }
 
   void _onScroll() {
     if (!_sc.hasClients) return;
-    final offset = _sc.offset;
-    final delta = offset - _lastScrollOffset;
-    _lastScrollOffset = offset;
-    // ListView.builder 的总高度会随着懒加载变化。总高度变化但滚动位置未变
-    // 时不刷新，避免百分比被 maxScrollExtent 的中间值反复拉回。
-    if (delta.abs() < 0.5) return;
-    final max = _sc.position.maxScrollExtent;
-    final raw = max <= 0 ? 1.0 : (offset / max).clamp(0.0, 1.0);
-    // 同一方向滚动时只接受该方向的变化，过滤懒加载造成的反向抖动；
-    // 用户真正反向拖动时，delta 会切换方向，进度仍可正常回退。
-    final next = delta > 0
-        ? (raw > _progress ? raw : _progress)
-        : (raw < _progress ? raw : _progress);
-    if ((next - _progress).abs() < 0.001) return;
-    _progress = next;
-    _progressN.value = next;
-    LKReadingSession.shared
-        .update(volumeId: _effectiveVolumeId, progress: _progress);
+    if (_paged || _restoringScrollAnchor || _progressUpdateScheduled) return;
+    final generation = _scrollProgressGeneration;
+    _progressUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _progressUpdateScheduled = false;
+      if (!mounted ||
+          _paged ||
+          _restoringScrollAnchor ||
+          generation != _scrollProgressGeneration) {
+        return;
+      }
+      final anchor = _captureScrollAnchor();
+      if (anchor == null) return;
+      final next = _progressForAnchor(anchor);
+      if ((next - _progress).abs() < 0.0005) return;
+      _publishPosition(anchor);
+    });
+  }
+
+  double _blockProgressWeight(_BodyBlock block) {
+    if (block.image != null) return 400;
+    return block.text.isEmpty ? 1 : block.text.length.toDouble();
+  }
+
+  double _scrollContentWidth([double? viewportWidth]) {
+    final width = viewportWidth ??
+        (_scrollLayoutWidth > 0
+            ? _scrollLayoutWidth
+            : MediaQuery.sizeOf(context).width);
+    return (width - _bodyPadding.left - _bodyPadding.right)
+        .clamp(1.0, 2000.0)
+        .toDouble();
+  }
+
+  bool _isLockedText(_BodyBlock block, bool lockedBody) {
+    return lockedBody && block.links.isEmpty && block.text == '(本章暂无内容)';
+  }
+
+  String _scrollTextContent(_BodyBlock block, {required bool lockedBody}) {
+    return _isLockedText(block, lockedBody) ? '本章需要轻币解锁' : block.text;
+  }
+
+  TextSpan _scrollTextSpan(_BodyBlock block, {required bool lockedBody}) {
+    final hint = _isLockedText(block, lockedBody);
+    return TextSpan(
+      style: _bodyTextStyle,
+      children: hint ? const [TextSpan(text: '本章需要轻币解锁')] : _spansFor(block),
+    );
+  }
+
+  TextPainter _scrollTextPainter(int index,
+      {double? viewportWidth, bool? lockedBody}) {
+    final block = _blocks[index];
+    final displayText = _scrollTextContent(
+      block,
+      lockedBody: lockedBody ?? _scrollLayoutLockedBody,
+    );
+    return TextPainter(
+      // 链接只改变颜色和下划线，不改变排版尺寸；不在测量阶段创建
+      // TapGestureRecognizer，避免每次 Sliver 布局都产生不可回收对象。
+      text: TextSpan(style: _bodyTextStyle, text: displayText),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+    )..layout(maxWidth: _scrollContentWidth(viewportWidth));
+  }
+
+  double _scrollImageHeight(_BodyBlock block, double contentWidth) {
+    final aspect = block.aspect;
+    if (aspect != null && aspect > 0) {
+      return (contentWidth / aspect).clamp(1.0, 10000.0).toDouble();
+    }
+    // 未提供原图比例时保留一个稳定的竖向插画区域，并使用 contain
+    // 展示完整图片。固定布局尺寸可避免图片解码后改变全文滚动坐标。
+    return (contentWidth * 1.35).clamp(180.0, 720.0).toDouble();
+  }
+
+  String _scrollLayoutKey(double viewportWidth, bool lockedBody) {
+    final scale = MediaQuery.textScalerOf(context).scale(1.0);
+    return '${identityHashCode(_blocks)}|${viewportWidth.round()}|'
+        '${_fontSize.toStringAsFixed(2)}|${_lineHeight.toStringAsFixed(2)}|'
+        '${_bodyPadding.left}|${_bodyPadding.top}|${_bodyPadding.right}|'
+        '${_bodyPadding.bottom}|$lockedBody|'
+        '${scale.toStringAsFixed(3)}';
+  }
+
+  void _ensureScrollLayoutIndex(double viewportWidth, bool lockedBody) {
+    final key = _scrollLayoutKey(viewportWidth, lockedBody);
+    if (_scrollLayoutIndexKey == key &&
+        _scrollLayoutIndex?.length == _blocks.length) {
+      return;
+    }
+
+    final contentWidth = _scrollContentWidth(viewportWidth);
+    final extents = <double>[];
+    for (var index = 0; index < _blocks.length; index++) {
+      final block = _blocks[index];
+      if (block.image != null) {
+        extents.add(_scrollImageHeight(block, contentWidth) + 20);
+        continue;
+      }
+      final painter = _scrollTextPainter(
+        index,
+        viewportWidth: viewportWidth,
+        lockedBody: lockedBody,
+      );
+      extents.add(painter.height.clamp(1.0, 100000.0).toDouble() + 12);
+      painter.dispose();
+    }
+    _scrollLayoutIndexKey = key;
+    _scrollLayoutIndex = ReaderScrollLayoutIndex(
+      itemExtents: extents,
+      leadingPadding: _bodyPadding.top,
+    );
+  }
+
+  double _scrollTextCaretOffset(int index, int textOffset,
+      {double? viewportWidth, bool? lockedBody}) {
+    final painter = _scrollTextPainter(
+      index,
+      viewportWidth: viewportWidth,
+      lockedBody: lockedBody,
+    );
+    final displayLength = _scrollTextContent(
+      _blocks[index],
+      lockedBody: lockedBody ?? _scrollLayoutLockedBody,
+    ).length;
+    final safeOffset = textOffset.clamp(0, displayLength);
+    final result = painter
+        .getOffsetForCaret(TextPosition(offset: safeOffset), Rect.zero)
+        .dy;
+    painter.dispose();
+    return result;
+  }
+
+  _ReadingAnchor _snapAnchorToScrollLine(_ReadingAnchor rawAnchor) {
+    final anchor = _normalizeAnchor(rawAnchor);
+    if (_blocks.isEmpty || _blocks[anchor.blockIndex].image != null) {
+      return anchor;
+    }
+    final block = _blocks[anchor.blockIndex];
+    final offset = (anchor.textOffset ??
+            (block.text.length * anchor.blockFraction).round())
+        .clamp(0, block.text.length);
+    final painter = _scrollTextPainter(anchor.blockIndex);
+    final line = painter.getLineBoundary(TextPosition(offset: offset));
+    painter.dispose();
+    return ReadingPosition.text(
+      blockIndex: anchor.blockIndex,
+      offset: line.start.clamp(0, block.text.length),
+    );
+  }
+
+  /// 精确布局索引是滚动位置的唯一像素来源，不读取 maxScrollExtent 的
+  /// 中间估值，也不依赖目标子项是否已经挂载。
+  double? _scrollOffsetForAnchor(_ReadingAnchor rawAnchor) {
+    final layout = _scrollLayoutIndex;
+    if (layout == null || layout.length != _blocks.length || _blocks.isEmpty) {
+      return null;
+    }
+    final anchor = _normalizeAnchor(rawAnchor);
+    final index = anchor.blockIndex.clamp(0, _blocks.length - 1);
+    final contentWidth = _scrollContentWidth();
+    final block = _blocks[index];
+    double localOffset;
+    if (block.image != null) {
+      localOffset = 10 +
+          _scrollImageHeight(block, contentWidth) *
+              anchor.blockFraction.clamp(0.0, 1.0).toDouble();
+    } else {
+      final text = _scrollTextContent(
+        block,
+        lockedBody: _scrollLayoutLockedBody,
+      );
+      final textOffset = anchor.textOffset == null
+          ? (text.length * anchor.blockFraction.clamp(0.0, 1.0)).round()
+          : anchor.textOffset!.clamp(0, text.length);
+      localOffset = _scrollTextCaretOffset(index, textOffset);
+    }
+    return layout.scrollOffsetForItem(index, localOffset: localOffset);
+  }
+
+  void _applyBlocks(List<_BodyBlock> blocks) {
+    _blocks = blocks;
+    _scrollLayoutIndexKey = '';
+    _scrollLayoutIndex = null;
+    _scrollTextKeys = List<GlobalKey>.generate(
+      blocks.length,
+      (i) => GlobalKey(debugLabel: 'reader-text-$i'),
+      growable: false,
+    );
+    final offsets = <double>[0];
+    for (final block in blocks) {
+      offsets.add(offsets.last + _blockProgressWeight(block));
+    }
+    if (offsets.last <= 0) offsets[offsets.length - 1] = 1;
+    _blockProgressOffsets = offsets;
+  }
+
+  /// 将旧百分比/旧布局产生的锚点限制到当前正文，并把文本位置统一成
+  /// Flutter 使用的 UTF-16 偏移。这样字体、窗口尺寸变化后仍能指向同一字。
+  _ReadingAnchor _normalizeAnchor(_ReadingAnchor anchor) {
+    if (_blocks.isEmpty) return const _ReadingAnchor(0, 0);
+    final index = anchor.blockIndex.clamp(0, _blocks.length - 1);
+    final block = _blocks[index];
+    if (block.image != null) {
+      return ReadingPosition.image(
+        blockIndex: index,
+        fraction: anchor.blockFraction.clamp(0.0, 1.0).toDouble(),
+      );
+    }
+    final length = block.text.length;
+    if (length == 0) return ReadingPosition.text(blockIndex: index, offset: 0);
+    final offset = anchor.textOffset == null
+        ? (length * anchor.blockFraction.clamp(0.0, 1.0)).round()
+        : anchor.textOffset!.clamp(0, length);
+    return ReadingPosition.text(blockIndex: index, offset: offset);
+  }
+
+  double _progressForAnchor(_ReadingAnchor anchor) {
+    if (_blocks.isEmpty || _blockProgressOffsets.length != _blocks.length + 1) {
+      return 0;
+    }
+    final index = anchor.blockIndex.clamp(0, _blocks.length - 1);
+    final start = _blockProgressOffsets[index];
+    final end = _blockProgressOffsets[index + 1];
+    final block = _blocks[index];
+    final fraction = anchor.textOffset == null || block.text.isEmpty
+        ? anchor.blockFraction
+        : anchor.textOffset!.clamp(0, block.text.length).toDouble() /
+            block.text.length;
+    final position =
+        start + (end - start) * fraction.clamp(0.0, 1.0).toDouble();
+    return (position / _blockProgressOffsets.last).clamp(0.0, 1.0);
+  }
+
+  _ReadingAnchor _anchorForProgress(double rawProgress) {
+    if (_blocks.isEmpty || _blockProgressOffsets.length != _blocks.length + 1) {
+      return const _ReadingAnchor(0, 0);
+    }
+    final progress = rawProgress.clamp(0.0, 1.0).toDouble();
+    final target = _blockProgressOffsets.last * progress;
+    var low = 0;
+    var high = _blocks.length - 1;
+    while (low < high) {
+      final mid = (low + high) >> 1;
+      if (_blockProgressOffsets[mid + 1] < target) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    final start = _blockProgressOffsets[low];
+    final end = _blockProgressOffsets[low + 1];
+    final fraction = end <= start ? 0.0 : (target - start) / (end - start);
+    final block = _blocks[low];
+    final normalizedFraction = fraction.clamp(0.0, 1.0).toDouble();
+    if (block.image != null || block.text.isEmpty) {
+      return _ReadingAnchor(low, normalizedFraction);
+    }
+    return ReadingPosition.text(
+      blockIndex: low,
+      offset: (block.text.length * normalizedFraction).round(),
+    );
+  }
+
+  _ReadingAnchor? _captureScrollAnchor() {
+    try {
+      return _captureScrollAnchorUnsafe();
+    } catch (_) {
+      // 渲染树在滚动/切换模式的同一帧内可能正在拆装，位置采样失败
+      // 不应把一个内部 RenderObject 异常升级成阅读器崩溃。
+      return null;
+    }
+  }
+
+  _ReadingAnchor? _captureScrollAnchorUnsafe() {
+    final layout = _scrollLayoutIndex;
+    if (_blocks.isEmpty ||
+        layout == null ||
+        layout.length != _blocks.length ||
+        !_sc.hasClients) {
+      return null;
+    }
+    if ((_sc.position.maxScrollExtent > 0 &&
+            _sc.offset >= _sc.position.maxScrollExtent - 1) ||
+        _sc.offset >= layout.scrollContentEnd - 1) {
+      return _ReadingAnchor(_blocks.length - 1, 1);
+    }
+    final location = layout.locate(_sc.offset);
+    final index = location.index.clamp(0, _blocks.length - 1);
+    final block = _blocks[index];
+    if (block.image != null) {
+      final imageHeight = _scrollImageHeight(block, _scrollContentWidth());
+      final imageOffset =
+          (location.localOffset - 10).clamp(0.0, imageHeight).toDouble();
+      return ReadingPosition.image(
+        blockIndex: index,
+        fraction: imageHeight <= 0 ? 0 : imageOffset / imageHeight,
+      );
+    }
+
+    final textObject =
+        _scrollTextKeys[index].currentContext?.findRenderObject();
+    final textRender = textObject is RenderParagraph ? textObject : null;
+    final localY = location.localOffset.clamp(
+      0.0,
+      textRender != null && textRender.attached && textRender.hasSize
+          ? textRender.size.height
+          : layout.itemExtents[index],
+    );
+    int offset;
+    if (textRender != null && textRender.attached && textRender.hasSize) {
+      offset = textRender.getPositionForOffset(Offset(0.5, localY)).offset;
+    } else {
+      final painter = _scrollTextPainter(index);
+      offset = painter.getPositionForOffset(Offset(0.5, localY)).offset;
+      painter.dispose();
+    }
+    return ReadingPosition.text(
+      blockIndex: index,
+      offset: offset.clamp(0, block.text.length),
+    );
+  }
+
+  _ReadingAnchor? _anchorForPage(int rawPageIndex) {
+    if (_blocks.isEmpty || _pages.isEmpty) return null;
+    final pageIndex = rawPageIndex.clamp(0, _pages.length - 1);
+    final page = _pages[pageIndex];
+    if (page.items.isNotEmpty) {
+      final item = page.items.first;
+      final blockIndex = item.blockIndex.clamp(0, _blocks.length - 1);
+      if (item.image != null) {
+        return ReadingPosition.imagePage(blockIndex: blockIndex);
+      }
+      final length = _blocks[blockIndex].text.length;
+      return length <= 0
+          ? _ReadingAnchor(blockIndex, 0)
+          : ReadingPosition.text(
+              blockIndex: blockIndex, offset: item.startOffset);
+    }
+    if (page.chapterEnd || pageIndex >= _pages.length - 1) {
+      final last = _blocks.length - 1;
+      return _blocks[last].image != null
+          ? ReadingPosition.image(blockIndex: last, fraction: 1)
+          : ReadingPosition.text(
+              blockIndex: last, offset: _blocks[last].text.length);
+    }
+    for (var i = pageIndex - 1; i >= 0; i--) {
+      if (_pages[i].items.isEmpty) continue;
+      final item = _pages[i].items.last;
+      final blockIndex = item.blockIndex.clamp(0, _blocks.length - 1);
+      final length = _blocks[blockIndex].text.length;
+      if (item.image != null) {
+        return ReadingPosition.image(blockIndex: blockIndex, fraction: 1);
+      }
+      return length <= 0
+          ? _ReadingAnchor(blockIndex, 1)
+          : ReadingPosition.text(
+              blockIndex: blockIndex, offset: item.endOffset);
+    }
+    return const _ReadingAnchor(0, 0);
+  }
+
+  int? _pageForAnchor(_ReadingAnchor anchor, [List<_Page>? source]) {
+    final pages = source ?? _pages;
+    if (_blocks.isEmpty || pages.isEmpty) return null;
+    final blockIndex = anchor.blockIndex.clamp(0, _blocks.length - 1);
+    final block = _blocks[blockIndex];
+    final offset = anchor.textOffset == null
+        ? (block.text.length * anchor.blockFraction.clamp(0.0, 1.0)).round()
+        : anchor.textOffset!.clamp(0, block.text.length);
+    int? nearestPage;
+    for (var pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+      for (final item in pages[pageIndex].items) {
+        if (item.blockIndex < blockIndex) continue;
+        nearestPage ??= pageIndex;
+        if (item.blockIndex > blockIndex) return nearestPage;
+        if (item.image != null ||
+            (offset >= item.startOffset && offset < item.endOffset) ||
+            (offset == block.text.length && item.endOffset == offset)) {
+          return pageIndex;
+        }
+      }
+    }
+    return nearestPage ?? (pages.length - 1);
+  }
+
+  bool _anchorsClose(_ReadingAnchor first, _ReadingAnchor second) {
+    final a = _normalizeAnchor(first);
+    final b = _normalizeAnchor(second);
+    if (a.blockIndex != b.blockIndex) return false;
+    final block = _blocks[a.blockIndex];
+    if (block.image != null) {
+      return (a.blockFraction - b.blockFraction).abs() <= 0.01;
+    }
+    return ((a.textOffset ?? 0) - (b.textOffset ?? 0)).abs() <= 2;
+  }
+
+  Future<void> _restoreScrollAnchor(_ReadingAnchor anchor,
+      {bool animate = false,
+      bool retainAnchor = false,
+      int? transitionId}) async {
+    final targetAnchor = _snapAnchorToScrollLine(anchor);
+    final targetProgress = _progressForAnchor(targetAnchor);
+    final serial = ++_positionRestoreSerial;
+    final generation = ++_scrollProgressGeneration;
+    _restoringScrollAnchor = true;
+    var confirmed = false;
+    _ReadingAnchor? actual;
+    double? pendingOffset;
+    try {
+      for (var attempt = 0; attempt < 6; attempt++) {
+        if (!mounted ||
+            _paged ||
+            serial != _positionRestoreSerial ||
+            generation != _scrollProgressGeneration) {
+          return;
+        }
+        final layout = _scrollLayoutIndex;
+        if (!_sc.hasClients ||
+            layout == null ||
+            layout.length != _blocks.length) {
+          await WidgetsBinding.instance.endOfFrame;
+          continue;
+        }
+
+        final exactOffset =
+            pendingOffset ?? _scrollOffsetForAnchor(targetAnchor);
+        pendingOffset = null;
+        if (exactOffset == null) {
+          await WidgetsBinding.instance.endOfFrame;
+          continue;
+        }
+        final target = exactOffset
+            .clamp(_sc.position.minScrollExtent, _sc.position.maxScrollExtent)
+            .toDouble();
+        if (animate && attempt == 0) {
+          await _sc.animateTo(
+            target,
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+          );
+        } else {
+          _sc.jumpTo(target);
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted || serial != _positionRestoreSerial) return;
+
+        actual = _captureScrollAnchor();
+        if (actual == null) continue;
+        if (_anchorsClose(actual, targetAnchor) ||
+            (_progressForAnchor(actual) - targetProgress).abs() <= 0.0005) {
+          confirmed = true;
+          return;
+        }
+
+        // 理论上精确索引一次即可落位；系统字体的字形取整若产生亚像素
+        // 差异，再根据实际字符进度作一次闭环校正。
+        final correction = (targetProgress - _progressForAnchor(actual)) *
+            layout.contentExtent;
+        final corrected = (_sc.offset + correction)
+            .clamp(_sc.position.minScrollExtent, _sc.position.maxScrollExtent)
+            .toDouble();
+        if ((corrected - _sc.offset).abs() < 0.5) break;
+        pendingOffset = corrected;
+      }
+    } catch (_) {
+      // 页面关闭或滚动手势接管时停止恢复，不向用户显示内部定位错误。
+    } finally {
+      if (mounted && serial == _positionRestoreSerial) {
+        _restoringScrollAnchor = false;
+        actual = _captureScrollAnchor() ?? actual;
+        // 只有闭环验证通过后才提交目标锚点；失败时提交真实落点，UI、
+        // 阅读记录和持久化位置始终来自同一份事实。
+        final effectiveAnchor = confirmed && retainAnchor
+            ? targetAnchor
+            : (actual ??
+                (confirmed
+                    ? targetAnchor
+                    : _positionController.value ?? targetAnchor));
+        if (transitionId == null) {
+          _publishPosition(effectiveAnchor);
+        } else {
+          _completePositionTransition(transitionId, effectiveAnchor);
+        }
+      }
+    }
   }
 
   @override
   void dispose() {
+    // 让所有未完成的异步恢复回调失效，避免在 PositionController 已经
+    // dispose 后仍然提交位置。
+    _positionRestoreSerial++;
+    _scrollProgressGeneration++;
     _readingReportTimer?.cancel();
     LKReadingSession.shared.pause();
     unawaited(_reportReadingProgress(force: true));
     WidgetsBinding.instance.removeObserver(this);
+    _positionPersistTimer?.cancel();
     _savePos();
     _sc.dispose();
     _pageController.dispose();
     _progressN.dispose();
+    _positionController.dispose();
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -330,13 +911,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     return true;
   }
 
-  /// 保存本章阅读位置(滚动模式按滚动进度,翻页模式按页码进度)
+  /// 保存与排版无关的正文进度，切换滚动/翻页模式仍指向同一段内容。
   void _savePos() {
-    final frac = _paged
-        ? (_pages.length <= 1 ? 0.0 : _pageIndex / (_pages.length - 1))
-        : _progress;
-    if (frac > 0.005) {
-      ReaderPrefs.setReadPosFrac(widget.chapterId, frac);
+    final anchor = _positionController.value;
+    final frac = _progress;
+    if (anchor != null && frac > 0.005) {
+      unawaited(ReaderPrefs.setReadPosFrac(widget.chapterId, frac));
+      unawaited(ReaderPrefs.setPosition(widget.chapterId, anchor));
     }
   }
 
@@ -369,11 +950,27 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     });
     // 偏好到达后,若章节已加载且简繁状态有变化,则本地重解析
     if (tradChanged && _detail != null) {
-      _blocks = await _parseBlocks(_detail);
-      if (mounted) setState(() {});
+      await _reparseCurrentDetail();
     }
     WakelockPlus.toggle(enable: _keepOn);
     _applyImmersive();
+  }
+
+  Future<void> _reparseCurrentDetail() async {
+    final detail = _detail;
+    if (detail == null) return;
+    final blocks = await _parseBlocks(detail);
+    if (!mounted || _detail?.hasSameContent(detail) != true) return;
+    final anchor = _positionController.value;
+    setState(() => _applyBlocks(blocks));
+    if (!_paged && anchor != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_paged) {
+          unawaited(_restoreScrollAnchor(_normalizeAnchor(anchor),
+              retainAnchor: true));
+        }
+      });
+    }
   }
 
   @override
@@ -389,6 +986,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _hideBar ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge);
   }
 
+  /// UID 0 is the anonymous/public cache scope. A logged-in session without a
+  /// valid UID must not fall back to that shared scope.
+  int? get _readerCacheOwnerUid {
+    final session = LKClient.shared.session;
+    if (!session.isLoggedIn) return 0;
+    return session.uid > 0 ? session.uid : null;
+  }
+
   // ==================== 加载与解析 ====================
 
   Future<void> _load() async {
@@ -396,38 +1001,82 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       _loading = true;
       _loadError = null;
     });
-    // 上次阅读位置(重新打开本章时自动跳转)
-    final savedFrac = await ReaderPrefs.readPosFrac(widget.chapterId);
+    final cacheOwnerUid = _readerCacheOwnerUid;
+    final cacheGeneration = ReaderContentCache.generation;
+    // 阅读位置和正文缓存互不依赖，并行读取可以缩短命中缓存时的首屏等待。
+    final localStateFuture = Future.wait<Object?>([
+      ReaderPrefs.readPosition(widget.chapterId),
+      ReaderPrefs.readPosFrac(widget.chapterId),
+      cacheOwnerUid == null
+          ? Future<LKChapterDetail?>.value(null)
+          : ReaderContentCache.read(widget.bookId, widget.chapterId,
+              ownerUid: cacheOwnerUid),
+    ]);
+    // Preferences and local content are read concurrently, but parsing waits
+    // for the selected script mode so a cached chapter is rendered only once.
+    await _prefsReady;
+    final localState = await localStateFuture;
+    final savedPosition = localState[0] as ReadingPosition?;
+    final savedFrac = localState[1] as double;
     final restore = (savedFrac > 0.02 && savedFrac < 0.98) ? savedFrac : 0.0;
 
     // 先展示本机已经读过的正文,避免每次打开都等待网络。
-    final cached =
-        await ReaderContentCache.read(widget.bookId, widget.chapterId);
+    final cached = localState[2] as LKChapterDetail?;
     if (!mounted) return;
+    if (_readerCacheOwnerUid != cacheOwnerUid ||
+        ReaderContentCache.generation != cacheGeneration) {
+      unawaited(_load());
+      return;
+    }
     if (cached != null) {
-      await _renderDetail(cached, restore: restore, restorePosition: true);
+      await _renderDetail(cached,
+          restore: restore,
+          restorePosition: true,
+          savedPosition: savedPosition);
       if (!mounted) return;
+      if (_readerCacheOwnerUid != cacheOwnerUid ||
+          ReaderContentCache.generation != cacheGeneration) {
+        unawaited(_load());
+        return;
+      }
       setState(() => _loading = false);
       _resolveAdjacentOrPrefetch();
       // 缓存只负责快速展示,仍在后台向服务端刷新,防止正文过期。
-      unawaited(_refreshFromNetwork(restore));
+      unawaited(_refreshFromNetwork(restore,
+          cacheOwnerUid: cacheOwnerUid,
+          cacheGeneration: cacheGeneration,
+          savedPosition: savedPosition));
       return;
     }
 
     // 没有缓存时保持原来的在线加载流程。
-    await _refreshFromNetwork(restore, initialLoad: true);
+    await _refreshFromNetwork(restore,
+        initialLoad: true,
+        cacheOwnerUid: cacheOwnerUid,
+        cacheGeneration: cacheGeneration,
+        savedPosition: savedPosition);
   }
 
   Future<void> _refreshFromNetwork(double restore,
-      {bool initialLoad = false}) async {
+      {bool initialLoad = false,
+      required int? cacheOwnerUid,
+      required int cacheGeneration,
+      ReadingPosition? savedPosition}) async {
     try {
       final d = await LKApi.chapterDetail(widget.bookId, widget.chapterId);
       if (!mounted) return;
+      if (_readerCacheOwnerUid != cacheOwnerUid ||
+          ReaderContentCache.generation != cacheGeneration) {
+        unawaited(_load());
+        return;
+      }
       final old = _detail;
       if (old == null || !old.hasSameContent(d)) {
         // 首次在线加载恢复上次进度;缓存刷新时不打断用户当前阅读位置。
         await _renderDetail(d,
-            restore: restore, restorePosition: initialLoad && old == null);
+            restore: restore,
+            restorePosition: initialLoad && old == null,
+            savedPosition: savedPosition);
       } else {
         // 正文没有变化时只刷新锁定状态、标题和前后章信息,避免重排版。
         _updateDetailState(d);
@@ -436,7 +1085,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       setState(() => _loading = false);
 
       // 只缓存公开正文或当前账号已解锁的付费正文。
-      unawaited(ReaderContentCache.write(widget.bookId, d));
+      if (cacheOwnerUid != null) {
+        unawaited(ReaderContentCache.write(widget.bookId, d,
+            ownerUid: cacheOwnerUid, expectedGeneration: cacheGeneration));
+      }
       if (d.locked && !d.unlocked) _refreshCoins();
       if (LKClient.shared.session.isLoggedIn && !d.locked) {
         unawaited(() async {
@@ -459,9 +1111,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         setState(() {
           if (accessError) {
             _loadError = e.message;
-            _blocks = const [];
+            _applyBlocks(const []);
           } else {
-            _blocks = [_BodyBlock.text('加载失败: $e')];
+            _applyBlocks([_BodyBlock.text('加载失败: $e')]);
           }
           _loading = false;
         });
@@ -470,7 +1122,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   Future<void> _renderDetail(LKChapterDetail d,
-      {required double restore, required bool restorePosition}) async {
+      {required double restore,
+      required bool restorePosition,
+      ReadingPosition? savedPosition}) async {
     final blocks = await _parseBlocks(d);
     if (!mounted) return;
     _updateDetailState(d, blocks: blocks);
@@ -488,12 +1142,16 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       _startReadingReportTimer();
     }
     if (restorePosition) {
-      _lastScrollOffset = 0;
-      _progress = restore;
-      _progressN.value = restore;
-      // ListView 懒加载下 maxScrollExtent 随构建逐渐增大,
-      // 分多次跳转直到接近目标,保证恢复位置准确。
-      if (!_paged && restore > 0) _scheduleRestoreJumps(restore);
+      final anchor =
+          _normalizeAnchor(savedPosition ?? _anchorForProgress(restore));
+      _publishPosition(anchor, persist: false);
+      // 保存值对应正文逻辑位置，不直接换算尚未稳定的滚动总高度。
+      if (_paged) {
+        _pendingPagedAnchor = anchor;
+        _restoringPagedProgress = true;
+      } else if (_progress > 0) {
+        _scheduleRestoreJumps(anchor);
+      }
     }
   }
 
@@ -502,7 +1160,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() {
       _title = d.title.isEmpty ? _title : d.title;
-      if (blocks != null) _blocks = blocks;
+      if (blocks != null) _applyBlocks(blocks);
       _locked = d.locked;
       _unlocked = d.unlocked;
       _coinPrice = d.coinPrice;
@@ -518,35 +1176,91 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _resolveAdjacentOrPrefetch() {
     if (_prevId == null || _nextId == null) {
-      unawaited(_resolveAdjacent());
+      if (_adjacentResolutionFuture != null) return;
+      final task = _resolveAdjacent();
+      _adjacentResolutionFuture = task;
+      unawaited(task.whenComplete(() {
+        if (identical(_adjacentResolutionFuture, task)) {
+          _adjacentResolutionFuture = null;
+        }
+        if (mounted) {
+          unawaited(_prefetchAdjacentChapters());
+          unawaited(_warmCatalogContext());
+        }
+      }));
     } else {
-      unawaited(_prefetchNextChapter());
+      unawaited(_prefetchAdjacentChapters());
+      unawaited(_warmCatalogContext());
     }
   }
 
-  /// 后台预取下一章,只在下一章未缓存时发起一次请求。
-  Future<void> _prefetchNextChapter() async {
-    final nextId = _nextId;
-    if (nextId == null || nextId == widget.chapterId) return;
-    if (await ReaderContentCache.contains(widget.bookId, nextId)) return;
+  /// Cache both adjacent chapters. Forward navigation is requested first, and
+  /// the in-flight API guard prevents a rapid page switch from duplicating it.
+  Future<void> _prefetchAdjacentChapters() async {
+    final ids = <int>[
+      if (_nextId != null) _nextId!,
+      if (_prevId != null && _prevId != _nextId) _prevId!,
+    ].where((id) => id != widget.chapterId).toList(growable: false);
+    await Future.wait(ids.map(_prefetchChapter));
+  }
+
+  Future<void> _prefetchChapter(int chapterId) async {
+    if (!_prefetchingChapterIds.add(chapterId)) return;
     try {
-      final d = await LKApi.chapterDetail(widget.bookId, nextId);
-      await ReaderContentCache.write(widget.bookId, d);
+      final cacheOwnerUid = _readerCacheOwnerUid;
+      if (cacheOwnerUid == null) return;
+      final cacheGeneration = ReaderContentCache.generation;
+      if (await ReaderContentCache.contains(widget.bookId, chapterId,
+          ownerUid: cacheOwnerUid)) {
+        return;
+      }
+      final d = await LKApi.chapterDetail(widget.bookId, chapterId);
+      if (!mounted ||
+          _readerCacheOwnerUid != cacheOwnerUid ||
+          ReaderContentCache.generation != cacheGeneration) {
+        return;
+      }
+      await ReaderContentCache.write(widget.bookId, d,
+          ownerUid: cacheOwnerUid, expectedGeneration: cacheGeneration);
     } catch (_) {
       // 预取失败不影响当前章节阅读。
+    } finally {
+      _prefetchingChapterIds.remove(chapterId);
     }
   }
 
-  /// 分多次跳转到目标阅读位置(滚动模式)
-  void _scheduleRestoreJumps(double restore) {
-    for (final delay in const [0, 150, 400, 900, 1500]) {
-      Future.delayed(Duration(milliseconds: delay), () {
-        if (mounted && _sc.hasClients) {
-          final target = _sc.position.maxScrollExtent * restore;
-          if (target > 0) _sc.jumpTo(target);
-        }
-      });
-    }
+  /// Warm the exact catalog page used by the current chapter. The catalog
+  /// sheet then reuses LKApi's in-flight/persistent response cache on first open.
+  Future<void> _warmCatalogContext() {
+    final existing = _catalogWarmFuture;
+    if (existing != null) return existing;
+    final task = () async {
+      try {
+        final detail = _detail;
+        if (detail == null || _effectiveVolumeId <= 0) return;
+        final page = detail.chapterNo > 0
+            ? catalogPageForChapter(
+                chapterNo: detail.chapterNo,
+                // 章节序号足以定位服务端分页，不必为取得卷总数先拉完整目录。
+                total: 0,
+                pageSize: 50,
+              )
+            : 1;
+        await _chapterPageAt(_effectiveVolumeId, page);
+      } catch (_) {
+        // Catalog warming is opportunistic and never blocks the reader.
+      }
+    }();
+    _catalogWarmFuture = task;
+    return task.whenComplete(() {
+      if (identical(_catalogWarmFuture, task)) _catalogWarmFuture = null;
+    });
+  }
+
+  /// 按正文锚点恢复滚动位置，不依赖仍会变化的懒加载总高度。
+  void _scheduleRestoreJumps(_ReadingAnchor anchor) {
+    final normalized = _normalizeAnchor(anchor);
+    unawaited(_restoreScrollAnchor(normalized, retainAnchor: true));
   }
 
   /// 拉取轻币余额(失败静默,余额显示保持未知)
@@ -557,166 +1271,251 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  /// 拉取某卷的全部章节(翻页直到页尾)
-  Future<List<dynamic>> _chaptersAll(int volumeId) async {
-    final all = <dynamic>[];
-    for (var p = 1; p <= 10; p++) {
-      final page = await LKApi.chapters(widget.bookId, volumeId, p);
-      if (page.isEmpty) break;
-      all.addAll(page);
-      if (page.length < 50) break;
+  Future<LKChapterPage> _chapterPageAt(int volumeId, int page) async {
+    final normalizedPage = page < 1 ? 1 : page;
+    final key = '$volumeId:$normalizedPage';
+    final cached = _chapterPageCache[key];
+    if (cached != null) return cached;
+    final existing = _chapterPageFutures[key];
+    if (existing != null) return existing;
+    final future = LKApi.chapterPage(widget.bookId, volumeId, normalizedPage);
+    _chapterPageFutures[key] = future;
+    try {
+      final result = await future;
+      _chapterPageCache[key] = result;
+      return result;
+    } finally {
+      if (identical(_chapterPageFutures[key], future)) {
+        _chapterPageFutures.remove(key);
+      }
     }
-    return all;
   }
 
   /// 拉取全书全部卷
-  Future<List<dynamic>> _allVolumes() async {
-    final all = <dynamic>[];
-    for (var p = 1; p <= 10; p++) {
-      final page = await LKApi.volumes(widget.bookId, p);
-      if (page.isEmpty) break;
-      all.addAll(page);
-      if (page.length < 50) break;
+  Future<List<LKVolume>> _allVolumes() async {
+    final cached = _volumesCache;
+    if (cached != null) return cached;
+    final existing = _volumesFuture;
+    if (existing != null) return existing;
+    final future = LKApi.allVolumes(widget.bookId);
+    _volumesFuture = future;
+    try {
+      final volumes = await future;
+      _volumesCache = volumes;
+      return volumes;
+    } finally {
+      if (identical(_volumesFuture, future)) _volumesFuture = null;
     }
-    return all;
   }
 
-  /// 客户端计算前后章:先卷内,再跨卷(上一卷最后一章 / 下一卷第一章)
-  /// 服务端 navigation 经常缺失,登录态尤其如此,必须自己兜底
+  void _usePreviousChapter(LKChapter chapter, int volumeId) {
+    _prevId = chapter.chapterId;
+    _prevTitle = chapter.title;
+    _prevVolumeId = volumeId;
+  }
+
+  void _useNextChapter(LKChapter chapter, int volumeId) {
+    _nextId = chapter.chapterId;
+    _nextTitle = chapter.title;
+    _nextVolumeId = volumeId;
+  }
+
+  Future<LKChapter?> _firstChapter(LKVolume volume) async {
+    final page = await _chapterPageAt(volume.volumeId, 1);
+    return page.items.isEmpty ? null : page.items.first;
+  }
+
+  Future<LKChapter?> _lastChapter(LKVolume volume) async {
+    final pageCount = catalogPageCount(volume.chapterCount, 50);
+    final page =
+        await _chapterPageAt(volume.volumeId, pageCount > 0 ? pageCount : 1);
+    return page.items.isEmpty ? null : page.items.last;
+  }
+
+  /// 服务端缺少 navigation 时，只请求当前章节附近的分页来补齐前后章。
+  /// 即使单卷包含上千章，也不会为了两个相邻章节下载完整目录。
   Future<void> _resolveAdjacent() async {
     try {
-      final chs = await _chaptersAll(_effectiveVolumeId);
+      final detail = _detail;
+      final chapterNo = detail?.chapterNo ?? 0;
+      if (chapterNo <= 0) return;
+      final volumes = await _allVolumes();
       if (!mounted) return;
-      final idx = chs.indexWhere((c) => c.chapterId == widget.chapterId);
-      if (idx < 0) {
-        // 传入的卷不对时,扫全书找到章节真实所在卷
-        await _findRealVolume();
-      } else {
-        if (_prevId == null && idx > 0) {
-          _prevId = chs[idx - 1].chapterId;
-          _prevTitle = chs[idx - 1].title;
-          _prevVolumeId = _effectiveVolumeId;
+      final volumeIndex =
+          volumes.indexWhere((v) => v.volumeId == _effectiveVolumeId);
+      if (volumeIndex < 0) return;
+      final volume = volumes[volumeIndex];
+      final sourcePage = catalogPageForChapter(
+        chapterNo: chapterNo,
+        total: volume.chapterCount,
+        pageSize: 50,
+      );
+      final page = await _chapterPageAt(volume.volumeId, sourcePage);
+      if (!mounted) return;
+      final chapterIndex =
+          page.items.indexWhere((c) => c.chapterId == widget.chapterId);
+      if (chapterIndex < 0) return;
+
+      if (_prevId == null) {
+        if (chapterIndex > 0) {
+          _usePreviousChapter(page.items[chapterIndex - 1], volume.volumeId);
+        } else if (sourcePage > 1) {
+          final previousPage =
+              await _chapterPageAt(volume.volumeId, sourcePage - 1);
+          if (previousPage.items.isNotEmpty) {
+            _usePreviousChapter(previousPage.items.last, volume.volumeId);
+          }
+        } else if (volumeIndex > 0) {
+          final previous = await _lastChapter(volumes[volumeIndex - 1]);
+          if (previous != null) {
+            _usePreviousChapter(previous, volumes[volumeIndex - 1].volumeId);
+          }
         }
-        if (_nextId == null && idx < chs.length - 1) {
-          _nextId = chs[idx + 1].chapterId;
-          _nextTitle = chs[idx + 1].title;
-          _nextVolumeId = _effectiveVolumeId;
-        }
-        if (_prevId == null || _nextId == null) {
-          await _crossVolumeAdjacent();
+      }
+
+      if (_nextId == null) {
+        if (chapterIndex < page.items.length - 1) {
+          _useNextChapter(page.items[chapterIndex + 1], volume.volumeId);
+        } else {
+          final pageCount = catalogPageCount(
+              page.total > 0 ? page.total : volume.chapterCount, 50);
+          if (page.hasMore || sourcePage < pageCount) {
+            final nextPage =
+                await _chapterPageAt(volume.volumeId, sourcePage + 1);
+            if (nextPage.items.isNotEmpty) {
+              _useNextChapter(nextPage.items.first, volume.volumeId);
+            }
+          } else if (volumeIndex < volumes.length - 1) {
+            final next = await _firstChapter(volumes[volumeIndex + 1]);
+            if (next != null) {
+              _useNextChapter(next, volumes[volumeIndex + 1].volumeId);
+            }
+          }
         }
       }
       if (mounted) setState(() {});
     } catch (_) {}
   }
 
-  /// 章节不在当前卷时:扫描全部卷,定位真实卷并修正,再算前后章
-  Future<void> _findRealVolume() async {
-    final vols = await _allVolumes();
-    for (final v in vols) {
-      if (!mounted) return;
-      if (v.volumeId == _effectiveVolumeId) continue;
-      final chs = await _chaptersAll(v.volumeId);
-      if (!mounted) return;
-      final idx = chs.indexWhere((c) => c.chapterId == widget.chapterId);
-      if (idx >= 0) {
-        _effectiveVolumeId = v.volumeId;
-        if (_prevId == null && idx > 0) {
-          _prevId = chs[idx - 1].chapterId;
-          _prevTitle = chs[idx - 1].title;
-          _prevVolumeId = v.volumeId;
-        }
-        if (_nextId == null && idx < chs.length - 1) {
-          _nextId = chs[idx + 1].chapterId;
-          _nextTitle = chs[idx + 1].title;
-          _nextVolumeId = v.volumeId;
-        }
-        if (_prevId == null || _nextId == null) {
-          await _crossVolumeAdjacent();
-        }
-        return;
-      }
-    }
-  }
+  int get _scriptMode => _traditional
+      ? 1
+      : _simplified
+          ? 2
+          : 0;
 
-  /// 跨卷兜底:本卷没有上一章时取上一卷最后一章;没有下一章时取下一卷第一章
-  Future<void> _crossVolumeAdjacent() async {
-    final vols = await _allVolumes();
-    if (!mounted) return;
-    final vi = vols.indexWhere((v) => v.volumeId == _effectiveVolumeId);
-    if (vi < 0) return;
-    if (_prevId == null && vi > 0) {
-      final prevChs = await _chaptersAll(vols[vi - 1].volumeId);
-      if (!mounted) return;
-      if (prevChs.isNotEmpty) {
-        _prevId = prevChs.last.chapterId;
-        _prevTitle = prevChs.last.title;
-        _prevVolumeId = vols[vi - 1].volumeId;
-      }
+  Future<List<_BodyBlock>> _parseBlocks(LKChapterDetail d) async {
+    final mode = _scriptMode;
+    if (_parsedMode == mode &&
+        _parsedDetail?.hasSameContent(d) == true &&
+        _parsedBlocks != null) {
+      return _parsedBlocks!;
     }
-    if (_nextId == null && vi < vols.length - 1) {
-      final nextChs = await _chaptersAll(vols[vi + 1].volumeId);
-      if (!mounted) return;
-      if (nextChs.isNotEmpty) {
-        _nextId = nextChs.first.chapterId;
-        _nextTitle = nextChs.first.title;
-        _nextVolumeId = vols[vi + 1].volumeId;
-      }
-    }
-  }
 
-  Future<List<_BodyBlock>> _parseBlocks(dynamic d) async {
-    var html = d.bodyHtml as String?;
+    if (_parsedCacheGeneration != ReaderContentCache.generation) {
+      _parsedChapterCache.clear();
+      _parsedCacheGeneration = ReaderContentCache.generation;
+    }
+    final source = d.bodyHtml?.isNotEmpty == true ? d.bodyHtml! : d.bodyText;
+    final cacheKey = '${d.chapterId}:$mode:${source.length}:${source.hashCode}';
+    final shared = _parsedChapterCache.remove(cacheKey);
+    if (shared != null) {
+      _parsedChapterCache[cacheKey] = shared;
+      _parsedDetail = d;
+      _parsedMode = mode;
+      _parsedBlocks = shared;
+      return shared;
+    }
+
+    var html = d.bodyHtml;
+    List<_BodyBlock> blocks = const [];
     if (html != null && html.isNotEmpty) {
       // 简繁转换(整章一次转换;OpenCC 不影响 HTML 标签/实体)
-      if (_traditional) {
+      if (mode == 1) {
         html = await ChineseConverter.convert(html, S2T());
-      } else if (_simplified) {
+      } else if (mode == 2) {
         html = await ChineseConverter.convert(html, T2S());
       }
-      final blocks = <_BodyBlock>[];
-      var pos = 0;
-      for (final m in _imageTagRe.allMatches(html)) {
-        _addTextBlocks(blocks, html.substring(pos, m.start));
-        final tag = m.group(0)!;
-        final w = _imageWidthRe.firstMatch(tag)?.group(1);
-        final h = _imageHeightRe.firstMatch(tag)?.group(1);
-        final wi = int.tryParse(w ?? '') ?? 0;
-        final hi = int.tryParse(h ?? '') ?? 0;
-        final imageUrl = m.group(1)!.trim();
-        final imageUri = Uri.tryParse(imageUrl);
-        if (imageUri != null &&
-            imageUri.scheme == 'https' &&
-            imageUri.host.isNotEmpty) {
-          blocks.add(_BodyBlock.image(imageUrl,
-              aspect: (wi > 0 && hi > 0) ? wi / hi : null));
-        }
-        pos = m.end;
+      blocks = await _parseHtmlOffMainIsolate(html);
+    }
+    if (blocks.isEmpty) {
+      var text = d.bodyText;
+      if (mode == 1) {
+        text = await ChineseConverter.convert(text, S2T());
+      } else if (mode == 2) {
+        text = await ChineseConverter.convert(text, T2S());
       }
-      _addTextBlocks(blocks, html.substring(pos));
-      if (blocks.isNotEmpty) return blocks;
+      blocks = await _parseTextOffMainIsolate(text);
     }
-    var text = (d.bodyText ?? '') as String;
-    if (_traditional) {
-      text = await ChineseConverter.convert(text, S2T());
-    } else if (_simplified) {
-      text = await ChineseConverter.convert(text, T2S());
+
+    // A rapid script-mode change supersedes this parse instead of briefly
+    // showing content produced for the previous selection.
+    if (mode != _scriptMode) return _parseBlocks(d);
+    final result = List<_BodyBlock>.unmodifiable(
+        blocks.isEmpty ? [_BodyBlock.text('(本章暂无内容)')] : blocks);
+    _parsedDetail = d;
+    _parsedMode = mode;
+    _parsedBlocks = result;
+    _parsedChapterCache[cacheKey] = result;
+    while (_parsedChapterCache.length > _parsedChapterCacheLimit) {
+      _parsedChapterCache.remove(_parsedChapterCache.keys.first);
     }
+    return result;
+  }
+
+  static Future<List<_BodyBlock>> _parseHtmlOffMainIsolate(String html) =>
+      html.length < 12000
+          ? Future.value(_parseHtmlBlocks(html))
+          : compute(_parseHtmlBlocks, html,
+              debugLabel: 'Yomiru chapter HTML parser');
+
+  static Future<List<_BodyBlock>> _parseTextOffMainIsolate(String text) =>
+      text.length < 12000
+          ? Future.value(_parseTextBlocks(text))
+          : compute(_parseTextBlocks, text,
+              debugLabel: 'Yomiru chapter text parser');
+
+  static List<_BodyBlock> _parseHtmlBlocks(String html) {
+    final blocks = <_BodyBlock>[];
+    var pos = 0;
+    for (final m in _imageTagRe.allMatches(html)) {
+      _addTextBlocks(blocks, html.substring(pos, m.start));
+      final tag = m.group(0)!;
+      final w = _imageWidthRe.firstMatch(tag)?.group(1);
+      final h = _imageHeightRe.firstMatch(tag)?.group(1);
+      final wi = int.tryParse(w ?? '') ?? 0;
+      final hi = int.tryParse(h ?? '') ?? 0;
+      final imageUrl = m.group(1)!.trim();
+      final imageUri = Uri.tryParse(imageUrl);
+      if (imageUri != null &&
+          imageUri.scheme == 'https' &&
+          imageUri.host.isNotEmpty) {
+        blocks.add(_BodyBlock.image(imageUrl,
+            aspect: (wi > 0 && hi > 0) ? wi / hi : null));
+      }
+      pos = m.end;
+    }
+    _addTextBlocks(blocks, html.substring(pos));
+    return blocks;
+  }
+
+  static List<_BodyBlock> _parseTextBlocks(String text) {
     final blocks = <_BodyBlock>[];
     _addTextBlocks(blocks, text);
-    return blocks.isEmpty ? [_BodyBlock.text('(本章暂无内容)')] : blocks;
+    return blocks;
   }
 
   static final RegExp _aTagRe = RegExp(
-      r'<a\s+[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
-      caseSensitive: false,
-      dotAll: true);
-  static final RegExp _imageTagRe =
-      RegExp(r'<img[^>]*src="([^"]+)"[^>]*>', caseSensitive: false);
-  static final RegExp _imageWidthRe =
-      RegExp(r'(?:img-width|width)="(\d+)"', caseSensitive: false);
-  static final RegExp _imageHeightRe =
-      RegExp(r'(?:img-height|height)="(\d+)"', caseSensitive: false);
+      r'''<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>''',
+      caseSensitive: false, dotAll: true);
+  static final RegExp _imageTagRe = RegExp(
+      r'''<img[^>]*src\s*=\s*["']([^"']+)["'][^>]*>''',
+      caseSensitive: false);
+  static final RegExp _imageWidthRe = RegExp(
+      r'''(?:img-width|width)\s*=\s*["'](\d+)["']''',
+      caseSensitive: false);
+  static final RegExp _imageHeightRe = RegExp(
+      r'''(?:img-height|height)\s*=\s*["'](\d+)["']''',
+      caseSensitive: false);
   static final RegExp _resourceTagRe = RegExp(r'\[res\][^[]+\[/res\]');
   static final RegExp _lineBreakTagRe =
       RegExp(r'<br\s*/?>', caseSensitive: false);
@@ -728,7 +1527,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   static final RegExp _urlRe = RegExp(r"(?:https?://|www\.)[^\s<>"
       "'（）()\[\]「」『』]+"); // ignore: unnecessary_string_escapes
 
-  void _addTextBlocks(List<_BodyBlock> blocks, String seg) {
+  static void _addTextBlocks(List<_BodyBlock> blocks, String seg) {
     var t = seg
         .replaceAll('&lt;', '<')
         .replaceAll('&gt;', '>')
@@ -746,12 +1545,60 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     for (final p in paras) {
       final blk = _paraBlock(p);
       // 纯标签段落(<p> 等)去掉标签后为空,跳过,否则翻页模式会出现空白页
-      if (blk.text.isNotEmpty) blocks.add(blk);
+      if (blk.text.isNotEmpty) _appendTextBlockChunks(blocks, blk);
+    }
+  }
+
+  static const int _maxTextBlockLength = 8000;
+
+  /// 极少数页面会把整章正文放在一个超长段落里。拆成有限大小的块后，
+  /// 滚动模式仍可懒加载，翻页模式也不会为一整段几十万字一次性排版。
+  static void _appendTextBlockChunks(
+      List<_BodyBlock> blocks, _BodyBlock block) {
+    if (block.text.length <= _maxTextBlockLength) {
+      blocks.add(block);
+      return;
+    }
+    var start = 0;
+    while (start < block.text.length) {
+      var end =
+          (start + _maxTextBlockLength).clamp(0, block.text.length).toInt();
+      if (end < block.text.length) {
+        // 英文段落尽量在空白处分割；中文没有空白时直接按 UTF-16
+        // 边界分割，并确保不把 surrogate pair 拆开。
+        for (var i = end; i > start + (_maxTextBlockLength ~/ 2); i--) {
+          final code = block.text.codeUnitAt(i - 1);
+          if (code == 0x20 || code == 0x09) {
+            end = i;
+            break;
+          }
+        }
+        if (end < block.text.length &&
+            end > 0 &&
+            block.text.codeUnitAt(end - 1) >= 0xD800 &&
+            block.text.codeUnitAt(end - 1) <= 0xDBFF &&
+            block.text.codeUnitAt(end) >= 0xDC00 &&
+            block.text.codeUnitAt(end) <= 0xDFFF) {
+          end++;
+        }
+      }
+      final chunkLinks = <(int, int, String)>[];
+      for (final (linkStart, linkEnd, url) in block.links) {
+        if (linkEnd <= start || linkStart >= end) continue;
+        final localStart = (linkStart < start ? start : linkStart) - start;
+        final localEnd = (linkEnd > end ? end : linkEnd) - start;
+        if (localEnd > localStart) {
+          chunkLinks.add((localStart, localEnd, url));
+        }
+      }
+      blocks.add(_BodyBlock.text(
+          block.text.substring(start, end), List.unmodifiable(chunkLinks)));
+      start = end;
     }
   }
 
   /// 把一段(可能含 <a> 与裸 URL 的)文本解析成带链接区间的正文块
-  _BodyBlock _paraBlock(String raw) {
+  static _BodyBlock _paraBlock(String raw) {
     final buf = StringBuffer();
     final links = <(int, int, String)>[];
     var pos = 0;
@@ -770,7 +1617,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   /// 去标签后,扫描裸 URL(www./http/https),附加为链接区间
-  void _appendScanningUrls(
+  static void _appendScanningUrls(
       StringBuffer buf, List<(int, int, String)> links, String seg) {
     final clean = seg.replaceAll(_htmlTagRe, '');
     var pos = 0;
@@ -876,6 +1723,110 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         curve: Curves.easeOut);
   }
 
+  /// 从底部阅读进度条跳转到本章指定位置。
+  Future<void> _seekToProgress(double rawValue) async {
+    final value = rawValue.clamp(0.0, 1.0).toDouble();
+    final requestedAnchor = _anchorForProgress(value);
+    unawaited(HapticFeedback.selectionClick());
+
+    if (_paged) {
+      final target = _pageForAnchor(requestedAnchor);
+      if (target == null) return;
+      final transitionId = _positionController.beginTransition();
+      _restoringPagedProgress = true;
+      try {
+        // PageView 正在挂载时最多等待数帧。进度跳转只提交真实页，不能先
+        // 显示目标百分比、随后再被异步 onPageChanged 覆盖。
+        for (var attempt = 0;
+            attempt < 6 && mounted && !_pageController.hasClients;
+            attempt++) {
+          await WidgetsBinding.instance.endOfFrame;
+        }
+        if (!mounted || !_paged || !_pageController.hasClients) {
+          _positionController.cancelTransition(transitionId);
+          return;
+        }
+        try {
+          await _pageController.animateToPage(
+            target,
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+          );
+        } catch (_) {
+          // 页面在动画期间关闭时无需显示错误。
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted || !_paged) {
+          _positionController.cancelTransition(transitionId);
+          return;
+        }
+
+        final actualPage = (_pageController.page ?? target.toDouble())
+            .round()
+            .clamp(0, _pages.length - 1)
+            .toInt();
+        final reachedTarget = actualPage == target;
+        final effectiveAnchor = reachedTarget
+            // 目标落在独占一页的插画内部时，保留滑块所选的块内比例；
+            // 图片加载前后都不会再退回插画页起点。
+            ? requestedAnchor
+            : (_anchorForPage(actualPage) ?? requestedAnchor);
+        if (_pageIndex != actualPage) {
+          setState(() => _pageIndex = actualPage);
+        }
+        _completePositionTransition(transitionId, effectiveAnchor);
+      } finally {
+        if (mounted) _restoringPagedProgress = false;
+      }
+      return;
+    }
+    final anchor = _snapAnchorToScrollLine(requestedAnchor);
+    final transitionId = _positionController.beginTransition();
+    await _restoreScrollAnchor(
+      anchor,
+      animate: true,
+      retainAnchor: true,
+      transitionId: transitionId,
+    );
+  }
+
+  /// 在滚动/翻页模式之间切换时保留同一章节进度。
+  void _changeReadingMode(bool paged, StateSetter setSheet) {
+    if (paged == _paged) return;
+    final transitionId = _positionController.beginTransition();
+    final capturedAnchor = _paged
+        ? (_logicalAnchor ?? _anchorForPage(_pageIndex))
+        : (_captureScrollAnchor() ?? _logicalAnchor);
+    final anchor =
+        _normalizeAnchor(capturedAnchor ?? _anchorForProgress(_progress));
+    _publishPosition(anchor,
+        transitionId: transitionId, persist: false, syncUi: false);
+    // 取消仍在排队的旧滚动位置恢复，避免它在模式来回切换后覆盖新位置。
+    _positionRestoreSerial++;
+    _scrollProgressGeneration++;
+    setState(() {
+      _paged = paged;
+      _pagedKey = '';
+      _pendingPositionTransitionId = paged ? transitionId : null;
+      _pendingPagedAnchor = paged ? anchor : null;
+      _restoringPagedProgress = paged;
+    });
+    setSheet(() {});
+    unawaited(ReaderPrefs.setPagedMode(paged));
+    _schedulePositionPersist();
+
+    if (!paged) {
+      // 滚动布局索引要在下一帧按当前窗口与字体建立，之后精确定位。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_paged) {
+          unawaited(_restoreScrollAnchor(anchor,
+              retainAnchor: true, transitionId: transitionId));
+        }
+      });
+    }
+    // 切入翻页模式时由 _buildPages 使用正文锚点定位目标页。
+  }
+
   // ==================== 设置面板(三页签) ====================
 
   void _showSettings() {
@@ -945,10 +1896,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                           });
                           ReaderPrefs.setTraditional(v);
                           if (v) ReaderPrefs.setSimplified(false);
-                          if (_detail != null) {
-                            _blocks = await _parseBlocks(_detail);
-                            if (mounted) setState(() {});
-                          }
+                          await _reparseCurrentDetail();
                         }),
                         _switchTile(scheme, Icons.translate_rounded,
                             '简体显示(繁→简)', _simplified, (v) async {
@@ -959,10 +1907,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                           });
                           ReaderPrefs.setSimplified(v);
                           if (v) ReaderPrefs.setTraditional(false);
-                          if (_detail != null) {
-                            _blocks = await _parseBlocks(_detail);
-                            if (mounted) setState(() {});
-                          }
+                          await _reparseCurrentDetail();
                         }),
                         const SizedBox(height: 6),
                         Text('字号',
@@ -1091,11 +2036,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                         }),
                         _switchTile(scheme, Icons.auto_stories_rounded,
                             '翻页模式(整页左右翻)', _paged, (v) {
-                          setSheet(() {});
-                          setState(() => _paged = v);
-                          ReaderPrefs.setPagedMode(v);
-                          _pagedKey = '';
-                          if (v) _sc.jumpTo(0);
+                          _changeReadingMode(v, setSheet);
                         }),
                         if (_locked && !_unlocked)
                           _aaTile(scheme, Icons.lock_open_rounded,
@@ -1205,12 +2146,171 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Apple Books 风格的本章进度控制：细圆角轨道、小滑块、松手跳转。
+  Widget _readerProgressBar() {
+    final enabled = !_loading && _loadError == null;
+    final muted = _textColor.withValues(alpha: 0.5);
+    return ValueListenableBuilder<double>(
+      valueListenable: _progressN,
+      builder: (_, rawValue, __) {
+        final value = rawValue.clamp(0.0, 1.0).toDouble();
+        final percent = (value * 100).round();
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
+          child: Row(
+            children: [
+              Text('本章',
+                  style: TextStyle(
+                      color: muted, fontSize: 11, fontWeight: FontWeight.w500)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3.5,
+                    trackShape: const RoundedRectSliderTrackShape(),
+                    activeTrackColor:
+                        _textColor.withValues(alpha: _isDarkBg ? 0.82 : 0.7),
+                    inactiveTrackColor:
+                        _textColor.withValues(alpha: _isDarkBg ? 0.18 : 0.13),
+                    disabledActiveTrackColor:
+                        _textColor.withValues(alpha: 0.28),
+                    disabledInactiveTrackColor:
+                        _textColor.withValues(alpha: 0.09),
+                    thumbColor: _textColor.withValues(alpha: 0.96),
+                    disabledThumbColor: _textColor.withValues(alpha: 0.4),
+                    overlayColor: _textColor.withValues(alpha: 0.1),
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 5.5,
+                      disabledThumbRadius: 5.5,
+                      elevation: 0,
+                      pressedElevation: 1,
+                    ),
+                    overlayShape:
+                        const RoundSliderOverlayShape(overlayRadius: 15),
+                    showValueIndicator: ShowValueIndicator.never,
+                  ),
+                  child: Semantics(
+                    label: '本章阅读进度',
+                    value: '$percent%',
+                    child: Slider(
+                      value: value,
+                      onChanged: enabled ? (v) => _progressN.value = v : null,
+                      onChangeEnd:
+                          enabled ? (v) => unawaited(_seekToProgress(v)) : null,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 38,
+                child: Text(
+                  '$percent%',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: muted,
+                    fontSize: 11,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _scrollBlockWidget(int index, {required bool lockedBody}) {
+    final block = _blocks[index];
+    if (block.image != null) {
+      final imageHeight = _scrollImageHeight(block, _scrollContentWidth());
+      return SizedBox(
+        height: imageHeight + 20,
+        child: GestureDetector(
+          onTap: () => _showImageViewer(block.image!),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox(
+                width: double.infinity,
+                height: imageHeight,
+                child: CachedNetworkImage(
+                  imageUrl: block.image!,
+                  width: double.infinity,
+                  height: imageHeight,
+                  memCacheWidth:
+                      imageCacheDimension(context, _scrollContentWidth()),
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
+                  placeholder: (_, __) => Container(
+                    color: _isDarkBg
+                        ? Colors.white10
+                        : Colors.black.withValues(alpha: 0.05),
+                    child: const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                  ),
+                  errorWidget: (_, __, ___) => Center(
+                    child: Icon(Icons.broken_image_outlined,
+                        color: _textColor.withValues(alpha: 0.5)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: _textPointerDown,
+        onPointerMove: _textPointerMove,
+        onPointerUp: _textPointerUp,
+        onPointerCancel: _textPointerCancel,
+        child: SelectionArea(
+          child: Text.rich(
+            key: _scrollTextKeys[index],
+            _scrollTextSpan(block, lockedBody: lockedBody),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// 滚动模式正文(整章连续滚动)
-  Widget _scrollBody(
-      double viewTop, double viewBottom, bool locked, bool lockedBody) {
+  Widget _scrollBody(double viewportWidth, double viewTop, double viewBottom,
+      bool locked, bool lockedBody) {
+    // 所有滚动读写共用同一份精确布局索引。正文仍按需构建，文字高度
+    // 只在字体/宽度/内容变化时测量一次。
+    _scrollLayoutWidth = viewportWidth;
+    _scrollLayoutLockedBody = lockedBody;
+    _ensureScrollLayoutIndex(viewportWidth, lockedBody);
+    final layout = _scrollLayoutIndex!;
+    final horizontal = EdgeInsets.only(
+      left: _bodyPadding.left,
+      right: _bodyPadding.right,
+    );
+    final bodyPadding = EdgeInsets.fromLTRB(
+      _bodyPadding.left,
+      _bodyPadding.top,
+      _bodyPadding.right,
+      0,
+    );
+    final endPadding = EdgeInsets.fromLTRB(
+      _bodyPadding.left,
+      0,
+      _bodyPadding.right,
+      _bodyPadding.bottom,
+    );
     return NotificationListener<ScrollNotification>(
       onNotification: (n) {
-        if (n is ScrollUpdateNotification && _chrome) {
+        if (n is ScrollUpdateNotification &&
+            _chrome &&
+            !_restoringScrollAnchor) {
           setState(() => _chrome = false);
         }
         return false;
@@ -1218,79 +2318,34 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       // 视口整体避开系统栏:未隐藏时文本/章末按钮都不会进入状态栏与手势条区域
       child: Padding(
         padding: EdgeInsets.only(top: viewTop, bottom: viewBottom),
-        child: ListView.builder(
+        child: CustomScrollView(
           controller: _sc,
-          padding: _bodyPadding,
-          itemCount: _blocks.length + 1 + (locked ? 1 : 0),
-          itemBuilder: (_, i) {
-            if (i < _blocks.length) {
-              final b = _blocks[i];
-              if (b.image != null) {
-                return GestureDetector(
-                  onTap: () => _showImageViewer(b.image!),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: CachedNetworkImage(
-                        imageUrl: b.image!,
-                        width: double.infinity,
-                        memCacheWidth: imageCacheDimension(
-                            context, MediaQuery.sizeOf(context).width),
-                        fit: BoxFit.fitWidth,
-                        placeholder: (_, __) => Container(
-                          height: 180,
-                          color: _isDarkBg
-                              ? Colors.white10
-                              : Colors.black.withValues(alpha: 0.05),
-                          child: const Center(
-                              child: CircularProgressIndicator(strokeWidth: 2)),
-                        ),
-                        errorWidget: (_, __, ___) => Container(
-                          height: 120,
-                          alignment: Alignment.center,
-                          child: Icon(Icons.broken_image_outlined,
-                              color: _textColor.withValues(alpha: 0.5)),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }
-              // 锁定且无试读文本时给出提示
-              final hint =
-                  lockedBody && b.links.isEmpty && b.text == '(本章暂无内容)';
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Listener(
-                  behavior: HitTestBehavior.translucent,
-                  onPointerDown: _textPointerDown,
-                  onPointerMove: _textPointerMove,
-                  onPointerUp: _textPointerUp,
-                  onPointerCancel: _textPointerCancel,
-                  child: SelectionArea(
-                    child: Text.rich(
-                      TextSpan(
-                        style: _bodyTextStyle,
-                        children: hint
-                            ? const [TextSpan(text: '本章需要轻币解锁')]
-                            : _spansFor(b),
-                      ),
-                    ),
-                  ),
+          slivers: [
+            SliverPadding(
+              padding: bodyPadding,
+              sliver: SliverVariedExtentList(
+                delegate: SliverChildBuilderDelegate(
+                  (_, index) =>
+                      _scrollBlockWidget(index, lockedBody: lockedBody),
+                  childCount: _blocks.length,
+                  addAutomaticKeepAlives: false,
+                  addSemanticIndexes: false,
                 ),
-              );
-            }
-            // 试读内容下方:付费解锁卡片
-            if (locked && i == _blocks.length) {
-              return _unlockCard();
-            }
-            // 章末:上一章/下一章(首章只显下一章,末章只显上一章)
-            if (_loading) {
-              return const SizedBox.shrink();
-            }
-            return _chapterEndNav();
-          },
+                itemExtentBuilder: (index, _) => layout.itemExtents[index],
+              ),
+            ),
+            if (locked)
+              SliverPadding(
+                padding: horizontal,
+                sliver: SliverToBoxAdapter(child: _unlockCard()),
+              ),
+            SliverPadding(
+              padding: endPadding,
+              sliver: SliverToBoxAdapter(
+                child: _loading ? const SizedBox.shrink() : _chapterEndNav(),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1369,14 +2424,37 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           itemCount: _pages.length,
           physics: const ClampingScrollPhysics(),
           onPageChanged: (i) {
+            if (_restoringPagedProgress) return;
+            // 切入翻页模式时 PageView 可能异步回调一次目标页。该回调
+            // 只代表恢复完成，不应把“页内原始锚点”降级成页首锚点。
+            final pendingAnchor = _pendingPagedAnchor;
+            if (pendingAnchor != null && i == _pageIndex) {
+              _pendingPagedAnchor = null;
+              final transitionId = _pendingPositionTransitionId;
+              _pendingPositionTransitionId = null;
+              if (transitionId != null) {
+                _completePositionTransition(transitionId, pendingAnchor);
+              }
+              return;
+            }
+            _pendingPagedAnchor = null;
+            _pendingPositionTransitionId = null;
+            final anchor = _anchorForPage(i);
+            final progress = anchor == null
+                ? (_pages.length <= 1
+                    ? 1.0
+                    : (i / (_pages.length - 1)).clamp(0.0, 1.0))
+                : _progressForAnchor(anchor);
             setState(() {
               _pageIndex = i;
-              _progress = _pages.length <= 1
-                  ? 1
-                  : (i / (_pages.length - 1)).clamp(0.0, 1.0);
             });
-            LKReadingSession.shared
-                .update(volumeId: _effectiveVolumeId, progress: _progress);
+            if (anchor != null) {
+              _publishPosition(anchor);
+            } else {
+              _progressN.value = progress;
+              LKReadingSession.shared
+                  .update(volumeId: _effectiveVolumeId, progress: progress);
+            }
           },
           itemBuilder: (_, i) {
             final page = _pages[i];
@@ -1623,6 +2701,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           bookId: widget.bookId,
           volumeId: _effectiveVolumeId,
           currentChapterId: widget.chapterId,
+          currentChapterNo: _detail?.chapterNo ?? 0,
           onPick: (chapterId, title, volumeId) {
             Navigator.pop(context);
             _open(chapterId, title, volumeId: volumeId);
@@ -1698,19 +2777,24 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // 渲染时每个文本条目底部有 12px 段间距,分页高度计算必须计入,否则 BOTTOM OVERFLOW
     const gap = 12.0;
     final maxTextHeight = (contentH - gap).clamp(1.0, contentH).toDouble();
-    for (final b in _blocks) {
+    for (var blockIndex = 0; blockIndex < _blocks.length; blockIndex++) {
+      final b = _blocks[blockIndex];
       if (b.image != null) {
+        // 插画是原子页面：网络图片加载前后始终只占这一页，原图比例只
+        // 影响 contain 后的可见区域，不参与分页数量或阅读进度重排。
         flush();
-        pages.add(_Page([_PageItem.image(b.image!, aspect: b.aspect)]));
+        pages.add(_Page([
+          _PageItem.image(b.image!, aspect: b.aspect, blockIndex: blockIndex)
+        ]));
         continue;
       }
       if (b.text.trim().isEmpty) continue; // 空文本块不占页
       for (final (chunk, measuredHeight)
-          in _splitTextBlock(b, contentW, maxTextHeight)) {
+          in _splitTextBlock(b, blockIndex, contentW, maxTextHeight)) {
         if (chunk.text.isEmpty) continue;
         final h = measuredHeight + gap;
         if (used + h > contentH && used > 0) flush();
-        cur.add(_PageItem.text(chunk.text, chunk.links));
+        cur.add(chunk);
         used += h;
       }
     }
@@ -1718,19 +2802,44 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (_locked && !_unlocked) pages.add(_Page(const [], unlockCard: true));
     pages.add(_Page(const [], chapterEnd: true));
     _pages = pages;
-    // 保持大致阅读进度
+    // 只使用正文锚点定位，不再把旧页码/百分比当作第二个位置来源。
+    final currentAnchor = _positionController.value;
+    final restoreAnchor = _normalizeAnchor(
+        _pendingPagedAnchor ?? currentAnchor ?? _anchorForProgress(_progress));
+    final restoreProgress = _progressForAnchor(restoreAnchor);
+    final transitionId = _pendingPositionTransitionId;
     final total = pages.length - 1;
-    final target = total <= 0 ? 0 : (_progress * total).round().clamp(0, total);
+    final target = _pageForAnchor(restoreAnchor, pages) ??
+        (total <= 0 ? 0 : (restoreProgress * total).round().clamp(0, total));
     _pageIndex = target;
+    _publishPosition(restoreAnchor,
+        transitionId: transitionId,
+        persist: false,
+        syncUi: transitionId == null);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _pageController.hasClients) {
         _pageController.jumpToPage(target);
+      }
+      if (_restoringPagedProgress) {
+        // PageView 首次挂载会先发出第 0 页回调；等目标页落位后再恢复
+        // 正常的翻页进度更新，避免模式切换覆盖保存的百分比。
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (transitionId != null) {
+            _completePositionTransition(transitionId, restoreAnchor);
+            if (_pendingPositionTransitionId == transitionId) {
+              _pendingPositionTransitionId = null;
+            }
+          }
+          _pendingPagedAnchor = null;
+          _restoringPagedProgress = false;
+        });
       }
     });
   }
 
   /// 文本段按行切分(每页高度 contentH),链接区间随之重映射
-  List<(_PageItem, double)> _splitTextBlock(_BodyBlock b, double w, double h) {
+  List<(_PageItem, double)> _splitTextBlock(
+      _BodyBlock b, int blockIndex, double w, double h) {
     final tp = TextPainter(
       text: TextSpan(text: b.text, style: _bodyTextStyle),
       textDirection: TextDirection.ltr,
@@ -1738,7 +2847,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     )..layout(maxWidth: w);
     final lms = tp.computeLineMetrics();
     if (lms.isEmpty) {
-      return [(_PageItem.text(b.text, b.links), tp.height)];
+      return [
+        (
+          _PageItem.text(b.text, b.links,
+              blockIndex: blockIndex, startOffset: 0, endOffset: b.text.length),
+          tp.height
+        )
+      ];
     }
     int lineEnd(int idx) {
       final pos = tp.getPositionForOffset(Offset(0, lms[idx].baseline));
@@ -1756,7 +2871,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         if (end > start) {
           out.add((
             _PageItem.text(
-                b.text.substring(start, end), _remapLinks(b.links, start, end)),
+              b.text.substring(start, end),
+              _remapLinks(b.links, start, end),
+              blockIndex: blockIndex,
+              startOffset: start,
+              endOffset: end,
+            ),
             usedH,
           ));
         }
@@ -1771,13 +2891,22 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (end > start) {
       out.add((
         _PageItem.text(
-            b.text.substring(start, end), _remapLinks(b.links, start, end)),
+          b.text.substring(start, end),
+          _remapLinks(b.links, start, end),
+          blockIndex: blockIndex,
+          startOffset: start,
+          endOffset: end,
+        ),
         usedH,
       ));
     }
     if (end < b.text.length) {
       final tail = b.text.substring(end);
-      out.add((_PageItem.text(tail, const []), _measureText(tail, w)));
+      out.add((
+        _PageItem.text(tail, const [],
+            blockIndex: blockIndex, startOffset: end, endOffset: b.text.length),
+        _measureText(tail, w)
+      ));
     }
     return out;
   }
@@ -1972,7 +3101,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                                   _pagesSource = _blocks;
                                   WidgetsBinding.instance
                                       .addPostFrameCallback((_) {
-                                    if (mounted) {
+                                    if (mounted &&
+                                        _paged &&
+                                        _pagedKey == key &&
+                                        identical(_blocks, _pagesSource)) {
                                       _buildPages(
                                           vw,
                                           vh -
@@ -1985,7 +3117,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                                 return _pagedBody(vh, viewTopPadding,
                                     viewBottomPadding, lockedBody);
                               }
-                              return _scrollBody(viewTopPadding,
+                              return _scrollBody(vw, viewTopPadding,
                                   viewBottomPadding, locked, lockedBody);
                             }),
                 ),
@@ -2078,60 +3210,70 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 200),
                   curve: Curves.easeOut,
-                  bottom: _chrome ? 0 : -120,
+                  bottom: _chrome ? 0 : -170,
                   left: 0,
                   right: 0,
                   child: Container(
                     color: barColor,
                     child: SafeArea(
                       top: false,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Row(
-                          children: [
-                            _cornerChapterBtn(Icons.chevron_left_rounded, '上一章',
-                                _prevId != null, () {
-                              if (_prevId != null) {
-                                _open(_prevId!, _prevTitle ?? '',
-                                    volumeId: _prevVolumeId);
-                              }
-                            }),
-                            Expanded(
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  if (_locked && !_unlocked)
-                                    Padding(
-                                      padding: const EdgeInsets.only(right: 4),
-                                      child: Icon(Icons.lock_outline_rounded,
-                                          size: 16, color: _textColor),
-                                    ),
-                                  IconButton(
-                                    tooltip: '阅读设置',
-                                    icon: Icon(Icons.settings_rounded,
-                                        size: 22, color: _textColor),
-                                    onPressed: _showSettings,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _readerProgressBar(),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              children: [
+                                _cornerChapterBtn(Icons.chevron_left_rounded,
+                                    '上一章', _prevId != null, () {
+                                  if (_prevId != null) {
+                                    _open(_prevId!, _prevTitle ?? '',
+                                        volumeId: _prevVolumeId);
+                                  }
+                                }),
+                                Expanded(
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      if (_locked && !_unlocked)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(right: 4),
+                                          child: Icon(
+                                              Icons.lock_outline_rounded,
+                                              size: 16,
+                                              color: _textColor),
+                                        ),
+                                      IconButton(
+                                        tooltip: '阅读设置',
+                                        icon: Icon(Icons.settings_rounded,
+                                            size: 22, color: _textColor),
+                                        onPressed: _showSettings,
+                                      ),
+                                      TextButton.icon(
+                                        onPressed: _showCatalog,
+                                        icon: Icon(Icons.menu_book_rounded,
+                                            size: 18, color: _textColor),
+                                        label: Text('目录',
+                                            style: TextStyle(
+                                                fontSize: 13,
+                                                color: _textColor)),
+                                      ),
+                                    ],
                                   ),
-                                  TextButton.icon(
-                                    onPressed: _showCatalog,
-                                    icon: Icon(Icons.menu_book_rounded,
-                                        size: 18, color: _textColor),
-                                    label: Text('目录',
-                                        style: TextStyle(
-                                            fontSize: 13, color: _textColor)),
-                                  ),
-                                ],
-                              ),
+                                ),
+                                _cornerChapterBtn(Icons.chevron_right_rounded,
+                                    '下一章', _nextId != null, () {
+                                  if (_nextId != null) {
+                                    _open(_nextId!, _nextTitle ?? '',
+                                        volumeId: _nextVolumeId);
+                                  }
+                                }),
+                              ],
                             ),
-                            _cornerChapterBtn(Icons.chevron_right_rounded,
-                                '下一章', _nextId != null, () {
-                              if (_nextId != null) {
-                                _open(_nextId!, _nextTitle ?? '',
-                                    volumeId: _nextVolumeId);
-                              }
-                            }),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -2150,11 +3292,13 @@ class _CatalogSheet extends StatefulWidget {
   final int bookId;
   final int volumeId;
   final int currentChapterId;
+  final int currentChapterNo;
   final void Function(int chapterId, String title, int volumeId) onPick;
   const _CatalogSheet(
       {required this.bookId,
       required this.volumeId,
       required this.currentChapterId,
+      required this.currentChapterNo,
       required this.onPick});
 
   @override
@@ -2162,10 +3306,23 @@ class _CatalogSheet extends StatefulWidget {
 }
 
 class _CatalogSheetState extends State<_CatalogSheet> {
-  List<dynamic> _volumes = [];
+  static const int _pageSize = 50;
+  static const int _volumePageSize = 50;
+
+  List<LKVolume> _volumes = const [];
   String? _error;
+  int _volumesPage = 0;
+  bool _volumesHasMore = true;
+  bool _volumePageLoading = false;
   int? _expanded;
-  final Map<int, List<dynamic>> _chapters = {};
+  final Map<int, List<LKChapter>> _chapters = {};
+  final Set<int> _loadingVolumes = <int>{};
+  final Set<int> _openingSingleVolumes = <int>{};
+  final Map<int, String> _chapterErrors = <int, String>{};
+  final Map<int, int> _failedChapterPages = <int, int>{};
+  final Map<int, Set<int>> _loadedChapterPages = <int, Set<int>>{};
+  final Map<int, int> _chapterTotals = <int, int>{};
+  final Map<int, bool> _maxPageHasMore = <int, bool>{};
   final ScrollController _sc = ScrollController();
   final Map<int, GlobalKey> _volKeys = {};
   final GlobalKey _curChapterKey = GlobalKey();
@@ -2175,7 +3332,9 @@ class _CatalogSheetState extends State<_CatalogSheet> {
   void initState() {
     super.initState();
     _expanded = widget.volumeId; // 打开即展开当前卷
-    _loadVolumes();
+    unawaited(_loadVolumes());
+    // 当前卷与卷列表互不依赖，先加载当前章节所在分页即可立即使用目录。
+    if (widget.volumeId > 0) unawaited(_loadChapters(widget.volumeId));
   }
 
   @override
@@ -2184,52 +3343,240 @@ class _CatalogSheetState extends State<_CatalogSheet> {
     super.dispose();
   }
 
-  Future<void> _loadVolumes() async {
+  Future<void> _loadVolumes({bool append = false}) async {
+    if (_volumePageLoading || (append && !_volumesHasMore)) return;
+    final page = append ? _volumesPage + 1 : 1;
+    setState(() {
+      _volumePageLoading = true;
+      _error = null;
+    });
     try {
-      // 拉全所有卷(多页),保证当前卷一定在列表里
-      final vs = <dynamic>[];
-      for (var p = 1; p <= 10; p++) {
-        final page = await LKApi.volumes(widget.bookId, p);
-        if (page.isEmpty) break;
-        vs.addAll(page);
-        if (page.length < 50) break;
+      final pageItems = await LKApi.volumes(
+        widget.bookId,
+        page,
+        pageSize: _volumePageSize,
+      );
+      if (!mounted) return;
+      final seen =
+          append ? _volumes.map((volume) => volume.volumeId).toSet() : <int>{};
+      final merged = [
+        if (append) ..._volumes,
+        ...pageItems.where((volume) => seen.add(volume.volumeId)),
+      ];
+      setState(() {
+        _volumes = merged;
+        _volumesPage = page;
+        _volumesHasMore = pageItems.length >= _volumePageSize;
+        _error = null;
+      });
+      if (widget.volumeId > 0 &&
+          _displayVolumes.any((volume) => volume.volumeId == widget.volumeId)) {
+        _revealCurrent();
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = append ? '更多目录加载失败，点击重试' : '目录加载失败，请检查网络后重试');
+      }
+    } finally {
+      if (mounted) setState(() => _volumePageLoading = false);
+    }
+  }
+
+  /// 保留服务端返回的卷顺序，当前卷只通过“当前”标记突出显示。
+  /// 当前卷不再被强行挪到列表顶部，避免目录顺序与网站不一致。
+  List<LKVolume> get _displayVolumes => _volumes;
+
+  LKVolume? _volumeFor(int volumeId) {
+    for (final volume in _volumes) {
+      if (volume.volumeId == volumeId) return volume;
+    }
+    return null;
+  }
+
+  int _initialPageFor(int volumeId) {
+    if (volumeId != widget.volumeId || widget.currentChapterNo <= 0) return 1;
+    return catalogPageForChapter(
+      chapterNo: widget.currentChapterNo,
+      total: _volumeFor(volumeId)?.chapterCount ?? 0,
+      pageSize: _pageSize,
+    );
+  }
+
+  int _totalFor(int volumeId) =>
+      _chapterTotals[volumeId] ?? _volumeFor(volumeId)?.chapterCount ?? 0;
+
+  int _pageCountFor(int volumeId) =>
+      catalogPageCount(_totalFor(volumeId), _pageSize);
+
+  bool _hasPreviousPage(int volumeId) {
+    final pages = _loadedChapterPages[volumeId];
+    return pages != null &&
+        pages.isNotEmpty &&
+        pages.reduce((a, b) => a < b ? a : b) > 1;
+  }
+
+  bool _hasNextPage(int volumeId) {
+    final pages = _loadedChapterPages[volumeId];
+    if (pages == null || pages.isEmpty) return false;
+    final maxPage = pages.reduce((a, b) => a > b ? a : b);
+    final pageCount = _pageCountFor(volumeId);
+    return pageCount > 0
+        ? maxPage < pageCount
+        : (_maxPageHasMore[volumeId] ?? false);
+  }
+
+  Future<void> _loadChapters(int vid, {int? page}) async {
+    final targetPage = page ?? _initialPageFor(vid);
+    if ((_loadedChapterPages[vid]?.contains(targetPage) ?? false) ||
+        _loadingVolumes.contains(vid)) {
+      return;
+    }
+    setState(() {
+      _loadingVolumes.add(vid);
+      _chapterErrors.remove(vid);
+      _failedChapterPages.remove(vid);
+    });
+    try {
+      var loadedPage = targetPage;
+      var result = await LKApi.chapterPage(widget.bookId, vid, loadedPage,
+          pageSize: _pageSize);
+      final currentChapterMissing = vid == widget.volumeId &&
+          widget.currentChapterId > 0 &&
+          !result.items
+              .any((chapter) => chapter.chapterId == widget.currentChapterId);
+      // 少数响应的 chapter_no 是全书序号。若它把单章卷定位到了不存在
+      // 的后续分页，退回第一页即可找到当前章。
+      if (loadedPage > 1 &&
+          currentChapterMissing &&
+          (result.items.isEmpty || result.total <= _pageSize)) {
+        loadedPage = 1;
+        result = await LKApi.chapterPage(widget.bookId, vid, loadedPage,
+            pageSize: _pageSize);
       }
       if (!mounted) return;
-      setState(() => _volumes = vs);
-      _loadChapters(widget.volumeId);
-      _revealCurrent();
-    } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
-    }
-  }
-
-  Future<void> _loadChapters(int vid) async {
-    if (_chapters.containsKey(vid)) return;
-    try {
-      final cs = await LKApi.chapters(widget.bookId, vid, 1);
-      if (!mounted) return;
-      setState(() => _chapters[vid] = cs);
+      final loadedPages = _loadedChapterPages[vid] ?? const <int>{};
+      final existing = _chapters[vid] ?? const <LKChapter>[];
+      final minLoadedPage = loadedPages.isEmpty
+          ? loadedPage
+          : loadedPages.reduce((a, b) => a < b ? a : b);
+      final candidates = loadedPage < minLoadedPage
+          ? [...result.items, ...existing]
+          : [...existing, ...result.items];
+      final seen = <int>{};
+      final merged = candidates
+          .where((chapter) => seen.add(chapter.chapterId))
+          .toList(growable: false);
+      final maxLoadedPage = loadedPages.isEmpty
+          ? loadedPage
+          : loadedPages.reduce((a, b) => a > b ? a : b);
+      setState(() {
+        _chapters[vid] = merged;
+        _loadedChapterPages[vid] = {...loadedPages, loadedPage};
+        _chapterTotals[vid] = result.total > 0
+            ? result.total
+            : (_volumeFor(vid)?.chapterCount ?? merged.length);
+        if (loadedPage >= maxLoadedPage) {
+          _maxPageHasMore[vid] = result.hasMore;
+        }
+      });
       if (vid == widget.volumeId) _revealCurrent();
-    } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _chapterErrors[vid] = '章节加载失败，请检查网络后重试';
+          _failedChapterPages[vid] = targetPage;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _loadingVolumes.remove(vid));
     }
   }
 
-  Future<void> _toggle(int vid) async {
+  Future<void> _loadPreviousPage(int volumeId) async {
+    final pages = _loadedChapterPages[volumeId];
+    if (pages == null || pages.isEmpty) return;
+    final page = pages.reduce((a, b) => a < b ? a : b) - 1;
+    if (page > 0) await _loadChapters(volumeId, page: page);
+  }
+
+  Future<void> _loadNextPage(int volumeId) async {
+    final pages = _loadedChapterPages[volumeId];
+    if (pages == null || pages.isEmpty) return;
+    final page = pages.reduce((a, b) => a > b ? a : b) + 1;
+    await _loadChapters(volumeId, page: page);
+  }
+
+  int _chapterCountFor(LKVolume volume) {
+    final loadedTotal = _chapterTotals[volume.volumeId] ?? 0;
+    if (loadedTotal > 0) return loadedTotal;
+    if (volume.chapterCount > 0) return volume.chapterCount;
+    if (volume.firstChapterId > 0 &&
+        volume.firstChapterId == volume.lastChapterId) {
+      return 1;
+    }
+    return 0;
+  }
+
+  Future<void> _toggle(LKVolume volume) async {
+    final vid = volume.volumeId;
+    if (_chapterCountFor(volume) == 1) {
+      await _openSingleChapterVolume(volume);
+      return;
+    }
     if (_expanded == vid) {
       setState(() => _expanded = null);
       return;
     }
     setState(() => _expanded = vid);
-    _loadChapters(vid);
+    unawaited(_loadChapters(vid));
+  }
+
+  Future<void> _openSingleChapterVolume(LKVolume volume) async {
+    final vid = volume.volumeId;
+    if (vid <= 0 || !_openingSingleVolumes.add(vid)) return;
+    if (mounted) setState(() {});
+    try {
+      final cached = _chapters[vid];
+      var chapterId = cached?.isNotEmpty == true
+          ? cached!.first.chapterId
+          : volume.firstChapterId > 0
+              ? volume.firstChapterId
+              : volume.lastChapterId;
+      var chapterTitle =
+          cached?.isNotEmpty == true ? cached!.first.title : volume.title;
+      if (chapterId <= 0) {
+        final page = await LKApi.chapterPage(
+          widget.bookId,
+          vid,
+          1,
+          pageSize: 1,
+        );
+        if (!mounted) return;
+        if (page.items.isEmpty) {
+          showLkError(context, '该卷暂时没有可阅读章节');
+          return;
+        }
+        final chapter = page.items.first;
+        chapterId = chapter.chapterId;
+        chapterTitle = chapter.title;
+      }
+      if (mounted) widget.onPick(chapterId, chapterTitle, vid);
+    } catch (_) {
+      if (mounted) showLkError(context, '章节加载失败，请检查网络后重试');
+    } finally {
+      _openingSingleVolumes.remove(vid);
+      if (mounted) setState(() {});
+    }
   }
 
   /// 滚动定位到当前卷与当前章节
   void _revealCurrent() {
     if (_located) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _volumes.isEmpty) return;
-      final vi = _volumes.indexWhere((v) => v.volumeId == widget.volumeId);
+      if (!mounted) return;
+      final volumes = _displayVolumes;
+      if (volumes.isEmpty) return;
+      final vi = volumes.indexWhere((v) => v.volumeId == widget.volumeId);
       if (vi < 0) return;
       // 1) 当前卷:已构建则 ensureVisible,否则按估计偏移跳
       final vctx = _volKeys[widget.volumeId]?.currentContext;
@@ -2278,6 +3625,9 @@ class _CatalogSheetState extends State<_CatalogSheet> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
+    final displayVolumes = _displayVolumes;
+    final hasVolumeFooter =
+        _volumePageLoading || _volumesHasMore || _error != null;
     return Column(children: [
       Padding(
         padding: const EdgeInsets.all(14),
@@ -2290,112 +3640,239 @@ class _CatalogSheetState extends State<_CatalogSheet> {
         ]),
       ),
       Expanded(
-        child: _error != null && _volumes.isEmpty
-            ? Center(
-                child:
-                    Text(_error!, style: const TextStyle(color: Colors.grey)))
-            : ListView.builder(
-                controller: _sc,
-                padding: EdgeInsets.fromLTRB(
-                    12, 0, 12, 12 + MediaQuery.of(context).padding.bottom),
-                itemCount: _volumes.length,
-                itemBuilder: (_, i) {
-                  final v = _volumes[i];
-                  final vid = v.volumeId as int;
-                  final expanded = _expanded == vid;
-                  final chs = _chapters[vid];
-                  final isCur = vid == widget.volumeId;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Material(
-                      key: _volKeys.putIfAbsent(vid, GlobalKey.new),
-                      color: isDark
-                          ? const Color(0xFF2A2C33)
-                          : Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(12),
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(children: [
-                        InkWell(
-                          onTap: () => _toggle(vid),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
-                            child: Row(children: [
-                              Icon(
-                                  expanded
-                                      ? Icons.keyboard_arrow_down_rounded
-                                      : Icons.chevron_right_rounded,
-                                  size: 20,
-                                  color: Colors.grey.shade500),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(v.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                        fontSize: 13.5,
-                                        fontWeight: FontWeight.w600,
-                                        color: isCur ? scheme.primary : null)),
-                              ),
-                              if (isCur)
-                                Container(
-                                  margin: const EdgeInsets.only(left: 6),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 1.5),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        scheme.primary.withValues(alpha: 0.12),
-                                    borderRadius: BorderRadius.circular(6),
+        child: displayVolumes.isEmpty && _volumePageLoading
+            ? const LkLoadingIndicator(minHeight: 120, size: 24)
+            : displayVolumes.isEmpty && _error != null
+                ? Center(
+                    child: TextButton.icon(
+                      onPressed: _volumePageLoading
+                          ? null
+                          : () => _loadVolumes(append: _volumesPage > 0),
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: Text(_error!),
+                    ),
+                  )
+                : displayVolumes.isEmpty
+                    ? const Center(child: Text('暂无目录'))
+                    : ListView.builder(
+                        controller: _sc,
+                        padding: EdgeInsets.fromLTRB(12, 0, 12,
+                            12 + MediaQuery.of(context).padding.bottom),
+                        itemCount:
+                            displayVolumes.length + (hasVolumeFooter ? 1 : 0),
+                        itemBuilder: (_, i) {
+                          if (i >= displayVolumes.length) {
+                            if (_error != null) {
+                              return Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                child: Center(
+                                  child: TextButton.icon(
+                                    onPressed: _volumePageLoading
+                                        ? null
+                                        : () => _loadVolumes(
+                                            append: _volumesPage > 0),
+                                    icon: const Icon(Icons.refresh_rounded,
+                                        size: 18),
+                                    label: Text(_error!),
                                   ),
-                                  child: Text('当前',
-                                      style: TextStyle(
-                                          fontSize: 10, color: scheme.primary)),
                                 ),
-                            ]),
-                          ),
-                        ),
-                        if (expanded && chs == null)
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 12),
-                            child: Center(
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
+                              );
+                            }
+                            if (!_volumePageLoading && _volumesHasMore) {
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  unawaited(_loadVolumes(append: true));
+                                }
+                              });
+                            }
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 10),
+                              child: LinearProgressIndicator(
+                                minHeight: 2,
                               ),
-                            ),
-                          ),
-                        if (expanded && chs != null)
-                          ...chs.map((c) => InkWell(
-                                onTap: () =>
-                                    widget.onPick(c.chapterId, c.title, vid),
-                                child: Container(
-                                  key: c.chapterId == widget.currentChapterId
-                                      ? _curChapterKey
-                                      : null,
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 10),
-                                  color: c.chapterId == widget.currentChapterId
-                                      ? scheme.primary.withValues(alpha: 0.12)
-                                      : Colors.transparent,
-                                  child: Text(c.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          fontSize: 13,
+                            );
+                          }
+                          final v = displayVolumes[i];
+                          final vid = v.volumeId;
+                          final expanded = _expanded == vid;
+                          final chs = _chapters[vid];
+                          final chapterError = _chapterErrors[vid];
+                          final isCur = vid == widget.volumeId;
+                          final chapterCount = _chapterCountFor(v);
+                          final openingSingle =
+                              _openingSingleVolumes.contains(vid);
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Material(
+                              key: _volKeys.putIfAbsent(vid, GlobalKey.new),
+                              color: isDark
+                                  ? const Color(0xFF2A2C33)
+                                  : Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(12),
+                              clipBehavior: Clip.antiAlias,
+                              child: Column(children: [
+                                InkWell(
+                                  onTap:
+                                      openingSingle ? null : () => _toggle(v),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 10),
+                                    child: Row(children: [
+                                      Icon(
+                                          chapterCount == 1
+                                              ? Icons.play_arrow_rounded
+                                              : expanded
+                                                  ? Icons
+                                                      .keyboard_arrow_down_rounded
+                                                  : Icons.chevron_right_rounded,
+                                          size: 20,
+                                          color: Colors.grey.shade500),
+                                      const SizedBox(width: 4),
+                                      Expanded(
+                                        child: Text(v.title,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                                fontSize: 13.5,
+                                                fontWeight: FontWeight.w600,
+                                                color: isCur
+                                                    ? scheme.primary
+                                                    : null)),
+                                      ),
+                                      if (chapterCount > 0)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(left: 6),
+                                          child: Text('$chapterCount 章',
+                                              style: TextStyle(
+                                                  fontSize: 10.5,
+                                                  color: Colors.grey.shade500)),
+                                        ),
+                                      if (isCur)
+                                        Container(
+                                          margin:
+                                              const EdgeInsets.only(left: 6),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 1.5),
+                                          decoration: BoxDecoration(
+                                            color: scheme.primary
+                                                .withValues(alpha: 0.12),
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                          ),
+                                          child: Text('当前',
+                                              style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: scheme.primary)),
+                                        ),
+                                    ]),
+                                  ),
+                                ),
+                                if (expanded &&
+                                    chs == null &&
+                                    chapterError == null &&
+                                    _loadingVolumes.contains(vid))
+                                  const Padding(
+                                    padding: EdgeInsets.only(bottom: 12),
+                                    child: LinearProgressIndicator(
+                                      minHeight: 2,
+                                    ),
+                                  ),
+                                if (expanded &&
+                                    chs == null &&
+                                    chapterError != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: TextButton.icon(
+                                      onPressed: () => _loadChapters(vid,
+                                          page: _failedChapterPages[vid]),
+                                      icon: const Icon(Icons.refresh_rounded,
+                                          size: 18),
+                                      label: Text(chapterError),
+                                    ),
+                                  ),
+                                if (expanded && chs != null) ...[
+                                  if (_hasPreviousPage(vid))
+                                    TextButton.icon(
+                                      onPressed: _loadingVolumes.contains(vid)
+                                          ? null
+                                          : () => _loadPreviousPage(vid),
+                                      icon: const Icon(
+                                          Icons.expand_less_rounded,
+                                          size: 18),
+                                      label: const Text('加载更早章节'),
+                                    ),
+                                  ...chs.map((c) => InkWell(
+                                        onTap: () => widget.onPick(
+                                            c.chapterId, c.title, vid),
+                                        child: Container(
+                                          key: c.chapterId ==
+                                                  widget.currentChapterId
+                                              ? _curChapterKey
+                                              : null,
+                                          width: double.infinity,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 10),
                                           color: c.chapterId ==
                                                   widget.currentChapterId
                                               ? scheme.primary
-                                              : null)),
-                                ),
-                              )),
-                      ]),
-                    ),
-                  );
-                },
-              ),
+                                                  .withValues(alpha: 0.12)
+                                              : Colors.transparent,
+                                          child: Text(c.title,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                  fontSize: 13,
+                                                  color: c.chapterId ==
+                                                          widget
+                                                              .currentChapterId
+                                                      ? scheme.primary
+                                                      : null)),
+                                        ),
+                                      )),
+                                  if (chapterError != null)
+                                    TextButton.icon(
+                                      onPressed: _loadingVolumes.contains(vid)
+                                          ? null
+                                          : () => _loadChapters(vid,
+                                              page: _failedChapterPages[vid]),
+                                      icon: const Icon(Icons.refresh_rounded,
+                                          size: 18),
+                                      label: const Text('加载失败，点击重试'),
+                                    ),
+                                  if (_loadingVolumes.contains(vid))
+                                    const Padding(
+                                      padding:
+                                          EdgeInsets.symmetric(vertical: 10),
+                                      child:
+                                          LinearProgressIndicator(minHeight: 2),
+                                    ),
+                                  if (!_loadingVolumes.contains(vid) &&
+                                      _hasNextPage(vid))
+                                    TextButton.icon(
+                                      onPressed: () => _loadNextPage(vid),
+                                      icon: const Icon(
+                                          Icons.expand_more_rounded,
+                                          size: 18),
+                                      label: const Text('加载后续章节'),
+                                    ),
+                                  if (_totalFor(vid) > 0)
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 10),
+                                      child: Text(
+                                          '已加载 ${chs.length} / ${_totalFor(vid)}',
+                                          style: TextStyle(
+                                              fontSize: 10.5,
+                                              color: Colors.grey.shade500)),
+                                    ),
+                                ],
+                              ]),
+                            ),
+                          );
+                        },
+                      ),
       ),
     ]);
   }

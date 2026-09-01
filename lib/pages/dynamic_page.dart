@@ -2,15 +2,17 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
+import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
+import '../widgets/emoji_text.dart';
 import 'book_detail_page.dart';
-import 'dm_chat_page.dart';
 import 'dynamic_publish_page.dart';
 import 'media_viewer_page.dart';
 import 'search_page.dart';
@@ -21,6 +23,9 @@ int dynamicFeedColumnCount(Size viewport) {
   if (viewport.shortestSide < 600 || viewport.width < 560) return 1;
   return viewport.width >= 1100 ? 3 : 2;
 }
+
+String normalizedDynamicFeedTab(String tab, {required bool loggedIn}) =>
+    !loggedIn && tab == 'follow' ? 'mixed' : tab;
 
 /// 动态广场(本站动态 / 关注动态)
 class DynamicPage extends StatefulWidget {
@@ -39,10 +44,13 @@ class _DynamicPageState extends State<DynamicPage> {
   bool _hasMore = true;
   bool _loading = false;
   String? _error;
+  bool _errorFromAppend = false;
   String _feedTab = 'mixed';
   String _contentFilter = 'all';
   int _requestSerial = 0;
+  int _unreadRequestSerial = 0;
   Map<int, List<LKMedal>> _globalMedals = {};
+  Map<String, String> _emojiUrls = const {};
   int _unreadCount = 0;
   final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
   List<LKDynamicItem> _visibleItems = const [];
@@ -86,6 +94,7 @@ class _DynamicPageState extends State<DynamicPage> {
     super.initState();
     LKClient.sessionRev.addListener(_onSessionChanged);
     _loadGlobalMedals();
+    _loadEmojis();
     _loadUnread();
     _load();
   }
@@ -100,10 +109,10 @@ class _DynamicPageState extends State<DynamicPage> {
   void _onSessionChanged() {
     if (!mounted) return;
     _requestSerial++;
+    _unreadRequestSerial++;
     setState(() {
-      if (!LKClient.shared.session.isLoggedIn && _feedTab == 'following') {
-        _feedTab = 'mixed';
-      }
+      _feedTab = normalizedDynamicFeedTab(_feedTab,
+          loggedIn: LKClient.shared.session.isLoggedIn);
       _items = [];
       _visibleItems = const [];
       _cursor = '';
@@ -112,6 +121,7 @@ class _DynamicPageState extends State<DynamicPage> {
       _loading = false;
       _unreadCount = 0;
       _error = null;
+      _errorFromAppend = false;
     });
     _load();
     _loadUnread();
@@ -119,6 +129,9 @@ class _DynamicPageState extends State<DynamicPage> {
 
   Future<void> _loadUnread() async {
     if (!LKClient.shared.session.isLoggedIn) return;
+    final request = ++_unreadRequestSerial;
+    final sessionRevision = LKClient.sessionRev.value;
+    final securityKey = LKClient.shared.session.securityKey;
     try {
       final data = await LKApi.dynamicUnread();
       final raw = data['unread_count'] ??
@@ -126,7 +139,14 @@ class _DynamicPageState extends State<DynamicPage> {
           data['count'] ??
           data['total_unread'];
       final count = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
-      if (mounted) setState(() => _unreadCount = count.clamp(0, 99));
+      if (!mounted ||
+          request != _unreadRequestSerial ||
+          sessionRevision != LKClient.sessionRev.value ||
+          securityKey != LKClient.shared.session.securityKey ||
+          !LKClient.shared.session.isLoggedIn) {
+        return;
+      }
+      setState(() => _unreadCount = count.clamp(0, 99));
     } catch (_) {}
   }
 
@@ -135,8 +155,17 @@ class _DynamicPageState extends State<DynamicPage> {
     if (mounted) setState(() => _globalMedals = cached);
   }
 
+  Future<void> _loadEmojis() async {
+    try {
+      await YomiruEmojiCatalog.load();
+      if (mounted) setState(() => _emojiUrls = YomiruEmojiCatalog.urls);
+    } catch (_) {
+      // 表情目录不可用时保留原始代码，不影响动态正文加载。
+    }
+  }
+
   Future<void> _load({bool append = false}) async {
-    if (_loading || append && !_hasMore) return;
+    if (append && (_loading || !_hasMore)) return;
     final requestSerial = ++_requestSerial;
     final feedTab = _feedTab;
     final page = append ? _page + 1 : 1;
@@ -149,6 +178,7 @@ class _DynamicPageState extends State<DynamicPage> {
           _page = 1;
           _hasMore = true;
           _error = null;
+          _errorFromAppend = false;
         }
       });
     }
@@ -184,6 +214,7 @@ class _DynamicPageState extends State<DynamicPage> {
                 result.items.isEmpty &&
                 result.cursor == previousCursor);
         _error = null;
+        _errorFromAppend = false;
         if (medalUpdates.isNotEmpty) {
           _globalMedals = {..._globalMedals, ...medalUpdates};
         }
@@ -194,7 +225,10 @@ class _DynamicPageState extends State<DynamicPage> {
       }
     } catch (e) {
       if (mounted && requestSerial == _requestSerial) {
-        setState(() => _error = e.toString());
+        setState(() {
+          _error = e.toString();
+          _errorFromAppend = append;
+        });
       }
     } finally {
       if (mounted && requestSerial == _requestSerial) {
@@ -213,6 +247,7 @@ class _DynamicPageState extends State<DynamicPage> {
       _page = 1;
       _hasMore = true;
       _error = null;
+      _errorFromAppend = false;
       _loading = false;
       _rebuildVisibleItems();
     });
@@ -445,10 +480,41 @@ class _DynamicPageState extends State<DynamicPage> {
     return false;
   }
 
+  Widget _paginationFooter() {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: LkLoadingIndicator()),
+      );
+    }
+    if (_error != null) {
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: Center(
+          child: TextButton.icon(
+            onPressed: () => _load(append: _errorFromAppend),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('加载失败，点击重试'),
+          ),
+        ),
+      );
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load(append: true);
+    });
+    return const Padding(
+      padding: EdgeInsets.all(16),
+      child: Center(child: LkLoadingIndicator()),
+    );
+  }
+
   Widget _feedBody() {
     final visibleItems = _visibleItems;
     final columns = dynamicFeedColumnCount(MediaQuery.sizeOf(context));
-    final rowCount = (visibleItems.length + columns - 1) ~/ columns;
+    final itemIndices = <String, int>{
+      for (var i = 0; i < visibleItems.length; i++)
+        _dynamicKey(visibleItems[i]): i,
+    };
     return NotificationListener<ScrollNotification>(
       onNotification: _onFeedScroll,
       child: RefreshIndicator(
@@ -468,254 +534,245 @@ class _DynamicPageState extends State<DynamicPage> {
                 : visibleItems.isEmpty && !_hasMore && !_loading
                     ? _emptyState(
                         _contentFilter == 'book' ? '暂无作品发布动态' : '暂无动态')
-                    : ListView.separated(
+                    : CustomScrollView(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount: rowCount + (_hasMore ? 1 : 0),
-                        separatorBuilder: (_, __) => const SizedBox(height: 2),
-                        itemBuilder: (_, i) {
-                          if (i == rowCount) {
-                            if (_loading) {
-                              return const Padding(
-                                padding: EdgeInsets.all(16),
-                                child: Center(child: LkLoadingIndicator()),
-                              );
-                            }
-                            if (_error != null) {
-                              return Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Center(
-                                  child: TextButton.icon(
-                                    onPressed: () => _load(append: true),
-                                    icon: const Icon(Icons.refresh_rounded),
-                                    label: const Text('加载失败，点击重试'),
-                                  ),
-                                ),
-                              );
-                            }
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) _load(append: true);
-                            });
-                            return const Padding(
-                              padding: EdgeInsets.all(16),
-                              child: Center(child: LkLoadingIndicator()),
-                            );
-                          }
-                          Widget buildCard(int itemIndex) {
-                            final d = visibleItems[itemIndex];
-                            final hasBook =
-                                d.bookId > 0 && d.bookTitle.trim().isNotEmpty;
-                            final medals = _medalsFor(d);
-                            return Padding(
-                              padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
-                              child: Card(
-                                margin: EdgeInsets.zero,
-                                clipBehavior: Clip.antiAlias,
-                                child: InkWell(
-                                  onTap: d.dynamicId > 0
-                                      ? () => Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (_) => CommentsPage(
-                                                dynamicId: d.dynamicId,
-                                                dynamicPreview: d,
-                                              ),
-                                            ),
-                                          )
-                                      : null,
-                                  onLongPress: () => _actions(d),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(12),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              GestureDetector(
-                                                onTap: d.authorUid > 0
-                                                    ? () => openUserProfile(
-                                                        context, d.authorUid)
-                                                    : null,
-                                                child: CircleAvatar(
-                                                    radius: 16,
-                                                    backgroundImage: d
-                                                            .avatar.isNotEmpty
-                                                        ? YomiruAvatarCache
-                                                            .provider(d.avatar)
-                                                        : null),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Expanded(
-                                                child: Wrap(
-                                                  spacing: 5,
-                                                  runSpacing: 3,
-                                                  crossAxisAlignment:
-                                                      WrapCrossAlignment.center,
-                                                  children: [
-                                                    GestureDetector(
-                                                      onTap: d.authorUid > 0
-                                                          ? () =>
-                                                              openUserProfile(
-                                                                  context,
-                                                                  d.authorUid)
-                                                          : null,
-                                                      child: Text(
-                                                          d.nickname.isEmpty
-                                                              ? '用户 ${d.authorUid}'
-                                                              : d.nickname,
-                                                          style: TextStyle(
-                                                              color: Colors
-                                                                  .indigo
-                                                                  .shade400,
-                                                              fontSize: 13)),
-                                                    ),
-                                                    ...medals
-                                                        .take(5)
-                                                        .map((medal) => Tooltip(
-                                                              message:
-                                                                  medal.name,
-                                                              child:
-                                                                  GestureDetector(
-                                                                onTap: () =>
-                                                                    ScaffoldMessenger.of(
-                                                                            context)
-                                                                        .showSnackBar(
-                                                                  SnackBar(
-                                                                      content: Text(
-                                                                          medal
-                                                                              .name)),
-                                                                ),
-                                                                child:
-                                                                    CircleAvatar(
-                                                                  radius: 10,
-                                                                  backgroundColor: Theme.of(
-                                                                          context)
-                                                                      .colorScheme
-                                                                      .surfaceContainerHighest,
-                                                                  backgroundImage:
-                                                                      YomiruAvatarCache
-                                                                          .provider(
-                                                                              medal.image),
-                                                                ),
-                                                              ),
-                                                            )),
-                                                    if (d.eventType.isNotEmpty)
-                                                      Container(
-                                                        padding:
-                                                            const EdgeInsets
-                                                                .symmetric(
-                                                                horizontal: 6,
-                                                                vertical: 2),
-                                                        decoration:
-                                                            BoxDecoration(
-                                                          color: Theme.of(context)
-                                                                      .brightness ==
-                                                                  Brightness
-                                                                      .dark
-                                                              ? Colors
-                                                                  .grey.shade800
-                                                              : Colors.grey
-                                                                  .shade300,
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(4),
+                        slivers: [
+                          SliverMasonryGrid(
+                            gridDelegate:
+                                SliverSimpleGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: columns,
+                            ),
+                            mainAxisSpacing: 0,
+                            crossAxisSpacing: 0,
+                            delegate: SliverChildBuilderDelegate((_, i) {
+                              Widget buildCard(int itemIndex) {
+                                final d = visibleItems[itemIndex];
+                                final hasBook = d.bookId > 0 &&
+                                    d.bookTitle.trim().isNotEmpty;
+                                final medals = _medalsFor(d);
+                                return Padding(
+                                  key: ValueKey<String>(_dynamicKey(d)),
+                                  padding:
+                                      const EdgeInsets.fromLTRB(8, 0, 8, 4),
+                                  child: Card(
+                                    margin: EdgeInsets.zero,
+                                    clipBehavior: Clip.antiAlias,
+                                    child: InkWell(
+                                      onTap: d.dynamicId > 0
+                                          ? () => Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) => CommentsPage(
+                                                    dynamicId: d.dynamicId,
+                                                    dynamicPreview: d,
+                                                  ),
+                                                ),
+                                              )
+                                          : null,
+                                      onLongPress: () => _actions(d),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(12),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  GestureDetector(
+                                                    onTap: d.authorUid > 0
+                                                        ? () => openUserProfile(
+                                                            context,
+                                                            d.authorUid)
+                                                        : null,
+                                                    child: CircleAvatar(
+                                                        radius: 16,
+                                                        backgroundImage: d
+                                                                .avatar
+                                                                .isNotEmpty
+                                                            ? YomiruAvatarCache
+                                                                .provider(
+                                                                    d.avatar)
+                                                            : null),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: Wrap(
+                                                      spacing: 5,
+                                                      runSpacing: 3,
+                                                      crossAxisAlignment:
+                                                          WrapCrossAlignment
+                                                              .center,
+                                                      children: [
+                                                        GestureDetector(
+                                                          onTap: d.authorUid > 0
+                                                              ? () =>
+                                                                  openUserProfile(
+                                                                      context,
+                                                                      d.authorUid)
+                                                              : null,
+                                                          child: Text(
+                                                              d.nickname.isEmpty
+                                                                  ? '用户 ${d.authorUid}'
+                                                                  : d.nickname,
+                                                              style: TextStyle(
+                                                                  color: Colors
+                                                                      .indigo
+                                                                      .shade400,
+                                                                  fontSize:
+                                                                      13)),
                                                         ),
-                                                        child: Text(
-                                                            _eventLabel(
-                                                                d.eventType),
-                                                            style:
-                                                                const TextStyle(
+                                                        ...medals
+                                                            .take(5)
+                                                            .map(
+                                                                (medal) =>
+                                                                    Tooltip(
+                                                                      message: medal
+                                                                          .name,
+                                                                      child:
+                                                                          GestureDetector(
+                                                                        onTap: () =>
+                                                                            ScaffoldMessenger.of(context).showSnackBar(
+                                                                          SnackBar(
+                                                                              content: Text(medal.name)),
+                                                                        ),
+                                                                        child:
+                                                                            CircleAvatar(
+                                                                          radius:
+                                                                              10,
+                                                                          backgroundColor: Theme.of(context)
+                                                                              .colorScheme
+                                                                              .surfaceContainerHighest,
+                                                                          backgroundImage:
+                                                                              YomiruAvatarCache.provider(medal.image),
+                                                                        ),
+                                                                      ),
+                                                                    )),
+                                                        if (d.eventType
+                                                            .isNotEmpty)
+                                                          Container(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .symmetric(
+                                                                    horizontal:
+                                                                        6,
+                                                                    vertical:
+                                                                        2),
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color: Theme.of(context)
+                                                                          .brightness ==
+                                                                      Brightness
+                                                                          .dark
+                                                                  ? Colors.grey
+                                                                      .shade800
+                                                                  : Colors.grey
+                                                                      .shade300,
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          4),
+                                                            ),
+                                                            child: Text(
+                                                                _eventLabel(d
+                                                                    .eventType),
+                                                                style: const TextStyle(
                                                                     fontSize:
                                                                         10,
                                                                     color: Colors
                                                                         .white)),
-                                                      ),
-                                                  ],
+                                                          ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ]),
+                                            const SizedBox(height: 6),
+                                            LkEmojiText(
+                                              text: d.summary,
+                                              emojiUrls: _emojiUrls,
+                                            ),
+                                            if (hasBook)
+                                              InkWell(
+                                                onTap: () => Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(
+                                                      builder: (_) =>
+                                                          BookDetailPage(
+                                                              bookId:
+                                                                  d.bookId)),
+                                                ),
+                                                child: Container(
+                                                  margin: const EdgeInsets.only(
+                                                      top: 8),
+                                                  padding:
+                                                      const EdgeInsets.all(8),
+                                                  decoration: BoxDecoration(
+                                                    color: Theme.of(context)
+                                                                .brightness ==
+                                                            Brightness.dark
+                                                        ? const Color(
+                                                            0xFF2A2C33)
+                                                        : Colors.grey.shade100,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            6),
+                                                  ),
+                                                  child: Row(children: [
+                                                    CoverImage(
+                                                        url: d.bookCover,
+                                                        width: 40,
+                                                        height: 53),
+                                                    const SizedBox(width: 10),
+                                                    Expanded(
+                                                      child: Text(d.bookTitle,
+                                                          maxLines: 2,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: const TextStyle(
+                                                              fontSize: 13,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w600)),
+                                                    ),
+                                                  ]),
                                                 ),
                                               ),
+                                            _mediaGallery(d.media),
+                                            const SizedBox(height: 6),
+                                            Row(children: [
+                                              Text(
+                                                  '赞 ${d.likeCount} · 评论 ${d.commentCount}',
+                                                  style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: Colors
+                                                          .grey.shade500)),
+                                              const Spacer(),
+                                              Text(_shortTime(d.time),
+                                                  style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: Colors
+                                                          .grey.shade400)),
                                             ]),
-                                        const SizedBox(height: 6),
-                                        Text(d.summary),
-                                        if (hasBook)
-                                          InkWell(
-                                            onTap: () => Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      BookDetailPage(
-                                                          bookId: d.bookId)),
-                                            ),
-                                            child: Container(
-                                              margin:
-                                                  const EdgeInsets.only(top: 8),
-                                              padding: const EdgeInsets.all(8),
-                                              decoration: BoxDecoration(
-                                                color: Theme.of(context)
-                                                            .brightness ==
-                                                        Brightness.dark
-                                                    ? const Color(0xFF2A2C33)
-                                                    : Colors.grey.shade100,
-                                                borderRadius:
-                                                    BorderRadius.circular(6),
-                                              ),
-                                              child: Row(children: [
-                                                CoverImage(
-                                                    url: d.bookCover,
-                                                    width: 40,
-                                                    height: 53),
-                                                const SizedBox(width: 10),
-                                                Expanded(
-                                                  child: Text(d.bookTitle,
-                                                      maxLines: 2,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: const TextStyle(
-                                                          fontSize: 13,
-                                                          fontWeight:
-                                                              FontWeight.w600)),
-                                                ),
-                                              ]),
-                                            ),
-                                          ),
-                                        _mediaGallery(d.media),
-                                        const SizedBox(height: 6),
-                                        Row(children: [
-                                          Text(
-                                              '赞 ${d.likeCount} · 评论 ${d.commentCount}',
-                                              style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.grey.shade500)),
-                                          const Spacer(),
-                                          Text(_shortTime(d.time),
-                                              style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.grey.shade400)),
-                                        ]),
-                                      ],
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ),
-                            );
-                          }
+                                );
+                              }
 
-                          if (columns == 1) return buildCard(i);
-                          final firstItem = i * columns;
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              for (var column = 0; column < columns; column++)
-                                Expanded(
-                                  child:
-                                      firstItem + column < visibleItems.length
-                                          ? buildCard(firstItem + column)
-                                          : const SizedBox.shrink(),
-                                ),
-                            ],
-                          );
-                        },
+                              return buildCard(i);
+                            },
+                                childCount: visibleItems.length,
+                                findChildIndexCallback: (key) =>
+                                    key is ValueKey<String>
+                                        ? itemIndices[key.value]
+                                        : null),
+                          ),
+                          if (_hasMore)
+                            SliverToBoxAdapter(child: _paginationFooter()),
+                        ],
                       ),
       ),
     );
@@ -799,151 +856,6 @@ class _DynamicPageState extends State<DynamicPage> {
           ),
         ]),
       ),
-    );
-  }
-}
-
-/// 消息中心(4 类消息 + 私信会话)
-class MessagesPage extends StatefulWidget {
-  const MessagesPage({super.key});
-
-  @override
-  State<MessagesPage> createState() => _MessagesPageState();
-}
-
-class _MessagesPageState extends State<MessagesPage> {
-  int _tab = 0;
-  static const _types = ['reply', 'like', 'fan', 'system'];
-  static const _labels = ['回复', '赞', '粉丝', '系统'];
-  List<dynamic> _items = [];
-  List<dynamic> _convs = [];
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      if (_tab == 4) {
-        final convs = await LKApi.dmConversations();
-        if (!mounted) return;
-        setState(() {
-          _convs = convs;
-          _error = null;
-        });
-      } else {
-        final items = await LKApi.messages(_types[_tab], 0);
-        if (!mounted) return;
-        setState(() {
-          _items = items;
-          _error = null;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('消息中心'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.done_all),
-            onPressed: () async {
-              try {
-                await LKApi.markMessagesRead('all');
-                if (!context.mounted) return;
-                showLkError(context, '已标记全部已读');
-              } catch (e) {
-                if (!context.mounted) return;
-                showLkError(context, e);
-              }
-            },
-          ),
-        ],
-      ),
-      body: Column(children: [
-        SegmentedButton<int>(
-          segments: [
-            for (var i = 0; i < 5; i++)
-              ButtonSegment(value: i, label: Text([..._labels, '私信'][i])),
-          ],
-          selected: {_tab},
-          onSelectionChanged: (s) {
-            setState(() => _tab = s.first);
-            _load();
-          },
-        ),
-        Expanded(
-          child: RefreshIndicator(
-            onRefresh: _load,
-            child: _error != null
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: 320,
-                        child: Center(
-                            child: Text(_error!,
-                                style: const TextStyle(color: Colors.grey))),
-                      ),
-                    ],
-                  )
-                : _tab == 4
-                    ? ListView.builder(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(context).padding.bottom),
-                        itemCount: _convs.length,
-                        itemBuilder: (_, i) {
-                          final c = _convs[i];
-                          return ListTile(
-                            leading: CircleAvatar(
-                                backgroundImage: c.peerAvatar.isNotEmpty
-                                    ? YomiruAvatarCache.provider(c.peerAvatar)
-                                    : null),
-                            title: Text(c.peerName),
-                            subtitle: Text(c.lastMessage,
-                                maxLines: 1, overflow: TextOverflow.ellipsis),
-                            trailing: c.unread > 0
-                                ? Badge(label: Text('${c.unread}'))
-                                : null,
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => DMChatPage(
-                                      peerUid: c.peerUid,
-                                      peerName: c.peerName)),
-                            ),
-                          );
-                        },
-                      )
-                    : ListView.builder(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount: _items.length,
-                        itemBuilder: (_, i) {
-                          final m = _items[i];
-                          return ListTile(
-                            leading: CircleAvatar(
-                                backgroundImage: m.avatar.isNotEmpty
-                                    ? YomiruAvatarCache.provider(m.avatar)
-                                    : null),
-                            title:
-                                Text(m.nickname.isEmpty ? m.title : m.nickname),
-                            subtitle: Text(m.content,
-                                maxLines: 2, overflow: TextOverflow.ellipsis),
-                          );
-                        },
-                      ),
-          ),
-        ),
-      ]),
     );
   }
 }

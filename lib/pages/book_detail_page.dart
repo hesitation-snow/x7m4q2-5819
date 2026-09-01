@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
@@ -5,8 +7,17 @@ import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
+import 'catalog_paging.dart';
 import 'reader_page.dart';
 import 'search_page.dart';
+
+int _bookDetailInt(dynamic value) {
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+bool _bookDetailFlag(dynamic value) =>
+    value == true || value == 1 || value == '1' || value == 'true';
 
 Widget _braveAccessBadge(BuildContext context) {
   final color = Theme.of(context).colorScheme.primary;
@@ -39,22 +50,61 @@ class BookDetailPage extends StatefulWidget {
 
 class _BookDetailPageState extends State<BookDetailPage> {
   LKBook? _book;
-  List<dynamic> _volumes = [];
+  List<LKVolume> _volumes = const [];
   bool _inShelf = false;
-  int _latestChapterId = 0;
-  String _latestChapterTitle = '';
+  int _readVolumeId = 0;
+  int _readChapterId = 0;
+  String _readChapterTitle = '';
   bool _hasHistory = false;
   String? _error;
   bool _volumesLoading = true;
+  String? _volumesError;
+  int _volumesRequestSerial = 0;
+  int _volumesPage = 0;
+  bool _volumesHasMore = true;
   final _scroll = ScrollController();
   bool _fabVisible = true;
   double _lastOffset = 0;
 
   /// 目录中已就地展开的卷;展开后章节列表直接显示在卷卡片下方。
   final Set<int> _expandedVolumeIds = <int>{};
-  final Map<int, List<dynamic>> _volumeChapters = {};
+  final Map<int, List<LKChapter>> _volumeChapters = {};
   final Map<int, String> _volumeErrors = {};
+  final Set<int> _loadingVolumeIds = <int>{};
   bool _loadingAllVolumes = false;
+  List<LKChapter> _catalogPreview = const [];
+  int _catalogPreviewVolumeId = 0;
+  bool _catalogPreviewLoading = false;
+  String? _catalogPreviewError;
+  int _catalogPreviewRequestSerial = 0;
+
+  bool get _usesPagedCatalog => shouldUsePagedCatalogForVolumes(
+        _volumes,
+        bookChapterCount: _book?.chapterCount ?? 0,
+      );
+
+  bool get _canExpandAllVolumes =>
+      !_volumesHasMore &&
+      shouldOfferExpandAllVolumes(
+        _volumes,
+        bookChapterCount: _book?.chapterCount ?? 0,
+      );
+
+  bool _volumeUsesPagedCatalog(LKVolume volume) =>
+      shouldUsePagedCatalog(_chapterTotalFor(volume));
+
+  LKVolume? get _initialCatalogVolume {
+    final preferredId = _hasHistory && _readVolumeId > 0
+        ? _readVolumeId
+        : (_book?.defaultVolumeId ?? 0);
+    final candidates = _usesPagedCatalog
+        ? _volumes.where(_volumeUsesPagedCatalog).toList(growable: false)
+        : _volumes;
+    return selectCatalogStartVolume(
+      candidates,
+      preferredVolumeId: preferredId,
+    );
+  }
 
   @override
   void initState() {
@@ -82,14 +132,39 @@ class _BookDetailPageState extends State<BookDetailPage> {
         _volumesLoading = true;
       });
     }
-    await Future.wait<void>([
-      _loadBook(),
-      _loadVolumes(),
-      _loadLibraryState(),
-    ]);
+    await Future.wait<void>([_loadPrimary(), _loadVolumes()]);
+    await _loadCatalogPreview();
   }
 
-  Future<void> _loadBook() async {
+  Future<void> _loadPrimary() async {
+    try {
+      final bootstrap = await LKApi.readerBootstrap(widget.bookId);
+      final detailBook = bootstrap.book;
+      final book = detailBook.bookId > 0
+          ? detailBook
+          : LKBook.fromJson({...detailBook.toJson(), 'book_id': widget.bookId});
+      var localShelf = false;
+      if (!LKClient.shared.session.isLoggedIn) {
+        localShelf = await LKStore.isLocalShelf(widget.bookId);
+      }
+      if (!mounted) return;
+      setState(() {
+        _book = book;
+        _inShelf = bootstrap.inShelf || localShelf;
+        _hasHistory = bootstrap.hasHistory && bootstrap.readChapterId > 0;
+        _readVolumeId = bootstrap.readVolumeId;
+        _readChapterId = bootstrap.readChapterId;
+        _readChapterTitle = bootstrap.readChapterTitle;
+        _error = null;
+      });
+      // 聚合接口先让页面和阅读按钮可用，完整简介随后静默刷新。
+      unawaited(_loadBook(background: true));
+    } catch (_) {
+      await Future.wait<void>([_loadBook(), _loadLibraryState()]);
+    }
+  }
+
+  Future<void> _loadBook({bool background = false}) async {
     try {
       final detailBook = await LKApi.bookDetail(widget.bookId);
       // 详情接口个别缓存/兼容响应可能缺少 book_id,但当前页面路由 ID 是可靠的。
@@ -101,20 +176,128 @@ class _BookDetailPageState extends State<BookDetailPage> {
         _book = book;
         _error = null;
       });
+      unawaited(_loadCatalogPreview());
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (!background && mounted && _book == null) {
+        setState(() => _error = e.toString());
+      }
     }
   }
 
-  Future<void> _loadVolumes() async {
-    try {
-      final volumes = await LKApi.volumes(widget.bookId, 1);
-      if (mounted) setState(() => _volumes = volumes);
-    } catch (_) {
-      // 详情仍可先展示，目录区域保留为空并允许下拉刷新重试。
-    } finally {
-      if (mounted) setState(() => _volumesLoading = false);
+  Future<void> _loadVolumes({bool append = false}) async {
+    if (append && (_volumesLoading || !_volumesHasMore)) return;
+    final request = append ? _volumesRequestSerial : ++_volumesRequestSerial;
+    final page = append ? _volumesPage + 1 : 1;
+    const pageSize = 50;
+    if (mounted) {
+      setState(() {
+        _volumesLoading = true;
+        _volumesError = null;
+      });
     }
+    try {
+      final pageItems =
+          await LKApi.volumes(widget.bookId, page, pageSize: pageSize);
+      if (!mounted || request != _volumesRequestSerial) return;
+      final volumes = append
+          ? (() {
+              final seen = _volumes.map((volume) => volume.volumeId).toSet();
+              return [
+                ..._volumes,
+                ...pageItems.where((volume) => seen.add(volume.volumeId)),
+              ];
+            })()
+          : pageItems;
+      final expectedTotal = _book?.volumeCount ?? 0;
+      setState(() {
+        _volumes = volumes;
+        _volumesPage = page;
+        _volumesHasMore = pageItems.length >= pageSize &&
+            (expectedTotal <= 0 || volumes.length < expectedTotal);
+        if (!append) {
+          final validIds = volumes.map((volume) => volume.volumeId).toSet();
+          _expandedVolumeIds.removeWhere((id) => !validIds.contains(id));
+          _volumeChapters.removeWhere((id, _) => !validIds.contains(id));
+          _volumeErrors.removeWhere((id, _) => !validIds.contains(id));
+        }
+        _volumesError = null;
+      });
+      unawaited(_loadCatalogPreview());
+    } catch (_) {
+      if (mounted && request == _volumesRequestSerial) {
+        setState(() => _volumesError = '目录加载失败，请检查网络后重试');
+      }
+    } finally {
+      if (mounted && request == _volumesRequestSerial) {
+        setState(() => _volumesLoading = false);
+      }
+    }
+  }
+
+  int _chapterTotalFor(LKVolume volume) {
+    return effectiveVolumeChapterCount(
+      volume,
+      loadedVolumeCount: _volumes.length,
+      bookChapterCount: _book?.chapterCount ?? 0,
+    );
+  }
+
+  Future<void> _loadCatalogPreview() async {
+    if (!_usesPagedCatalog) return;
+    final book = _book;
+    final volume = _initialCatalogVolume;
+    if (book == null || volume == null) return;
+    if (_catalogPreviewLoading && _catalogPreviewVolumeId == volume.volumeId) {
+      return;
+    }
+    if (_catalogPreviewVolumeId == volume.volumeId &&
+        _catalogPreview.isNotEmpty) {
+      return;
+    }
+    final request = ++_catalogPreviewRequestSerial;
+    if (mounted) {
+      setState(() {
+        _catalogPreviewVolumeId = volume.volumeId;
+        _catalogPreviewLoading = true;
+        _catalogPreviewError = null;
+      });
+    }
+    try {
+      final page = await LKApi.chapterPage(book.bookId, volume.volumeId, 1);
+      if (!mounted || request != _catalogPreviewRequestSerial) return;
+      setState(() {
+        _catalogPreview = page.items.take(8).toList(growable: false);
+        _catalogPreviewError = null;
+      });
+    } catch (_) {
+      if (mounted && request == _catalogPreviewRequestSerial) {
+        setState(() => _catalogPreviewError = '目录预览加载失败，点击重试');
+      }
+    } finally {
+      if (mounted && request == _catalogPreviewRequestSerial) {
+        setState(() => _catalogPreviewLoading = false);
+      }
+    }
+  }
+
+  void _openCatalog([LKVolume? requestedVolume]) {
+    final book = _book;
+    final volume = requestedVolume ?? _initialCatalogVolume;
+    if (book == null || volume == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChaptersPage(
+          bookId: book.bookId,
+          volumeId: volume.volumeId,
+          volumeTitle: volume.title,
+          bookTitle: book.title,
+          totalChapterCount: _chapterTotalFor(volume),
+          currentChapterId: _readChapterId,
+          volumes: _volumes,
+        ),
+      ),
+    );
   }
 
   Future<void> _loadLibraryState() async {
@@ -124,11 +307,25 @@ class _BookDetailPageState extends State<BookDetailPage> {
             '/api/new-content-read/get-book-library-state',
             LKApi.client.authed({'book_id': widget.bookId}));
         if (!mounted) return;
+        final historyRaw = st['history'];
+        final history = historyRaw is Map
+            ? Map<String, dynamic>.from(historyRaw)
+            : const <String, dynamic>{};
+        final hasHistory = _bookDetailFlag(st['has_history']);
         setState(() {
-          _inShelf = (st['in_shelf'] as num?)?.toInt() == 1;
-          _hasHistory = (st['has_history'] as num?)?.toInt() == 1;
-          _latestChapterId = (st['latest_chapter_id'] as num?)?.toInt() ?? 0;
-          _latestChapterTitle = (st['latest_chapter_title'] as String?) ?? '';
+          _inShelf = _bookDetailFlag(st['in_shelf']);
+          _hasHistory = hasHistory;
+          _readChapterId = _bookDetailInt(st['last_read_chapter_id'] ??
+              history['chapter_id'] ??
+              (hasHistory ? st['latest_chapter_id'] : null));
+          _readVolumeId =
+              _bookDetailInt(st['last_read_volume_id'] ?? history['volume_id']);
+          if (_readVolumeId <= 0) {
+            _readVolumeId = _book?.defaultVolumeId ?? 0;
+          }
+          _readChapterTitle =
+              (st['last_read_chapter_title'] ?? history['chapter_title'] ?? '')
+                  .toString();
         });
       } catch (_) {}
       return;
@@ -164,53 +361,28 @@ class _BookDetailPageState extends State<BookDetailPage> {
   void _openReading() {
     final b = _book;
     if (b == null) return;
-    if (_hasHistory && _latestChapterId > 0) {
+    final chapterId = _readChapterId > 0 ? _readChapterId : b.defaultChapterId;
+    final volumeId = _readVolumeId > 0 ? _readVolumeId : b.defaultVolumeId;
+    if (chapterId > 0) {
       Navigator.push(
         context,
         MaterialPageRoute(
             builder: (_) => ReaderPage(
                   bookId: b.bookId,
                   bookTitle: b.title,
-                  chapterId: _latestChapterId,
-                  chapterTitle: _latestChapterTitle,
-                  volumeId: b.defaultVolumeId,
+                  chapterId: chapterId,
+                  chapterTitle: _readChapterTitle,
+                  volumeId: volumeId,
                 )),
       );
       return;
     }
-    if (b.defaultChapterId > 0) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => ReaderPage(
-                  bookId: b.bookId,
-                  bookTitle: b.title,
-                  chapterId: b.defaultChapterId,
-                  chapterTitle: '',
-                  volumeId: b.defaultVolumeId,
-                )),
-      );
-      return;
-    }
-    if (b.defaultVolumeId > 0) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => ChaptersPage(
-                  bookId: b.bookId,
-                  volumeId: b.defaultVolumeId,
-                  volumeTitle: b.title,
-                  bookTitle: b.title,
-                )),
-      );
-    }
+    if (_volumes.isNotEmpty) _openCatalog();
   }
 
   String get _fabLabel {
-    if (_hasHistory && _latestChapterId > 0) {
-      return _latestChapterTitle.isEmpty
-          ? '继续阅读'
-          : '继续阅读 · $_latestChapterTitle';
+    if (_hasHistory && _readChapterId > 0) {
+      return _readChapterTitle.isEmpty ? '继续阅读' : '继续阅读 · $_readChapterTitle';
     }
     return '开始阅读';
   }
@@ -383,19 +555,28 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                         fontSize: 15,
                                         fontWeight: FontWeight.bold)),
                                 const Spacer(),
-                                TextButton.icon(
-                                  onPressed: _loadingAllVolumes
-                                      ? null
-                                      : _toggleAllVolumes,
-                                  icon: Icon(_allVolumesExpanded
-                                      ? Icons.unfold_less_rounded
-                                      : Icons.unfold_more_rounded),
-                                  label: Text(_loadingAllVolumes
-                                      ? '加载中'
-                                      : _allVolumesExpanded
-                                          ? '收起全部'
-                                          : '展开全部'),
-                                ),
+                                if (_usesPagedCatalog || _canExpandAllVolumes)
+                                  TextButton.icon(
+                                    onPressed: _usesPagedCatalog
+                                        ? (_volumes.isEmpty
+                                            ? null
+                                            : () => _openCatalog())
+                                        : (_loadingAllVolumes
+                                            ? null
+                                            : _toggleAllVolumes),
+                                    icon: Icon(_usesPagedCatalog
+                                        ? Icons.format_list_bulleted_rounded
+                                        : _allVolumesExpanded
+                                            ? Icons.unfold_less_rounded
+                                            : Icons.unfold_more_rounded),
+                                    label: Text(_usesPagedCatalog
+                                        ? '展开目录'
+                                        : _loadingAllVolumes
+                                            ? '加载中'
+                                            : _allVolumesExpanded
+                                                ? '收起全部'
+                                                : '展开全部'),
+                                  ),
                                 Text('${b.volumeCount} 卷',
                                     style: TextStyle(
                                         fontSize: 12,
@@ -408,12 +589,64 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                   size: 22,
                                   strokeWidth: 2,
                                 ),
-                              ..._volumes.map((v) => _volumeCard(v)),
-                              SizedBox(
-                                  height: 90 +
-                                      MediaQuery.of(context).padding.bottom),
+                              if (!_volumesLoading &&
+                                  _volumesError != null &&
+                                  _volumes.isEmpty)
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8),
+                                  child: Center(
+                                    child: TextButton.icon(
+                                      onPressed: _loadVolumes,
+                                      icon: const Icon(Icons.refresh_rounded),
+                                      label: Text(_volumesError!),
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
+                        ),
+                      ),
+                      if (_volumes.isNotEmpty)
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          sliver: SliverList.builder(
+                            itemCount:
+                                _volumes.length + (_volumesHasMore ? 1 : 0),
+                            itemBuilder: (context, index) {
+                              if (index < _volumes.length) {
+                                return _volumeCard(_volumes[index]);
+                              }
+                              if (_volumesError != null) {
+                                return Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8),
+                                  child: Center(
+                                    child: TextButton.icon(
+                                      onPressed: () =>
+                                          _loadVolumes(append: true),
+                                      icon: const Icon(Icons.refresh_rounded),
+                                      label: const Text('更多目录加载失败，点击重试'),
+                                    ),
+                                  ),
+                                );
+                              }
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) {
+                                  unawaited(_loadVolumes(append: true));
+                                }
+                              });
+                              return const LkLoadingIndicator(
+                                minHeight: 64,
+                                size: 20,
+                                strokeWidth: 2,
+                              );
+                            },
+                          ),
+                        ),
+                      SliverToBoxAdapter(
+                        child: SizedBox(
+                          height: 90 + MediaQuery.of(context).padding.bottom,
                         ),
                       ),
                     ],
@@ -456,10 +689,90 @@ class _BookDetailPageState extends State<BookDetailPage> {
     );
   }
 
-  Widget _volumeCard(dynamic v) {
+  Widget _pagedVolumeCard(LKVolume volume) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final showPreview = _initialCatalogVolume?.volumeId == volume.volumeId;
+    final total = _chapterTotalFor(volume);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: isDark ? const Color(0xFF1E2025) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              onTap: () => _openCatalog(volume),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                child: Row(children: [
+                  Expanded(
+                    child: Text(volume.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
+                  ),
+                  if (total > 0) ...[
+                    const SizedBox(width: 8),
+                    Text('$total 章',
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.grey.shade500)),
+                  ],
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_right_rounded,
+                      color: Colors.grey.shade400),
+                ]),
+              ),
+            ),
+            if (showPreview &&
+                _catalogPreviewLoading &&
+                _catalogPreview.isEmpty)
+              const LkLoadingIndicator(
+                minHeight: 64,
+                size: 20,
+                strokeWidth: 2,
+              ),
+            if (showPreview &&
+                !_catalogPreviewLoading &&
+                _catalogPreviewError != null &&
+                _catalogPreview.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Center(
+                  child: TextButton.icon(
+                    onPressed: _loadCatalogPreview,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: Text(_catalogPreviewError!),
+                  ),
+                ),
+              ),
+            if (showPreview && _catalogPreview.isNotEmpty) ...[
+              const Divider(height: 1),
+              ..._chapterRows(volume, _catalogPreview),
+              const Divider(height: 1),
+              TextButton.icon(
+                onPressed: () => _openCatalog(volume),
+                icon: const Icon(Icons.format_list_bulleted_rounded, size: 18),
+                label: Text(total > _catalogPreview.length
+                    ? '查看全部 $total 章'
+                    : '查看完整目录'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _volumeCard(LKVolume v) {
+    if (_volumeUsesPagedCatalog(v)) return _pagedVolumeCard(v);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final expanded = _expandedVolumeIds.contains(v.volumeId);
     final chs = _volumeChapters[v.volumeId];
+    final total = _chapterTotalFor(v);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
@@ -482,6 +795,15 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         style: const TextStyle(
                             fontSize: 14, fontWeight: FontWeight.w600)),
                   ),
+                  if (total > 0) ...[
+                    const SizedBox(width: 8),
+                    Text('$total 章',
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.grey.shade500)),
+                  ],
+                  const SizedBox(width: 4),
+                  // 加载状态显示在展开后的章节区域，卷标题行始终保持
+                  // 箭头，避免“X章”旁边出现突兀的转圈动画。
                   Icon(
                       expanded
                           ? Icons.keyboard_arrow_down_rounded
@@ -498,8 +820,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
   }
 
   /// 点击卷:就地展开/收起章节列表(首次展开时加载)
-  Future<void> _toggleVolume(dynamic v) async {
-    final id = v.volumeId as int;
+  Future<void> _toggleVolume(LKVolume v) async {
+    if (_chapterTotalFor(v) == 1) {
+      await _openSingleChapterVolume(v);
+      return;
+    }
+    if (_volumeUsesPagedCatalog(v)) {
+      _openCatalog(v);
+      return;
+    }
+    final id = v.volumeId;
     if (_expandedVolumeIds.contains(id)) {
       setState(() => _expandedVolumeIds.remove(id));
       return;
@@ -511,50 +841,129 @@ class _BookDetailPageState extends State<BookDetailPage> {
     await _loadVolumeChapters(v);
   }
 
+  Future<void> _openSingleChapterVolume(LKVolume volume) async {
+    final book = _book;
+    if (book == null || _loadingVolumeIds.contains(volume.volumeId)) return;
+    final cached = _volumeChapters[volume.volumeId];
+    var chapterId = cached?.isNotEmpty == true
+        ? cached!.first.chapterId
+        : volume.firstChapterId > 0
+            ? volume.firstChapterId
+            : volume.lastChapterId;
+    var chapterTitle =
+        cached?.isNotEmpty == true ? cached!.first.title : volume.title;
+
+    if (chapterId <= 0) {
+      setState(() => _loadingVolumeIds.add(volume.volumeId));
+      try {
+        final page = await LKApi.chapterPage(
+          book.bookId,
+          volume.volumeId,
+          1,
+          pageSize: 1,
+        );
+        if (!mounted) return;
+        if (page.items.isEmpty) {
+          showLkError(context, '该卷暂时没有可阅读章节');
+          return;
+        }
+        final chapter = page.items.first;
+        chapterId = chapter.chapterId;
+        chapterTitle = chapter.title;
+        _volumeChapters[volume.volumeId] = [chapter];
+      } catch (error) {
+        if (mounted) showLkError(context, error);
+        return;
+      } finally {
+        if (mounted) {
+          setState(() => _loadingVolumeIds.remove(volume.volumeId));
+        }
+      }
+    }
+    if (!mounted || chapterId <= 0) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReaderPage(
+          bookId: book.bookId,
+          bookTitle: book.title,
+          chapterId: chapterId,
+          chapterTitle: chapterTitle,
+          volumeId: volume.volumeId,
+        ),
+      ),
+    );
+  }
+
   bool get _allVolumesExpanded =>
       _volumes.isNotEmpty &&
       _volumes.every((volume) => _expandedVolumeIds.contains(volume.volumeId));
 
   Future<void> _toggleAllVolumes() async {
+    if (!_canExpandAllVolumes) return;
+    if (_usesPagedCatalog) {
+      _openCatalog();
+      return;
+    }
     if (_volumes.isEmpty) return;
     if (_allVolumesExpanded) {
       setState(_expandedVolumeIds.clear);
       return;
     }
     setState(() {
-      _expandedVolumeIds.addAll(
-          _volumes.map<int>((volume) => (volume.volumeId as num).toInt()));
+      _expandedVolumeIds.addAll(_volumes.map<int>((volume) => volume.volumeId));
       _volumeErrors.clear();
       _loadingAllVolumes = true;
     });
     final pending = _volumes
-        .where((volume) =>
-            !_volumeChapters.containsKey((volume.volumeId as num).toInt()))
+        .where((volume) => !_volumeChapters.containsKey(volume.volumeId))
         .toList();
     try {
-      // 目录展开是用户明确触发的操作，章节请求并发发出，避免逐卷等待。
-      await Future.wait(pending.map(_loadVolumeChapters));
+      // 保持并行加载，但限制并发数，避免卷数较多时瞬间压满网络连接。
+      var next = 0;
+      final workerCount = pending.length < 4 ? pending.length : 4;
+      Future<void> worker() async {
+        while (next < pending.length) {
+          final volume = pending[next++];
+          await _loadVolumeChapters(volume);
+        }
+      }
+
+      await Future.wait(List.generate(workerCount, (_) => worker()));
     } finally {
       if (mounted) setState(() => _loadingAllVolumes = false);
     }
   }
 
-  Future<void> _loadVolumeChapters(dynamic v) async {
-    final id = v.volumeId as int;
+  Future<void> _loadVolumeChapters(LKVolume v) async {
+    final id = v.volumeId;
     final book = _book;
     if (book == null) return;
-    if (_volumeChapters.containsKey(id)) return;
+    if (_volumeChapters.containsKey(id) || _loadingVolumeIds.contains(id)) {
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _loadingVolumeIds.add(id);
+        _volumeErrors.remove(id);
+      });
+    }
     try {
-      final chs = await LKApi.chapters(book.bookId, id, 1);
+      final chs = await LKApi.allChapters(book.bookId, id);
       if (!mounted) return;
-      setState(() => _volumeChapters[id] = chs);
-    } catch (e) {
+      setState(() {
+        _volumeChapters[id] = chs;
+        _volumeErrors.remove(id);
+      });
+    } catch (_) {
       if (!mounted) return;
       setState(() => _volumeErrors[id] = '连接失败，请检查网络后重试');
+    } finally {
+      if (mounted) setState(() => _loadingVolumeIds.remove(id));
     }
   }
 
-  List<Widget> _chapterRows(dynamic v, List<dynamic>? chs) {
+  List<Widget> _chapterRows(LKVolume v, List<LKChapter>? chs) {
     final book = _book;
     if (book == null) return const [];
     if (chs == null) {
@@ -562,8 +971,13 @@ class _BookDetailPageState extends State<BookDetailPage> {
         return [
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 2, 14, 14),
-            child: Text('章节加载失败,请收起后重试',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+            child: Center(
+              child: TextButton.icon(
+                onPressed: () => _loadVolumeChapters(v),
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('章节加载失败，点击重试'),
+              ),
+            ),
           ),
         ];
       }
@@ -630,94 +1044,368 @@ class ChaptersPage extends StatefulWidget {
   final int volumeId;
   final String volumeTitle;
   final String bookTitle;
-  const ChaptersPage(
-      {super.key,
-      required this.bookId,
-      required this.volumeId,
-      required this.volumeTitle,
-      required this.bookTitle});
+  final int totalChapterCount;
+  final int currentChapterId;
+  final List<LKVolume> volumes;
+  const ChaptersPage({
+    super.key,
+    required this.bookId,
+    required this.volumeId,
+    required this.volumeTitle,
+    required this.bookTitle,
+    this.totalChapterCount = 0,
+    this.currentChapterId = 0,
+    this.volumes = const [],
+  });
 
   @override
   State<ChaptersPage> createState() => _ChaptersPageState();
 }
 
 class _ChaptersPageState extends State<ChaptersPage> {
-  List<dynamic> _chapters = [];
+  static const int _pageSize = 50;
+
+  final ScrollController _scroll = ScrollController();
+  List<LKChapter> _chapters = const [];
   String? _error;
+  bool _initialLoading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  bool _descending = false;
+  int _total = 0;
+  late int _volumeId;
+  late String _volumeTitle;
+  int _loadedLogicalPages = 0;
+  int _requestSerial = 0;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _volumeId = widget.volumeId;
+    _volumeTitle = widget.volumeTitle;
+    _total = widget.totalChapterCount;
+    _scroll.addListener(_handleScroll);
+    _loadPage(reset: true);
   }
 
-  Future<void> _load() async {
-    try {
-      final chs = await LKApi.chapters(widget.bookId, widget.volumeId, 1);
-      if (!mounted) return;
-      setState(() => _chapters = chs);
-    } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+  @override
+  void dispose() {
+    _scroll
+      ..removeListener(_handleScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  List<LKVolume> get _availableVolumes => widget.volumes.isNotEmpty
+      ? widget.volumes
+      : [
+          LKVolume(
+            volumeId: widget.volumeId,
+            title: widget.volumeTitle,
+            chapterCount: widget.totalChapterCount,
+          ),
+        ];
+
+  Future<void> _selectVolume(int volumeId) async {
+    if (volumeId == _volumeId) return;
+    LKVolume? selected;
+    for (final volume in _availableVolumes) {
+      if (volume.volumeId == volumeId) {
+        selected = volume;
+        break;
+      }
     }
+    if (selected == null) return;
+    setState(() {
+      _volumeId = selected!.volumeId;
+      _volumeTitle = selected.title;
+      _total = selected.chapterCount;
+      _descending = false;
+      _error = null;
+    });
+    await _loadPage(reset: true);
+    if (mounted && _scroll.hasClients) _scroll.jumpTo(0);
+  }
+
+  void _handleScroll() {
+    if (!_scroll.hasClients) return;
+    if (shouldLoadNextCatalogPage(
+      extentAfter: _scroll.position.extentAfter,
+      hasMore: _hasMore,
+      loading: _initialLoading || _loadingMore,
+      hasError: _error != null,
+    )) {
+      unawaited(_loadPage());
+    }
+  }
+
+  void _scheduleFillViewport() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      if (shouldLoadNextCatalogPage(
+        extentAfter: _scroll.position.extentAfter,
+        hasMore: _hasMore,
+        loading: _initialLoading || _loadingMore,
+        hasError: _error != null,
+      )) {
+        unawaited(_loadPage());
+      }
+    });
+  }
+
+  Future<void> _refresh() => _loadPage(reset: true);
+
+  Future<void> _loadPage({bool reset = false}) async {
+    if (!reset && (_initialLoading || _loadingMore || !_hasMore)) {
+      return;
+    }
+    final request = reset ? ++_requestSerial : _requestSerial;
+    final logicalPage = reset ? 1 : _loadedLogicalPages + 1;
+    setState(() {
+      if (reset) {
+        _chapters = const [];
+        _loadedLogicalPages = 0;
+        _hasMore = true;
+        _initialLoading = true;
+        _loadingMore = false;
+      } else {
+        _loadingMore = true;
+      }
+      _error = null;
+    });
+    try {
+      final sourcePage = catalogSourcePage(
+        logicalPage: logicalPage,
+        total: _total,
+        pageSize: _pageSize,
+        descending: _descending,
+      );
+      final page = await LKApi.chapterPage(widget.bookId, _volumeId, sourcePage,
+          pageSize: _pageSize);
+      if (!mounted || request != _requestSerial) return;
+      final pageItems = _descending
+          ? page.items.reversed.toList(growable: false)
+          : page.items;
+      final merged = reset ? <LKChapter>[] : List<LKChapter>.of(_chapters);
+      final seen = merged
+          .map((chapter) =>
+              '${chapter.chapterId}:${chapter.chapterNo}:${chapter.title}')
+          .toSet();
+      for (final chapter in pageItems) {
+        final key =
+            '${chapter.chapterId}:${chapter.chapterNo}:${chapter.title}';
+        if (seen.add(key)) merged.add(chapter);
+      }
+      final total = page.total > 0 ? page.total : _total;
+      setState(() {
+        _chapters = merged;
+        _total = total;
+        _loadedLogicalPages = logicalPage;
+        _hasMore = page.items.isNotEmpty &&
+            (_descending ? sourcePage > 1 : page.hasMore);
+        _error = null;
+      });
+    } catch (e) {
+      if (mounted && request == _requestSerial) {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted && request == _requestSerial) {
+        setState(() {
+          _initialLoading = false;
+          _loadingMore = false;
+        });
+        _scheduleFillViewport();
+      }
+    }
+  }
+
+  Future<void> _setDescending(bool value) async {
+    if (_descending == value || _initialLoading || _loadingMore) return;
+    if (value && _total <= 0) return;
+    setState(() => _descending = value);
+    await _loadPage(reset: true);
+    if (mounted && _scroll.hasClients) _scroll.jumpTo(0);
+  }
+
+  String get _progressLabel => _total > 0
+      ? '已加载 ${_chapters.length} / $_total'
+      : '已加载 ${_chapters.length} 章';
+
+  Widget _centeredList(Widget child) => ListView(
+        controller: _scroll,
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.7,
+            child: Center(child: child),
+          ),
+        ],
+      );
+
+  Widget _footer() {
+    if (_loadingMore) {
+      return const SizedBox(
+        height: 72,
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (_error != null) {
+      return SizedBox(
+        height: 72,
+        child: Center(
+          child: TextButton.icon(
+            onPressed: _loadPage,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('加载失败，点击重试'),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 64,
+      child: Center(
+        child: Text(
+          _hasMore ? '继续下滑加载' : '已加载全部章节',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-          title:
-              Text(widget.volumeTitle.isEmpty ? '章节列表' : widget.volumeTitle)),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.bookTitle.isEmpty ? '章节列表' : widget.bookTitle,
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text(
+              _chapters.isEmpty
+                  ? _volumeTitle
+                  : '$_volumeTitle · $_progressLabel',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.normal,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.58)),
+            ),
+          ],
+        ),
+        actions: [
+          if (_availableVolumes.length > 1)
+            PopupMenuButton<int>(
+              tooltip: '切换分卷',
+              icon: const Icon(Icons.library_books_outlined),
+              onSelected: _selectVolume,
+              itemBuilder: (_) => _availableVolumes
+                  .map((volume) => CheckedPopupMenuItem<int>(
+                        value: volume.volumeId,
+                        checked: volume.volumeId == _volumeId,
+                        child: SizedBox(
+                          width: 240,
+                          child: Row(children: [
+                            Expanded(
+                              child: Text(volume.title,
+                                  maxLines: 2, overflow: TextOverflow.ellipsis),
+                            ),
+                            if (volume.chapterCount > 0) ...[
+                              const SizedBox(width: 8),
+                              Text('${volume.chapterCount} 章',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade500)),
+                            ],
+                          ]),
+                        ),
+                      ))
+                  .toList(growable: false),
+            ),
+          IconButton(
+            tooltip: _descending ? '当前倒序，点击切换为正序' : '当前正序，点击切换为倒序',
+            onPressed: _total > 0 && !_initialLoading && !_loadingMore
+                ? () => _setDescending(!_descending)
+                : null,
+            icon: Icon(_descending
+                ? Icons.arrow_downward_rounded
+                : Icons.arrow_upward_rounded),
+          ),
+        ],
+      ),
       body: RefreshIndicator(
-        onRefresh: _load,
-        child: _error != null && _chapters.isEmpty
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  SizedBox(
-                    height: MediaQuery.sizeOf(context).height * 0.7,
-                    child: Center(
-                        child: Text(_error!,
-                            style: const TextStyle(color: Colors.grey))),
-                  ),
-                ],
-              )
-            : ListView.separated(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: EdgeInsets.only(
-                    bottom: MediaQuery.of(context).padding.bottom),
-                itemCount: _chapters.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  final c = _chapters[i];
-                  return ListTile(
-                    // 网站标题本身已含"第X章",不再重复拼接
-                    title: Row(children: [
-                      if (c.braveOnly) _braveAccessBadge(context),
-                      Expanded(
-                        child: Text(c.title,
-                            maxLines: 2, overflow: TextOverflow.ellipsis),
-                      ),
-                    ]),
-                    subtitle: Text(c.wordCount >= 10000
-                        ? '${(c.wordCount / 10000).toStringAsFixed(1)}万字'
-                        : '${c.wordCount}字'),
-                    trailing: c.locked && !c.unlocked
-                        ? const Icon(Icons.lock_outline, size: 18)
-                        : null,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => ReaderPage(
-                                bookId: widget.bookId,
-                                bookTitle: widget.bookTitle,
-                                chapterId: c.chapterId,
-                                chapterTitle: c.title,
-                                volumeId: widget.volumeId,
-                              )),
+        onRefresh: _refresh,
+        child: _initialLoading && _chapters.isEmpty
+            ? _centeredList(const LkLoadingIndicator())
+            : _error != null && _chapters.isEmpty
+                ? _centeredList(
+                    TextButton.icon(
+                      onPressed: () => _loadPage(reset: true),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: Text(_error!),
                     ),
-                  );
-                },
-              ),
+                  )
+                : ListView.builder(
+                    controller: _scroll,
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: EdgeInsets.only(
+                        bottom: MediaQuery.of(context).padding.bottom),
+                    itemCount: _chapters.length + 1,
+                    itemBuilder: (_, i) {
+                      if (i == _chapters.length) return _footer();
+                      final c = _chapters[i];
+                      return Column(
+                        key: ValueKey('chapter-${c.chapterId}'),
+                        children: [
+                          ListTile(
+                            selected: c.chapterId == widget.currentChapterId,
+                            selectedTileColor: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: 0.08),
+                            // 网站标题本身已含"第X章",不再重复拼接
+                            title: Row(children: [
+                              if (c.braveOnly) _braveAccessBadge(context),
+                              Expanded(
+                                child: Text(c.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis),
+                              ),
+                            ]),
+                            subtitle: Text(c.wordCount >= 10000
+                                ? '${(c.wordCount / 10000).toStringAsFixed(1)}万字'
+                                : '${c.wordCount}字'),
+                            trailing: c.locked && !c.unlocked
+                                ? const Icon(Icons.lock_outline, size: 18)
+                                : null,
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => ReaderPage(
+                                        bookId: widget.bookId,
+                                        bookTitle: widget.bookTitle,
+                                        chapterId: c.chapterId,
+                                        chapterTitle: c.title,
+                                        volumeId: _volumeId,
+                                      )),
+                            ),
+                          ),
+                          const Divider(height: 1),
+                        ],
+                      );
+                    },
+                  ),
       ),
     );
   }

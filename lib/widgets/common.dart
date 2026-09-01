@@ -175,6 +175,24 @@ class BookCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 6),
                           _statusBadge(scheme, status, borderColor),
+                          if (book.unreadChapterCount > 0) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: scheme.primaryContainer,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '${book.unreadChapterCount} 章更新',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: scheme.onPrimaryContainer,
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 6),
@@ -393,6 +411,27 @@ class BookGridCard extends StatelessWidget {
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
                               fontSize: 13)),
+                    ),
+                  ),
+                if (book.unreadChapterCount > 0)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: scheme.primaryContainer.withValues(alpha: 0.94),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Text(
+                        '${book.unreadChapterCount} 章更新',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onPrimaryContainer,
+                        ),
+                      ),
                     ),
                   ),
                 // 状态角标

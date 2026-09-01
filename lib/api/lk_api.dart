@@ -5,10 +5,24 @@ import 'package:http/http.dart' as http;
 
 import 'lk_client.dart';
 import 'models.dart';
+import 'pagination.dart';
 
 /// 全接口分组封装(静态方法,统一走 LKClient.shared)
 class LKApi {
   static final LKClient client = LKClient.shared;
+  static final Map<String, Future<LKChapterDetail>> _chapterDetailInFlight = {};
+
+  static Future<void> _invalidateOwnPublicProfile() async {
+    final uid = client.session.uid;
+    if (uid <= 0) return;
+    await client.invalidateCachePrefix('public_user_$uid-$uid-');
+  }
+
+  static Future<void> _invalidateVisibleDynamicCaches() async {
+    final uid = client.session.uid;
+    if (uid <= 0) return;
+    await client.invalidateCachePrefix('public_dynamic_$uid-');
+  }
 
   // ==================== 鉴权 ====================
 
@@ -156,6 +170,13 @@ class LKApi {
           cacheKey: 'book_detail_${client.session.uid}-$bookId',
           cacheTtl: const Duration(minutes: 10)));
 
+  static Future<LKReaderBootstrap> readerBootstrap(int bookId) async =>
+      LKReaderBootstrap.fromJson(await client.post(
+        '/api/bff/reader-bootstrap-v1',
+        client.authed({'book_id': bookId}),
+        requestTimeout: const Duration(seconds: 20),
+      ));
+
   static Future<List<LKVolume>> volumes(int bookId, int page,
       {int pageSize = 50}) async {
     final d = await client.post(
@@ -172,24 +193,53 @@ class LKApi {
         .toList();
   }
 
-  static Future<List<LKChapter>> chapters(int bookId, int volumeId, int page,
+  static Future<LKChapterPage> chapterPage(int bookId, int volumeId, int page,
       {int pageSize = 50}) async {
+    final size = LKClient.clampPageSize(pageSize);
     final d = await client.post(
         '/api/new-content-read/get-volume-chapters',
         {
           'book_id': bookId,
           'volume_id': volumeId,
           'page': page,
-          'pageSize': LKClient.clampPageSize(pageSize),
+          'pageSize': size,
         },
-        cacheKey: 'volume_chapters_$bookId-$volumeId-$page-$pageSize',
+        cacheKey: 'volume_chapters_$bookId-$volumeId-$page-$size',
         cacheTtl: const Duration(minutes: 10));
-    return ((d['list'] as List?) ?? const [])
-        .map((e) => LKChapter.fromJson(e as Map<String, dynamic>))
-        .toList();
+    return LKChapterPage.fromJson(d,
+        fallbackPage: page, fallbackPageSize: size);
   }
 
-  static Future<LKChapterDetail> chapterDetail(
+  static Future<List<LKChapter>> chapters(int bookId, int volumeId, int page,
+          {int pageSize = 50}) async =>
+      (await chapterPage(bookId, volumeId, page, pageSize: pageSize)).items;
+
+  static Future<List<LKVolume>> allVolumes(int bookId) => collectPaged(
+        loadPage: (page, pageSize) => volumes(bookId, page, pageSize: pageSize),
+        keyOf: (volume) => '${volume.volumeId}:${volume.title}',
+      );
+
+  static Future<List<LKChapter>> allChapters(int bookId, int volumeId) =>
+      collectPaged(
+        loadPage: (page, pageSize) =>
+            chapters(bookId, volumeId, page, pageSize: pageSize),
+        keyOf: (chapter) => '${chapter.chapterId}:${chapter.title}',
+      );
+
+  static Future<LKChapterDetail> chapterDetail(int bookId, int chapterId) {
+    final key = '${client.session.uid}:$bookId:$chapterId';
+    final existing = _chapterDetailInFlight[key];
+    if (existing != null) return existing;
+    final request = _fetchChapterDetail(bookId, chapterId);
+    _chapterDetailInFlight[key] = request;
+    return request.whenComplete(() {
+      if (identical(_chapterDetailInFlight[key], request)) {
+        _chapterDetailInFlight.remove(key);
+      }
+    });
+  }
+
+  static Future<LKChapterDetail> _fetchChapterDetail(
       int bookId, int chapterId) async {
     final loggedIn = client.session.isLoggedIn;
     final accessMessage = loggedIn
@@ -257,31 +307,46 @@ class LKApi {
 
   // ==================== 书评 / 段评 ====================
 
-  static Future<List<LKComment>> bookComments(int bookId, int page) async {
+  static Future<LKCommentPage> bookCommentPage(int bookId, int page,
+      {int pageSize = 20, int commentId = 0}) async {
+    final size = LKClient.clampPageSize(pageSize);
     final d = await client.post('/api/new-content-read/get-book-comments', {
       'book_id': bookId,
       'page': page,
-      'pageSize': 20,
+      'pageSize': size,
       'rating_filter': 'all',
       'include_user_interactions': 1,
+      if (commentId > 0) 'comment_id': commentId,
     });
-    return _commentList(d);
+    return LKCommentPage.fromJson(d,
+        fallbackPage: page, fallbackPageSize: size);
   }
 
+  static Future<List<LKComment>> bookComments(int bookId, int page) async =>
+      (await bookCommentPage(bookId, page)).items;
+
   /// 本卷评论(volume_id 定位卷;0 则为整书评论)
-  static Future<List<LKComment>> volumeComments(
-      int bookId, int volumeId, int page) async {
+  static Future<LKCommentPage> volumeCommentPage(
+      int bookId, int volumeId, int page,
+      {int pageSize = 20, int commentId = 0}) async {
+    final size = LKClient.clampPageSize(pageSize);
     final d = await client.post('/api/new-content-read/get-book-comments', {
       'book_id': bookId,
       'page': page,
-      'pageSize': 20,
+      'pageSize': size,
       'rating_filter': 'all',
       'include_user_interactions': 1,
       'volume_id': volumeId,
       'chapter_id': 0,
+      if (commentId > 0) 'comment_id': commentId,
     });
-    return _commentList(d);
+    return LKCommentPage.fromJson(d,
+        fallbackPage: page, fallbackPageSize: size);
   }
+
+  static Future<List<LKComment>> volumeComments(
+          int bookId, int volumeId, int page) async =>
+      (await volumeCommentPage(bookId, volumeId, page)).items;
 
   /// 评论表情包列表
   static Future<List<LKEmojiGroup>> commentEmojis() async {
@@ -292,14 +357,17 @@ class LKApi {
   }
 
   static Future<void> publishBookComment(int bookId, String content,
-      {int volumeId = 0, List<LKDynamicMedia> media = const []}) {
+      {int volumeId = 0,
+      int rootCommentId = 0,
+      int replyCommentId = 0,
+      List<LKDynamicMedia> media = const []}) {
     final body = client.authed({
       'scope': volumeId > 0 ? 'volume' : 'book',
       'book_id': bookId,
       'volume_id': volumeId,
       'chapter_id': 0,
-      'root_comment_id': 0,
-      'reply_comment_id': 0,
+      'root_comment_id': rootCommentId,
+      'reply_comment_id': replyCommentId,
       'content': content,
       'rating_stars': 0,
       'read_duration_seconds': 0,
@@ -311,7 +379,7 @@ class LKApi {
   }
 
   static Future<void> likeBookComment(int bookId, int commentId, bool like,
-          {int volumeId = 0}) =>
+          {int volumeId = 0, int rootCommentId = 0}) =>
       client.post(
           '/api/discuss/like-book-comment',
           client.authed({
@@ -320,7 +388,7 @@ class LKApi {
             'volume_id': volumeId,
             'chapter_id': 0,
             'comment_id': commentId,
-            'root_comment_id': 0,
+            'root_comment_id': rootCommentId,
             'act': like ? 'like' : 'unlike',
           }));
 
@@ -394,13 +462,21 @@ class LKApi {
     return (d['in_shelf'] as num?)?.toInt() == 1;
   }
 
-  static Future<void> toggleShelf(int bookId, bool add) => client.post(
-      '/api/new-content-read/toggle-book-shelf',
-      client.authed({
-        'book_id': bookId,
-        'action': add ? 'add' : 'remove',
-        'source': 'pc_web',
-      }));
+  static Future<void> toggleShelf(int bookId, bool add) async {
+    await client.post(
+        '/api/new-content-read/toggle-book-shelf',
+        client.authed({
+          'book_id': bookId,
+          'action': add ? 'add' : 'remove',
+          'source': 'pc_web',
+        }));
+    final uid = client.session.uid;
+    await Future.wait([
+      client.invalidateCachePrefix('book_detail_$uid-$bookId'),
+      if (uid > 0) client.invalidateCachePrefix('public_bookshelf_$uid-'),
+      _invalidateOwnPublicProfile(),
+    ]);
+  }
 
   static Future<List<LKBook>> bookshelf(int page, {int pageSize = 50}) async {
     final d = await client.post(
@@ -458,6 +534,69 @@ class LKApi {
       '/api/new-content-read/delete-book-history',
       client.authed({'book_id': bookId}));
 
+  // ==================== 勇者考试 ====================
+
+  /// 查询今日是否已经完成勇者考试。
+  ///
+  /// 这是登录态、每日状态接口，不使用本地响应缓存，避免退出或切换账号
+  /// 后回显上一个账号的答题状态。
+  static Future<LKBraveQuizStatus> getBraveQuizState() async {
+    final data = await client.post(
+      '/api/question/is-answered',
+      client.authed(),
+    );
+    return LKBraveQuizStatus.fromJson(data);
+  }
+
+  /// 获取今日题卷。
+  static Future<LKBraveQuizPaper> getBraveQuizQuestions() async {
+    final data = await client.post(
+      '/api/question/get-questions',
+      client.authed(),
+    );
+    return LKBraveQuizPaper.fromJson(data);
+  }
+
+  /// 提交完整题卷并获取成绩。
+  ///
+  /// 每道题使用服务端返回的 question_id 和 option key/id。当前接口要求
+  /// 选项以 selected_option_keys 或 selected_option_ids 数组提交；客户端
+  /// 不保存或推测正确答案，也不在失败时自动重试。
+  static Future<LKBraveQuizResult> submitBraveQuiz({
+    required String sessionId,
+    required Map<LKBraveQuizQuestion, LKBraveQuizOption> answers,
+  }) async {
+    final answerList = answers.entries
+        .where((entry) =>
+            entry.key.questionId > 0 &&
+            (entry.value.optionKey.isNotEmpty || entry.value.optionId > 0))
+        .map((entry) {
+      final option = entry.value;
+      return <String, dynamic>{
+        'question_id': entry.key.questionId,
+        if (option.optionKey.isNotEmpty)
+          'selected_option_keys': [option.optionKey]
+        else if (option.optionId > 0)
+          'selected_option_ids': [option.optionId],
+      };
+    }).toList(growable: false);
+    if (answerList.length != answers.length) {
+      throw LKException(-1, '部分题目缺少有效选项，请返回检查后再提交');
+    }
+    // 当前题库接口返回的题卷没有 session_id。只有在服务端未来返回该
+    // 字段时才带上它，不能因为缺少可选字段在客户端提前判定“会话失效”。
+    final payload = <String, dynamic>{'answers': answerList};
+    final normalizedSessionId = sessionId.trim();
+    if (normalizedSessionId.isNotEmpty) {
+      payload['session_id'] = normalizedSessionId;
+    }
+    final data = await client.post(
+      '/api/question/get-score',
+      client.authed(payload),
+    );
+    return LKBraveQuizResult.fromJson(data);
+  }
+
   static Future<void> unlockChapter(int chapterId) => client.post(
       '/api/new-content-read/unlock-chapter',
       client.authed({'chapter_id': chapterId}));
@@ -504,11 +643,12 @@ class LKApi {
         .items;
   }
 
-  static Future<List<LKComment>> dynamicComments(int dynamicId,
+  static Future<LKCommentPage> dynamicCommentPage(int dynamicId,
       {int commentId = 0,
       String cursor = '',
       int page = 1,
       int pageSize = 20}) async {
+    final size = LKClient.clampPageSize(pageSize);
     final d = await client.post(
         '/api/dynamic/get-comments-v1',
         client.authed({
@@ -518,11 +658,24 @@ class LKApi {
           'cursor': cursor,
           'page': page,
           'sort': 'latest',
-          'page_size': pageSize,
-          'pageSize': pageSize,
+          'page_size': size,
+          'pageSize': size,
         }));
-    return _commentList(d);
+    return LKCommentPage.fromJson(d,
+        fallbackPage: page, fallbackPageSize: size);
   }
+
+  static Future<List<LKComment>> dynamicComments(int dynamicId,
+          {int commentId = 0,
+          String cursor = '',
+          int page = 1,
+          int pageSize = 20}) async =>
+      (await dynamicCommentPage(dynamicId,
+              commentId: commentId,
+              cursor: cursor,
+              page: page,
+              pageSize: pageSize))
+          .items;
 
   static Future<LKDynamicItem> dynamicDetail(int dynamicId) async {
     final d = await client.post(
@@ -555,6 +708,7 @@ class LKApi {
         }));
     final raw = d['comment'] ?? d['reply'] ?? d;
     if (raw is! Map) throw LKException(-1, '评论响应格式错误');
+    await _invalidateVisibleDynamicCaches();
     return LKComment.fromJson(Map<String, dynamic>.from(raw));
   }
 
@@ -580,6 +734,10 @@ class LKApi {
         }));
     final raw = d['dynamic'] ?? d;
     if (raw is! Map) throw LKException(-1, '发布动态响应格式错误');
+    await Future.wait([
+      _invalidateVisibleDynamicCaches(),
+      _invalidateOwnPublicProfile(),
+    ]);
     return LKDynamicItem.fromJson(Map<String, dynamic>.from(raw));
   }
 
@@ -594,64 +752,88 @@ class LKApi {
           }));
 
   static Future<Map<String, dynamic>> submitDynamicPollVote(
-          int dynamicId, List<String> optionIds) =>
-      client.post(
-          '/api/dynamic/submit-poll-vote-v1',
-          client.authed({
-            'dynamic_id': dynamicId,
-            'option_ids': optionIds,
-            'request_id':
-                'poll-vote-$dynamicId-${DateTime.now().millisecondsSinceEpoch}',
-          }));
+      int dynamicId, List<String> optionIds) async {
+    final result = await client.post(
+        '/api/dynamic/submit-poll-vote-v1',
+        client.authed({
+          'dynamic_id': dynamicId,
+          'option_ids': optionIds,
+          'request_id':
+              'poll-vote-$dynamicId-${DateTime.now().millisecondsSinceEpoch}',
+        }));
+    await _invalidateVisibleDynamicCaches();
+    return result;
+  }
 
-  static Future<void> toggleDynamicLike(int dynamicId, bool like) =>
-      client.post(
-          '/api/dynamic/toggle-like-v1',
-          client.authed(
-              {'dynamic_id': dynamicId, 'act': like ? 'like' : 'unlike'}));
+  static Future<void> toggleDynamicLike(int dynamicId, bool like) async {
+    await client.post(
+        '/api/dynamic/toggle-like-v1',
+        client.authed(
+            {'dynamic_id': dynamicId, 'act': like ? 'like' : 'unlike'}));
+    await _invalidateVisibleDynamicCaches();
+  }
 
-  static Future<void> toggleDynamicFavorite(
-          int dynamicId, bool fav) =>
-      client.post(
-          '/api/dynamic/toggle-favorite-v1',
-          client.authed({
-            'dynamic_id': dynamicId,
-            'act': fav ? 'favorite' : 'unfavorite'
-          }));
+  static Future<void> toggleDynamicFavorite(int dynamicId, bool fav) async {
+    await client.post(
+        '/api/dynamic/toggle-favorite-v1',
+        client.authed(
+            {'dynamic_id': dynamicId, 'act': fav ? 'favorite' : 'unfavorite'}));
+    await _invalidateVisibleDynamicCaches();
+  }
 
   // ==================== 消息 / 私信 ====================
 
-  static Future<Map<String, dynamic>> messageUnread() async =>
-      client.post('/api/bff/message-unread-v1', client.authed());
+  static Future<LKMessageSummary> messageUnread() async =>
+      LKMessageSummary.fromJson(
+          await client.post('/api/bff/message-unread-v1', client.authed()));
 
-  static Future<List<LKMessageItem>> messages(String type, int page) async {
+  static Future<LKMessagePage> messages(String type, int page,
+      {int pageSize = 20}) async {
     final path = switch (type) {
       'like' => '/api/bff/message-likes-v1',
       'fan' => '/api/bff/message-fans-v1',
       'system' => '/api/bff/message-system-v1',
       _ => '/api/bff/message-replies-v1',
     };
-    final d =
-        await client.post(path, client.authed({'page': page, 'page_size': 20}));
-    return ((d['list'] as List?) ?? const [])
-        .map((e) => LKMessageItem.fromJson(e as Map<String, dynamic>))
-        .toList();
+    final normalizedPage = page < 1 ? 1 : page;
+    final normalizedPageSize = LKClient.clampPageSize(pageSize);
+    final d = await client.post(
+        path,
+        client.authed({
+          if (type == 'mention') 'filter': 'mention',
+          // 官网消息接口使用从 0 开始的页码。
+          'page': normalizedPage - 1,
+          'page_size': normalizedPageSize,
+        }));
+    return LKMessagePage.fromJson(
+      d,
+      type: type,
+      fallbackPage: normalizedPage,
+      fallbackPageSize: normalizedPageSize,
+    );
   }
 
-  static Future<void> markMessagesRead(String scope) => client.post(
-      '/api/bff/message-mark-read-v1',
-      client.authed({
-        'scope': scope,
-        'ts': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-        'nonce': DateTime.now().microsecondsSinceEpoch.toRadixString(16),
-      }));
+  static Future<void> markMessagesRead(String scope, {String? category}) =>
+      client.post(
+          '/api/bff/message-mark-read-v1',
+          client.authed({
+            'scope': scope,
+            if (category != null && category.isNotEmpty) 'category': category,
+            'ts': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+            'nonce': DateTime.now().microsecondsSinceEpoch.toRadixString(16),
+          }));
 
   static Future<List<LKConversation>> dmConversations() async {
     final d = await client.post('/api/bff/dm-conversations-v1',
         client.authed({'page': 1, 'page_size': 20}));
-    return ((d['list'] as List?) ?? const [])
-        .map((e) => LKConversation.fromJson(e as Map<String, dynamic>))
-        .toList();
+    final raw = d['list'] ?? d['items'] ?? d['cards'] ?? const [];
+    return raw is List
+        ? raw
+            .whereType<Map>()
+            .map((e) => LKConversation.fromJson(Map<String, dynamic>.from(e)))
+            .where((e) => e.peerUid > 0)
+            .toList(growable: false)
+        : const [];
   }
 
   static Future<List<LKDMMessage>> dmMessages(int peerUid) async {
@@ -811,7 +993,10 @@ class LKApi {
   static Future<void> toggleFollow(int uid, bool follow) async {
     await client.post('/api/bff/toggle-user-follow-v1',
         client.authed({'uid': uid, 'act': follow ? 'follow' : 'unfollow'}));
-    client.invalidateCachePrefix('public_user_${client.session.uid}-$uid-');
+    await Future.wait([
+      client.invalidateCachePrefix('public_user_${client.session.uid}-$uid-'),
+      _invalidateOwnPublicProfile(),
+    ]);
   }
 
   static Future<List<LKMedal>> myMedals() async {
@@ -827,15 +1012,23 @@ class LKApi {
 
   static Future<Map<String, dynamic>> medalCenter() => client.post(
       '/api/bff/my-medal-center-v1',
-      client.authed({'page': 1, 'pageSize': 50, 'page_size': 50}));
+      client.authed({'page': 0, 'pageSize': 20}));
 
-  static Future<void> exchangeMedal(int goodsId) => client.post(
-      '/api/bff/exchange-my-medal-v1',
-      client.authed({'medal_id': goodsId, 'goods_id': goodsId}));
+  static Future<void> exchangeMedal(int medalId, {int? goodsId}) async {
+    final exchangeGoodsId = goodsId ?? medalId;
+    if (exchangeGoodsId <= 0) {
+      throw LKException(-1, '勋章兑换参数无效');
+    }
+    await client.post('/api/bff/exchange-my-medal-v1',
+        client.authed({'goods_id': exchangeGoodsId}));
+    await _invalidateOwnPublicProfile();
+  }
 
-  static Future<void> claimMedal(int taskId) => client.post(
-      '/api/bff/claim-my-medal-v1',
-      client.authed({'task_id': taskId, 'medal_id': taskId}));
+  static Future<void> claimMedal(int taskId) async {
+    await client.post('/api/bff/claim-my-medal-v1',
+        client.authed({'task_id': taskId, 'medal_id': taskId}));
+    await _invalidateOwnPublicProfile();
+  }
 
   // 福利中心接口统一沿用当前客户端的正式站点地址，不读取或复用其他 APK 的服务器配置。
   static Future<Map<String, dynamic>> welfareHome() => client.post(
@@ -889,9 +1082,13 @@ class LKApi {
         client.authed({'page': page, 'pageSize': size, 'page_size': size}));
   }
 
-  static Future<void> toggleMedal(int medalId, bool equip) => client.post(
-      '/api/bff/toggle-my-medal-v1',
-      client.authed({'medal_id': medalId, 'act': equip ? 'equip' : 'unequip'}));
+  static Future<void> toggleMedal(int medalId, bool equip) async {
+    await client.post(
+        '/api/bff/toggle-my-medal-v1',
+        client
+            .authed({'medal_id': medalId, 'act': equip ? 'equip' : 'unequip'}));
+    await _invalidateOwnPublicProfile();
+  }
 
   static Future<Map<String, dynamic>> about() async =>
       client.post('/api/bff/settings-about-v1', const {});

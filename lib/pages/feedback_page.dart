@@ -45,7 +45,7 @@ class _FeedbackPageState extends State<FeedbackPage> {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           children: [
             Text(
-              '请描述遇到的问题或希望改进的地方，反馈给开发者即可。请勿填写密码、Token 或其他敏感信息。',
+              '如果遇到连接失败或内容无法加载，请先用浏览器访问轻之国度官网：浏览器也无法访问时，可能是当前网络或官网服务器异常；官网可以正常访问但 Yomiru 仍然异常时，再提交反馈。\n\n请描述遇到的问题或希望改进的地方，请勿填写密码、Token 或其他敏感信息。',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 16),

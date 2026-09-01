@@ -8,7 +8,9 @@ import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
+import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
+import '../widgets/emoji_text.dart';
 import 'book_detail_page.dart';
 import 'media_viewer_page.dart';
 import 'search_page.dart';
@@ -35,6 +37,7 @@ class _UserProfilePageState extends State<UserProfilePage>
   late final TabController _tabs;
   LKPublicUserPage? _home;
   Map<int, List<LKMedal>> _globalMedals = const {};
+  Map<String, String> _emojiUrls = const {};
   LKPublicBookshelfPage? _bookshelf;
   final _dynamics = <LKDynamicItem>[];
   String _dynamicCursor = '';
@@ -55,6 +58,7 @@ class _UserProfilePageState extends State<UserProfilePage>
     _tabs = TabController(length: 3, vsync: this);
     _tabs.addListener(_onTabChanged);
     _loadGlobalMedals();
+    _loadEmojis();
     _loadInitial();
   }
 
@@ -77,6 +81,15 @@ class _UserProfilePageState extends State<UserProfilePage>
     final cached = await LKStore.cachedGlobalMedals();
     if (!mounted || cached.isEmpty) return;
     setState(() => _globalMedals = cached);
+  }
+
+  Future<void> _loadEmojis() async {
+    try {
+      await YomiruEmojiCatalog.load();
+      if (mounted) setState(() => _emojiUrls = YomiruEmojiCatalog.urls);
+    } catch (_) {
+      // 表情目录失败不阻塞用户主页其它数据。
+    }
   }
 
   Future<void> _loadInitial({bool forceRefresh = false}) async {
@@ -669,7 +682,10 @@ class _UserProfilePageState extends State<UserProfilePage>
                 ),
                 if (item.summary.isNotEmpty) ...[
                   const SizedBox(height: 8),
-                  Text(item.summary),
+                  LkEmojiText(
+                    text: item.summary,
+                    emojiUrls: _emojiUrls,
+                  ),
                 ],
                 if (hasBook)
                   InkWell(

@@ -33,6 +33,7 @@ void main() async {
   LKClient.sessionExpiredHandler = LKStore.clear;
   LKClient.sessionExpiredRev.addListener(_showSessionExpiredNotice);
   runApp(const LKApp());
+  unawaited(LKClient.shared.warmErrorCodeHints());
   // 统计请求独立于界面初始化：网络异常不会影响应用正常打开。
   unawaited(AnonymousTelemetry.reportFirstActivation());
 }

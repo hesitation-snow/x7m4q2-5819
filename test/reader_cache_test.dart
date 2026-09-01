@@ -7,6 +7,7 @@ void main() {
     const html = '<p>第一段</p><p>第二段</p>';
     final source = LKChapterDetail(
       chapterId: 12,
+      chapterNo: 37,
       volumeId: 3,
       title: '测试章节',
       bookTitle: '测试作品',
@@ -20,6 +21,7 @@ void main() {
     final restored = LKChapterDetail.fromCacheJson(source.toCacheJson());
 
     expect(restored.chapterId, source.chapterId);
+    expect(restored.chapterNo, 37);
     expect(restored.volumeId, source.volumeId);
     expect(restored.title, source.title);
     expect(restored.bodyText, source.bodyText);

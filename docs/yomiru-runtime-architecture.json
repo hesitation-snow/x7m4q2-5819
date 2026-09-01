@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Yomiru 运行时架构",
+    "locale": "zh-CN",
+    "output": "yomiru-runtime-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/hesitation-snow/yomiru",
+      "revision": "b89522fdfb9e4b738f5ed0071ba4f1af23c56f45"
+    },
+    "viewBox": [1390, 700],
+    "views": [
+      {
+        "id": "primary-request",
+        "label": "主请求路径",
+        "focus": ["user", "app-shell", "api-facade", "http-client", "site-gateway"],
+        "note": "从用户操作追踪到 lightnovel.fun pc-proxy 的 HTTPS JSON 请求。"
+      },
+      {
+        "id": "reader-path",
+        "label": "阅读器路径",
+        "focus": ["app-shell", "reader-runtime", "api-facade", "local-cache", "site-gateway"],
+        "note": "阅读器渐进加载目录与正文，并预取和缓存已授权章节。"
+      },
+      {
+        "id": "security-background",
+        "label": "会话与后台支路",
+        "focus": ["app-shell", "secure-store", "http-client", "telemetry-endpoint"],
+        "note": "security_key 仅进入系统安全存储；匿名打开上报和更新检查不阻塞首屏。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "读者",
+      "sublabel": "Android / iOS",
+      "pos": [10, 280],
+      "size": [130, 72]
+    },
+    {
+      "id": "app-shell",
+      "type": "frontend",
+      "label": "Flutter UI 运行时",
+      "sublabel": "LKApp · 四栏导航",
+      "tag": "MaterialApp + IndexedStack",
+      "pos": [220, 280],
+      "size": [220, 90],
+      "sources": [
+        { "path": "lib/main.dart", "line": 23, "end_line": 34, "label": "启动流程" },
+        { "path": "lib/main.dart", "line": 118, "end_line": 146, "label": "应用根" },
+        { "path": "lib/pages/home_page.dart", "line": 378, "end_line": 414, "label": "底部导航" }
+      ]
+    },
+    {
+      "id": "api-facade",
+      "type": "backend",
+      "label": "LKApi + 领域模型",
+      "sublabel": "内容 · 社区 · 账号",
+      "tag": "进程内门面",
+      "pos": [550, 285],
+      "size": [190, 84],
+      "sources": [
+        { "path": "lib/api/lk_api.dart", "line": 14, "label": "API 门面" },
+        { "path": "lib/api/models.dart", "line": 1, "label": "响应模型" }
+      ]
+    },
+    {
+      "id": "http-client",
+      "type": "security",
+      "label": "LKClient",
+      "sublabel": "POST JSON · 会话 · 错误 · 去重",
+      "tag": "统一网关客户端",
+      "pos": [870, 280],
+      "size": [210, 90],
+      "sources": [
+        { "path": "lib/api/lk_client.dart", "line": 36, "end_line": 61, "label": "客户端状态" },
+        { "path": "lib/api/lk_client.dart", "line": 85, "end_line": 164, "label": "请求管线" }
+      ]
+    },
+    {
+      "id": "site-gateway",
+      "type": "external",
+      "label": "lightnovel.fun",
+      "sublabel": "/api/pc-proxy 正式站网关",
+      "tag": "HTTPS",
+      "pos": [1190, 290],
+      "size": [180, 76],
+      "sources": [
+        { "path": "lib/api/lk_client.dart", "line": 47, "label": "基础地址" }
+      ]
+    },
+    {
+      "id": "reader-runtime",
+      "type": "frontend",
+      "label": "阅读器运行时",
+      "sublabel": "分页目录 · 异步解析 · 进度上报",
+      "tag": "ReaderPage",
+      "pos": [550, 500],
+      "size": [190, 92],
+      "sources": [
+        { "path": "lib/pages/reader_page.dart", "line": 429, "end_line": 568, "label": "启动与预取" },
+        { "path": "lib/pages/reader_page.dart", "line": 781, "end_line": 790, "label": "离开 UI 线程解析" },
+        { "path": "lib/api/reading_session.dart", "line": 1, "label": "阅读会话" }
+      ]
+    },
+    {
+      "id": "secure-store",
+      "type": "security",
+      "label": "系统安全存储",
+      "sublabel": "Android Keystore / iOS Keychain",
+      "tag": "security_key",
+      "pos": [220, 60],
+      "size": [220, 80],
+      "sources": [
+        { "path": "lib/api/store.dart", "line": 16, "end_line": 66, "label": "会话迁移与保存" }
+      ]
+    },
+    {
+      "id": "local-cache",
+      "type": "database",
+      "label": "设备本地状态与缓存",
+      "sublabel": "偏好 · 正文 · 图片缓存",
+      "tag": "可清理内容缓存",
+      "pos": [870, 500],
+      "size": [210, 92],
+      "sources": [
+        { "path": "lib/api/lk_client.dart", "line": 53, "end_line": 59, "label": "公开响应缓存" },
+        { "path": "lib/api/reader_cache.dart", "line": 9, "end_line": 25, "label": "正文缓存" },
+        { "path": "lib/services/app_cache.dart", "line": 9, "end_line": 40, "label": "统一缓存管理" }
+      ]
+    },
+    {
+      "id": "telemetry-endpoint",
+      "type": "external",
+      "label": "telemetry.yutro.uk / GitHub Releases",
+      "sublabel": "每日打开 / 主动反馈 · 版本检查 / 下载入口",
+      "tag": "非阻塞外部支路",
+      "pos": [870, 55],
+      "size": [230, 88],
+      "sources": [
+        { "path": "lib/services/anonymous_telemetry.dart", "line": 15, "end_line": 31, "label": "端点与调度" },
+        { "path": "lib/api/lk_api.dart", "line": 899, "end_line": 925, "label": "最新发布" },
+        { "path": "lib/services/app_update_service.dart", "line": 26, "end_line": 40, "label": "更新服务" }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "用户设备内的 Yomiru 进程",
+      "wraps": ["app-shell", "api-facade", "http-client", "reader-runtime", "secure-store", "local-cache"],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "reader-launches-app",
+      "from": "user",
+      "to": "app-shell",
+      "label": "操作 / 导航",
+      "variant": "emphasis"
+    },
+    {
+      "id": "app-calls-api",
+      "from": "app-shell",
+      "to": "api-facade",
+      "label": "功能用例",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-uses-client",
+      "from": "api-facade",
+      "to": "http-client",
+      "label": "端点 + 模型映射",
+      "variant": "emphasis"
+    },
+    {
+      "id": "client-calls-site",
+      "from": "http-client",
+      "to": "site-gateway",
+      "label": "HTTPS POST + JSON",
+      "variant": "emphasis"
+    },
+    {
+      "id": "app-opens-reader",
+      "from": "app-shell",
+      "to": "reader-runtime",
+      "label": "打开章节"
+    },
+    {
+      "id": "reader-calls-api",
+      "from": "reader-runtime",
+      "to": "api-facade",
+      "label": "目录 / 正文 / 进度"
+    },
+    {
+      "id": "app-loads-session",
+      "from": "app-shell",
+      "to": "secure-store",
+      "label": "读写 security_key",
+      "variant": "security"
+    },
+    {
+      "id": "client-caches-public-data",
+      "from": "http-client",
+      "to": "local-cache",
+      "label": "公开响应缓存",
+      "labelDy": 24
+    },
+    {
+      "id": "reader-caches-content",
+      "from": "reader-runtime",
+      "to": "local-cache",
+      "label": "正文 / 图片缓存"
+    },
+    {
+      "id": "app-reports-open",
+      "from": "app-shell",
+      "to": "telemetry-endpoint",
+      "label": "异步上报 / 更新检查",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "主请求路径",
+      "items": [
+        "功能页通过 LKApi 进程内门面调用 LKClient",
+        "LKClient 统一向 lightnovel.fun/api/pc-proxy 发送 HTTPS POST + JSON"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "本地性能路径",
+      "items": [
+        "公开只读响应进入内存与 SharedPreferences 缓存",
+        "阅读器优先显示正文缓存，异步解析并预取下一章",
+        "头像、勋章和通用图片由独立 CacheManager 复用"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "会话与失效处理",
+      "items": [
+        "security_key 仅持久化到 Android Keystore / iOS Keychain",
+        "服务端判定会话失效时清空本地会话与账号缓存，再通知 UI",
+        "匿名打开上报与更新检查均不阻塞应用首屏"
+      ]
+    }
+  ]
+}

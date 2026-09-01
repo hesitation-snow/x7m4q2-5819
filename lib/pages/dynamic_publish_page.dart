@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/models.dart';
+import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
 
 class DynamicPublishPage extends StatefulWidget {
@@ -22,9 +23,6 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
   bool _uploading = false;
   bool _publishing = false;
 
-  static String _fixEmojiUrl(String url) =>
-      url.replaceFirst('api.lightnovel.fun/static/', 'static.lightnovel.fun/');
-
   @override
   void initState() {
     super.initState();
@@ -39,7 +37,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
 
   Future<void> _loadEmojis() async {
     try {
-      final groups = await LKApi.commentEmojis();
+      final groups = await YomiruEmojiCatalog.load();
       if (mounted) setState(() => _emojiGroups = groups);
     } catch (_) {}
   }
@@ -101,7 +99,9 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                                     child: Padding(
                                       padding: const EdgeInsets.all(3),
                                       child: CachedNetworkImage(
-                                        imageUrl: _fixEmojiUrl(item.url),
+                                        imageUrl:
+                                            YomiruEmojiCatalog.normalizeUrl(
+                                                item.url),
                                         width: 38,
                                         height: 38,
                                         memCacheWidth:
