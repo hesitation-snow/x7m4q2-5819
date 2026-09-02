@@ -22,6 +22,7 @@ import '../api/reading_session.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
 import '../reader/scroll_layout_index.dart';
+import '../reader/pagination_key.dart';
 import 'catalog_paging.dart';
 import 'login_page.dart';
 import '../reader/reading_position.dart';
@@ -142,10 +143,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   bool _restoringPagedProgress = false;
 
   /// 翻页模式分页缓存键(内容/尺寸变化时重建分页)
-  String _pagedKey = '';
+  ReaderPaginationKey? _pagedKey;
 
   /// 已参与分页的正文块(内容变化检测)
-  List<_BodyBlock> _pagesSource = const [];
 
   // 偏好
   double _fontSize = 17;
@@ -1806,7 +1806,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _scrollProgressGeneration++;
     setState(() {
       _paged = paged;
-      _pagedKey = '';
+      _pagedKey = null;
       _pendingPositionTransitionId = paged ? transitionId : null;
       _pendingPagedAnchor = paged ? anchor : null;
       _restoringPagedProgress = paged;
@@ -2275,6 +2275,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           child: Text.rich(
             key: _scrollTextKeys[index],
             _scrollTextSpan(block, lockedBody: lockedBody),
+            textScaler: _readerTextScaler,
+            locale: _readerLocale,
           ),
         ),
       ),
@@ -2559,6 +2561,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                                     ? const [TextSpan(text: '本章需要轻币解锁')]
                                     : _spans(it.text, it.links),
                               ),
+                              textScaler: _readerTextScaler,
+                              locale: _readerLocale,
                             ),
                           ),
                         ),
@@ -2758,6 +2762,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       color: _textColor,
       letterSpacing: 0.3);
 
+  TextScaler get _readerTextScaler => MediaQuery.textScalerOf(context);
+
+  Locale? get _readerLocale => Localizations.maybeLocaleOf(context);
+
   /// 把整章正文切分成翻页页面
   void _buildPages(double viewW, double viewH) {
     final pad = _bodyPadding;
@@ -2776,7 +2784,6 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
     // 渲染时每个文本条目底部有 12px 段间距,分页高度计算必须计入,否则 BOTTOM OVERFLOW
     const gap = 12.0;
-    final maxTextHeight = (contentH - gap).clamp(1.0, contentH).toDouble();
     for (var blockIndex = 0; blockIndex < _blocks.length; blockIndex++) {
       final b = _blocks[blockIndex];
       if (b.image != null) {
@@ -2789,13 +2796,45 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         continue;
       }
       if (b.text.trim().isEmpty) continue; // 空文本块不占页
-      for (final (chunk, measuredHeight)
-          in _splitTextBlock(b, blockIndex, contentW, maxTextHeight)) {
-        if (chunk.text.isEmpty) continue;
-        final h = measuredHeight + gap;
-        if (used + h > contentH && used > 0) flush();
-        cur.add(chunk);
-        used += h;
+
+      // 不能只按正文块分页: HTML 中的一个段落可能占半页,如果它放不下
+      // 就会整段挪到下一页,在 iPhone 窄屏上尤其容易留下约 30% 的空白。
+      // 先按实际行边界测量,再让相邻正文块共享剩余空间。切点始终在行尾,
+      // 因此不会改变正文换行,也不会把链接区间切坏。
+      final lines = _textLineRanges(b, contentW);
+      var lineIndex = 0;
+      while (lineIndex < lines.length) {
+        final first = lines[lineIndex];
+        if (used > 0 && used + first.height + gap > contentH) flush();
+
+        final chunkStart = first.start;
+        var chunkEnd = chunkStart;
+        var chunkHeight = 0.0;
+        while (lineIndex < lines.length) {
+          final line = lines[lineIndex];
+          final nextHeight = chunkHeight + line.height + gap;
+          if (chunkHeight > 0 && used + nextHeight > contentH) break;
+          // 极端情况下单行本身比一页高,空页也要允许它落下,避免死循环。
+          if (chunkHeight == 0 &&
+              used > 0 &&
+              used + line.height + gap > contentH) {
+            flush();
+            break;
+          }
+          chunkHeight += line.height;
+          chunkEnd = line.end;
+          lineIndex++;
+        }
+        if (chunkHeight <= 0 || chunkEnd <= chunkStart) continue;
+
+        cur.add(_PageItem.text(
+          b.text.substring(chunkStart, chunkEnd),
+          _remapLinks(b.links, chunkStart, chunkEnd),
+          blockIndex: blockIndex,
+          startOffset: chunkStart,
+          endOffset: chunkEnd,
+        ));
+        used += chunkHeight + gap;
       }
     }
     flush();
@@ -2837,77 +2876,42 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     });
   }
 
-  /// 文本段按行切分(每页高度 contentH),链接区间随之重映射
-  List<(_PageItem, double)> _splitTextBlock(
-      _BodyBlock b, int blockIndex, double w, double h) {
+  /// 测量正文的实际行边界。分页与 Text.rich 使用相同的缩放和 locale,
+  /// 避免 iOS 上测量高度与最终渲染高度不一致。
+  List<({int start, int end, double height})> _textLineRanges(
+      _BodyBlock b, double w) {
     final tp = TextPainter(
       text: TextSpan(text: b.text, style: _bodyTextStyle),
       textDirection: TextDirection.ltr,
-      textScaler: TextScaler.noScaling,
+      textScaler: _readerTextScaler,
+      locale: _readerLocale,
     )..layout(maxWidth: w);
     final lms = tp.computeLineMetrics();
     if (lms.isEmpty) {
-      return [
-        (
-          _PageItem.text(b.text, b.links,
-              blockIndex: blockIndex, startOffset: 0, endOffset: b.text.length),
-          tp.height
-        )
-      ];
+      final height = tp.height;
+      tp.dispose();
+      return [(start: 0, end: b.text.length, height: height)];
     }
     int lineEnd(int idx) {
       final pos = tp.getPositionForOffset(Offset(0, lms[idx].baseline));
       return tp.getLineBoundary(pos).end;
     }
 
-    final out = <(_PageItem, double)>[];
-    var lineIdx = 0;
+    final out = <({int start, int end, double height})>[];
     var start = 0;
-    var usedH = 0.0;
-    while (lineIdx < lms.length) {
-      final lh = lms[lineIdx].height;
-      if (usedH + lh > h && usedH > 0) {
-        final end = lineEnd(lineIdx - 1);
-        if (end > start) {
-          out.add((
-            _PageItem.text(
-              b.text.substring(start, end),
-              _remapLinks(b.links, start, end),
-              blockIndex: blockIndex,
-              startOffset: start,
-              endOffset: end,
-            ),
-            usedH,
-          ));
-        }
+    for (var lineIndex = 0; lineIndex < lms.length; lineIndex++) {
+      final end = lineEnd(lineIndex).clamp(start, b.text.length);
+      if (end > start) {
+        out.add((start: start, end: end, height: lms[lineIndex].height));
         start = end;
-        usedH = 0;
-      } else {
-        usedH += lh;
-        lineIdx++;
       }
     }
-    final end = lineEnd(lms.length - 1);
-    if (end > start) {
-      out.add((
-        _PageItem.text(
-          b.text.substring(start, end),
-          _remapLinks(b.links, start, end),
-          blockIndex: blockIndex,
-          startOffset: start,
-          endOffset: end,
-        ),
-        usedH,
-      ));
+    if (start < b.text.length) {
+      final tail = b.text.substring(start);
+      out.add(
+          (start: start, end: b.text.length, height: _measureText(tail, w)));
     }
-    if (end < b.text.length) {
-      final tail = b.text.substring(end);
-      out.add((
-        _PageItem.text(tail, const [],
-            blockIndex: blockIndex, startOffset: end, endOffset: b.text.length),
-        _measureText(tail, w)
-      ));
-    }
+    tp.dispose();
     return out;
   }
 
@@ -2928,9 +2932,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final tp = TextPainter(
       text: TextSpan(text: text, style: _bodyTextStyle),
       textDirection: TextDirection.ltr,
-      textScaler: TextScaler.noScaling,
+      textScaler: _readerTextScaler,
+      locale: _readerLocale,
     )..layout(maxWidth: w);
-    return tp.height;
+    final height = tp.height;
+    tp.dispose();
+    return height;
   }
 
   /// 分享本章:系统分享菜单,内容为小说链接
@@ -3092,19 +3099,20 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                               final vh = cons.maxHeight;
                               // 翻页模式:内容/排版/尺寸变化时重建分页
                               if (_paged) {
-                                final key = '$_fontSize|$_lineHeight|$_mt|$_mb|'
-                                    '$_ml|$_mr|$_autoMargin|${vw.round()}|${vh.round()}|'
-                                    '${viewTopPadding.round()}|${viewBottomPadding.round()}|'
-                                    '$_locked|$_unlocked|${identical(_blocks, _pagesSource)}';
+                                final textScale = _readerTextScaler.scale(1.0);
+                                final locale = _readerLocale?.toString() ?? '';
+                                final key = ReaderPaginationKey(
+                                  content: _blocks,
+                                  layout: '$_fontSize|$_lineHeight|$_mt|$_mb|'
+                                      '$_ml|$_mr|$_autoMargin|$vw|$vh|'
+                                      '$viewTopPadding|$viewBottomPadding|'
+                                      '$textScale|$locale|$_locked|$_unlocked',
+                                );
                                 if (key != _pagedKey) {
                                   _pagedKey = key;
-                                  _pagesSource = _blocks;
                                   WidgetsBinding.instance
                                       .addPostFrameCallback((_) {
-                                    if (mounted &&
-                                        _paged &&
-                                        _pagedKey == key &&
-                                        identical(_blocks, _pagesSource)) {
+                                    if (mounted && _paged && _pagedKey == key) {
                                       _buildPages(
                                           vw,
                                           vh -

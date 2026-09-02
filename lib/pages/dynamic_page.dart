@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/models.dart';
+import '../api/pagination.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../services/emoji_catalog.dart';
@@ -59,7 +61,7 @@ class _DynamicPageState extends State<DynamicPage> {
 
   String _dynamicKey(LKDynamicItem item) {
     if (item.dynamicId > 0) return 'id:${item.dynamicId}';
-    return 'fallback:${item.authorUid}:${item.time}:${item.summary}';
+    return 'fallback:${item.authorUid}:${item.time}:${item.displayContent}';
   }
 
   int _compareDynamicItems(LKDynamicItem a, LKDynamicItem b) {
@@ -96,7 +98,7 @@ class _DynamicPageState extends State<DynamicPage> {
     _loadGlobalMedals();
     _loadEmojis();
     _loadUnread();
-    _load();
+    unawaited(_startLoad());
   }
 
   @override
@@ -123,8 +125,41 @@ class _DynamicPageState extends State<DynamicPage> {
       _error = null;
       _errorFromAppend = false;
     });
-    _load();
+    unawaited(_startLoad());
     _loadUnread();
+  }
+
+  String _dynamicCacheKey({int? uid, String? feedTab}) => LKStore.pageCacheKey(
+        kind: 'dynamic_feed',
+        uid: uid ?? LKClient.shared.session.uid,
+        variant: feedTab ?? _feedTab,
+      );
+
+  Future<void> _startLoad() async {
+    final request = _requestSerial;
+    final uid = LKClient.shared.session.uid;
+    final feedTab = _feedTab;
+    final cacheKey = _dynamicCacheKey(uid: uid, feedTab: feedTab);
+    final cached = await LKStore.cachedDynamicPage(cacheKey);
+    if (!mounted ||
+        request != _requestSerial ||
+        uid != LKClient.shared.session.uid ||
+        feedTab != _feedTab ||
+        cacheKey != _dynamicCacheKey()) {
+      return;
+    }
+    if (cached != null) {
+      setState(() {
+        _items = [...cached];
+        _visibleItems = const [];
+        _cursor = '';
+        _page = 1;
+        _hasMore = true;
+        _error = null;
+        _rebuildVisibleItems();
+      });
+    }
+    await _load(silent: _items.isNotEmpty);
   }
 
   Future<void> _loadUnread() async {
@@ -164,30 +199,42 @@ class _DynamicPageState extends State<DynamicPage> {
     }
   }
 
-  Future<void> _load({bool append = false}) async {
+  Future<void> _load({bool append = false, bool silent = false}) async {
     if (append && (_loading || !_hasMore)) return;
     final requestSerial = ++_requestSerial;
     final feedTab = _feedTab;
     final page = append ? _page + 1 : 1;
     final previousCursor = _cursor;
+    final cacheKey = _dynamicCacheKey();
     if (mounted) {
       setState(() {
         _loading = true;
         if (!append) {
-          _cursor = '';
-          _page = 1;
-          _hasMore = true;
           _error = null;
           _errorFromAppend = false;
         }
       });
     }
     try {
-      final result = await LKApi.dynamicFeedPage(
-          tab: feedTab,
-          cursor: append ? _cursor : '',
-          page: page,
-          pageSize: 20);
+      Future<LoadedPage<LKDynamicItem>> fetchPage(
+          int number, String cursor) async {
+        final result = await LKApi.dynamicFeedPage(
+            tab: feedTab, cursor: cursor, page: number, pageSize: 20);
+        return LoadedPage(
+            items: result.items,
+            page: number,
+            hasMore: result.hasMore,
+            cursor: result.cursor);
+      }
+
+      final result = append
+          ? await fetchPage(page, previousCursor)
+          : await refreshPageWindow(
+              loadPage: fetchPage,
+              keyOf: _dynamicKey,
+              targetItems: _items.length.clamp(0, 100),
+              isCurrent: () => mounted && requestSerial == _requestSerial,
+            );
       if (!mounted || requestSerial != _requestSerial || feedTab != _feedTab) {
         return;
       }
@@ -201,14 +248,12 @@ class _DynamicPageState extends State<DynamicPage> {
           context, result.items.map((item) => item.avatar));
       setState(() {
         if (append) {
-          final knownKeys = _items.map(_dynamicKey).toSet();
-          _items.addAll(
-              result.items.where((item) => knownKeys.add(_dynamicKey(item))));
+          _items = mergePagedItems(_items, result.items, keyOf: _dynamicKey);
         } else {
           _items = [...result.items];
         }
         _cursor = result.cursor;
-        _page = page;
+        _page = result.page;
         _hasMore = result.hasMore &&
             !(append &&
                 result.items.isEmpty &&
@@ -223,12 +268,16 @@ class _DynamicPageState extends State<DynamicPage> {
       if (medalUpdates.isNotEmpty) {
         unawaited(LKStore.cacheGlobalMedals(medalUpdates));
       }
+      unawaited(LKStore.cacheDynamicPage(cacheKey, _items));
     } catch (e) {
       if (mounted && requestSerial == _requestSerial) {
         setState(() {
           _error = e.toString();
           _errorFromAppend = append;
         });
+        if ((silent || !append) && _items.isNotEmpty) {
+          _showRefreshError();
+        }
       }
     } finally {
       if (mounted && requestSerial == _requestSerial) {
@@ -252,7 +301,7 @@ class _DynamicPageState extends State<DynamicPage> {
       _rebuildVisibleItems();
     });
     _topBarFrac.value = 1.0;
-    _load();
+    unawaited(_startLoad());
   }
 
   void _switchContentFilter(String filter) {
@@ -262,6 +311,18 @@ class _DynamicPageState extends State<DynamicPage> {
       _rebuildVisibleItems();
     });
     _topBarFrac.value = 1.0;
+  }
+
+  void _showRefreshError() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _items.isEmpty) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text('连接失败，已保留上次内容'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    });
   }
 
   List<LKMedal> _medalsFor(LKDynamicItem item) => item.authorMedals.isNotEmpty
@@ -689,7 +750,7 @@ class _DynamicPageState extends State<DynamicPage> {
                                                 ]),
                                             const SizedBox(height: 6),
                                             LkEmojiText(
-                                              text: d.summary,
+                                              text: d.displayContent,
                                               emojiUrls: _emojiUrls,
                                             ),
                                             if (hasBook)
@@ -831,29 +892,42 @@ class _DynamicPageState extends State<DynamicPage> {
     return '${parsed.year}-${two(parsed.month)}-${two(parsed.day)} ${two(parsed.hour)}:${two(parsed.minute)}';
   }
 
-  void _actions(dynamic d) {
-    if (!LKClient.shared.session.isLoggedIn) return;
+  void _actions(LKDynamicItem d) {
+    if (d.dynamicId <= 0) return;
+    final loggedIn = LKClient.shared.session.isLoggedIn;
     showModalBottomSheet<void>(
       context: context,
       builder: (_) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           ListTile(
-            leading: const Icon(Icons.thumb_up_outlined),
-            title: Text(d.liked ? '取消赞' : '点赞'),
+            leading: const Icon(Icons.link_rounded),
+            title: const Text('复制动态链接'),
             onTap: () async {
               Navigator.pop(context);
-              await LKApi.toggleDynamicLike(d.dynamicId, !d.liked);
-              _load();
+              await Clipboard.setData(
+                  ClipboardData(text: dynamicWebsiteUrl(d.dynamicId)));
+              if (mounted) showLkError(context, '已复制动态链接');
             },
           ),
-          ListTile(
-            leading: Icon(d.favorited ? Icons.star : Icons.star_border),
-            title: Text(d.favorited ? '取消收藏' : '收藏'),
-            onTap: () async {
-              Navigator.pop(context);
-              await LKApi.toggleDynamicFavorite(d.dynamicId, !d.favorited);
-            },
-          ),
+          if (loggedIn) ...[
+            ListTile(
+              leading: const Icon(Icons.thumb_up_outlined),
+              title: Text(d.liked ? '取消赞' : '点赞'),
+              onTap: () async {
+                Navigator.pop(context);
+                await LKApi.toggleDynamicLike(d.dynamicId, !d.liked);
+                _load();
+              },
+            ),
+            ListTile(
+              leading: Icon(d.favorited ? Icons.star : Icons.star_border),
+              title: Text(d.favorited ? '取消收藏' : '收藏'),
+              onTap: () async {
+                Navigator.pop(context);
+                await LKApi.toggleDynamicFavorite(d.dynamicId, !d.favorited);
+              },
+            ),
+          ],
         ]),
       ),
     );

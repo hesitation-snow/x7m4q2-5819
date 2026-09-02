@@ -130,7 +130,10 @@ class _LoginPageState extends State<LoginPage> {
                       const SizedBox(height: 8),
                       OutlinedButton(
                         onPressed: () async {
-                          await LKApi.logout();
+                          final allDevices =
+                              await showLogoutScopeDialog(context);
+                          if (allDevices == null) return;
+                          await LKApi.logout(allDevices: allDevices);
                           await LKStore.clear();
                           if (!context.mounted) return;
                           setState(() {});

@@ -35,7 +35,10 @@ class LKSession {
 /// lightnovel.fun 正式服 API 客户端
 /// 统一走站点提供的 pc-proxy 网关,全部 POST + JSON。
 class LKClient {
-  LKClient._();
+  LKClient._() : _http = http.Client();
+
+  @visibleForTesting
+  LKClient.forTesting({required http.Client httpClient}) : _http = httpClient;
   static final LKClient shared = LKClient._();
 
   /// 登录态版本号:登录/登出/会话变更时自增,UI 监听刷新(如"我的"页用户卡片)
@@ -47,23 +50,31 @@ class LKClient {
 
   final String base = 'https://www.lightnovel.fun/api/pc-proxy';
   final LKSession session = LKSession();
-  final http.Client _http = http.Client();
+  final http.Client _http;
   bool _expiringSession = false;
 
   // 仅供公开、只读接口使用的响应缓存。缓存键不包含 security_key、cookie
   // 或其他会话凭据；私信、消息、福利和个人资料等敏感接口不会传入 cacheKey。
   static const _responseCachePrefix = 'lk_response_cache_v1_';
-  static Future<SharedPreferences>? _cachePrefs;
-  static final Map<String, _CachedResponse> _memoryCache = {};
-  static final Map<String, Future<Map<String, dynamic>>> _inFlight = {};
-  static final Map<String, int> _cacheVersions = {};
+  Future<SharedPreferences>? _cachePrefs;
+  final Map<String, _CachedResponse> _memoryCache = {};
+  final Map<String, Future<Map<String, dynamic>>> _inFlight = {};
+  final Map<String, int> _cacheVersions = {};
+  // 只在本次进程成功请求过的数据可直接复用。磁盘缓存跨启动保留，
+  // 下一次启动首次访问时重新验证，不再按几分钟的 TTL 反复加载。
+  final Set<String> _validatedCacheKeys = {};
+  Future<void> _cacheWriteQueue = Future<void>.value();
+  Map<String, ({int savedAt, int bytes})>? _diskCacheIndex;
   static const _maxMemoryCacheEntries = 128;
+  static const _maxDiskCacheEntries = 256;
+  static const _maxDiskCacheBytes = 8 * 1024 * 1024;
+  static const _maxDiskCacheEntryBytes = 512 * 1024;
   static const _errorCodeCatalogPath = '/api/bff/pc-error-code-list-v1';
   static const _errorCodeCatalogCacheKey = 'error_code_catalog_v1';
   static Map<int, String> _remoteErrorHints = const {};
   Future<void>? _errorCodeWarmup;
 
-  static Future<SharedPreferences> _responsePrefs() =>
+  Future<SharedPreferences> _responsePrefs() =>
       _cachePrefs ??= SharedPreferences.getInstance();
 
   static final Map<String, String> _headers = {
@@ -89,9 +100,18 @@ class LKClient {
   Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body,
       {String? accessErrorMessage,
       String? cacheKey,
-      Duration? cacheTtl,
       bool forceRefresh = false,
+      bool allowCachedFallback = true,
       Duration requestTimeout = const Duration(seconds: 30)}) async {
+    if (cacheKey != null) {
+      _cacheVersions.putIfAbsent(cacheKey, () => 0);
+      if (forceRefresh) {
+        // 手动刷新优先于旧的后台请求，旧响应不能覆盖新缓存。
+        _cacheVersions[cacheKey] = _cacheVersions[cacheKey]! + 1;
+        _validatedCacheKeys.remove(cacheKey);
+        _inFlight.remove(cacheKey);
+      }
+    }
     final cacheVersion = cacheKey == null ? 0 : (_cacheVersions[cacheKey] ?? 0);
     final cachedCandidate =
         cacheKey == null ? null : await _readCached(cacheKey);
@@ -101,9 +121,7 @@ class LKClient {
             : null;
     if (cached != null &&
         !forceRefresh &&
-        cacheTtl != null &&
-        DateTime.now().millisecondsSinceEpoch - cached.savedAt <=
-            cacheTtl.inMilliseconds) {
+        _validatedCacheKeys.contains(cacheKey)) {
       return cached.data;
     }
     final requestSecurityKey = (body['security_key'] ?? '').toString();
@@ -116,16 +134,25 @@ class LKClient {
                 headers: _headers, body: jsonEncode(body))
             .timeout(requestTimeout);
       } on TimeoutException {
-        if (cached != null) return cached.data;
+        if (cached != null && !forceRefresh && allowCachedFallback) {
+          return cached.data;
+        }
         throw LKException(-1, '连接超时，请检查网络后重试');
       } catch (_) {
-        if (cached != null) return cached.data;
+        if (cached != null && !forceRefresh && allowCachedFallback) {
+          return cached.data;
+        }
         throw LKException(-1, '连接失败，请检查网络后重试');
       }
       if (resp.statusCode >= 400) {
         // 不记录响应正文:错误响应可能包含账号信息或服务端回显内容。
         debugPrint('LKHTTP status=${resp.statusCode} path=$path');
-        if (cached != null && resp.statusCode >= 500) return cached.data;
+        if (cached != null &&
+            !forceRefresh &&
+            allowCachedFallback &&
+            resp.statusCode >= 500) {
+          return cached.data;
+        }
         if (resp.statusCode == 401) {
           await expireSessionIfCurrent(requestSecurityKey);
         }
@@ -140,7 +167,12 @@ class LKClient {
       if (obj is! Map<String, dynamic>) throw LKException(-1, '响应格式错误');
       final code = (obj['code'] as num?)?.toInt() ?? -1;
       if (code != 0) {
-        if (cached != null && code >= 500) return cached.data;
+        if (cached != null &&
+            !forceRefresh &&
+            allowCachedFallback &&
+            code >= 500) {
+          return cached.data;
+        }
         final msg = _extractMessage(obj['data']);
         if (code == 8) await expireSessionIfCurrent(requestSecurityKey);
         throw LKException(code, msg.isNotEmpty ? msg : _codeHint(code));
@@ -157,8 +189,8 @@ class LKClient {
     }
 
     // 同一公开资源被多个页面同时请求时共享网络任务，避免重复 TLS 与 JSON 解析。
-    if (cacheKey != null && !forceRefresh) {
-      final running = _inFlight[cacheKey];
+    if (cacheKey != null) {
+      final running = forceRefresh ? null : _inFlight[cacheKey];
       if (running != null) return running;
       final request = fetch();
       _inFlight[cacheKey] = request;
@@ -186,7 +218,6 @@ class LKClient {
           _errorCodeCatalogPath,
           const {},
           cacheKey: _errorCodeCatalogCacheKey,
-          cacheTtl: const Duration(days: 1),
           forceRefresh: forceRefresh,
           requestTimeout: const Duration(seconds: 12),
         );
@@ -255,8 +286,11 @@ class LKClient {
   }
 
   Future<_CachedResponse?> _readCached(String key) async {
-    final memory = _memoryCache[key];
-    if (memory != null) return memory;
+    final memory = _memoryCache.remove(key);
+    if (memory != null) {
+      _memoryCache[key] = memory;
+      return memory;
+    }
     try {
       final raw =
           (await _responsePrefs()).getString('$_responseCachePrefix$key');
@@ -279,11 +313,12 @@ class LKClient {
     if ((_cacheVersions[key] ?? 0) != expectedVersion) return;
     final savedAt = DateTime.now().millisecondsSinceEpoch;
     final cached = _CachedResponse(savedAt, Map<String, dynamic>.from(data));
+    _validatedCacheKeys.add(key);
     _rememberCached(key, cached);
     unawaited(_persistCached(key, cached, expectedVersion));
   }
 
-  static void _rememberCached(String key, _CachedResponse cached) {
+  void _rememberCached(String key, _CachedResponse cached) {
     if (!_memoryCache.containsKey(key) &&
         _memoryCache.length >= _maxMemoryCacheEntries) {
       _memoryCache.remove(_memoryCache.keys.first);
@@ -303,14 +338,18 @@ class LKClient {
     }
     _memoryCache.removeWhere((key, _) => key.startsWith(keyPrefix));
     _inFlight.removeWhere((key, _) => key.startsWith(keyPrefix));
+    _validatedCacheKeys.removeWhere((key) => key.startsWith(keyPrefix));
     try {
-      final prefs = await _responsePrefs();
-      final storedPrefix = '$_responseCachePrefix$keyPrefix';
-      final keys = prefs
-          .getKeys()
-          .where((key) => key.startsWith(storedPrefix))
-          .toList(growable: false);
-      await Future.wait(keys.map(prefs.remove));
+      await _queueCacheWrite(() async {
+        final prefs = await _responsePrefs();
+        final storedPrefix = '$_responseCachePrefix$keyPrefix';
+        final keys =
+            prefs.getKeys().where((key) => key.startsWith(storedPrefix));
+        for (final key in keys) {
+          await prefs.remove(key);
+          _diskCacheIndex?.remove(key);
+        }
+      });
     } catch (_) {
       // Cache invalidation failure must not undo the completed mutation.
     }
@@ -318,19 +357,26 @@ class LKClient {
 
   /// 清除全部公开接口响应缓存，不影响登录会话或安全存储中的凭据。
   Future<void> clearResponseCache() async {
-    final affectedKeys = <String>{..._memoryCache.keys, ..._inFlight.keys};
+    final affectedKeys = <String>{
+      ..._memoryCache.keys,
+      ..._inFlight.keys,
+      ..._cacheVersions.keys,
+    };
     for (final key in affectedKeys) {
       _cacheVersions[key] = (_cacheVersions[key] ?? 0) + 1;
     }
     _memoryCache.clear();
     _inFlight.clear();
+    _validatedCacheKeys.clear();
     try {
-      final prefs = await _responsePrefs();
-      final keys = prefs
-          .getKeys()
-          .where((key) => key.startsWith(_responseCachePrefix))
-          .toList(growable: false);
-      await Future.wait(keys.map(prefs.remove));
+      await _queueCacheWrite(() async {
+        final prefs = await _responsePrefs();
+        final keys = prefs
+            .getKeys()
+            .where((key) => key.startsWith(_responseCachePrefix));
+        await Future.wait(keys.map(prefs.remove));
+        _diskCacheIndex = {};
+      });
     } catch (_) {
       // 缓存清理失败由统一清理入口继续处理其他缓存。
     }
@@ -355,21 +401,96 @@ class LKClient {
   Future<void> _persistCached(
       String key, _CachedResponse cached, int expectedVersion) async {
     try {
-      if ((_cacheVersions[key] ?? 0) != expectedVersion) return;
-      await (await _responsePrefs()).setString(
-        '$_responseCachePrefix$key',
-        jsonEncode({
+      await _queueCacheWrite(() async {
+        if ((_cacheVersions[key] ?? 0) != expectedVersion) return;
+        final prefs = await _responsePrefs();
+        final index = await _readDiskCacheIndex(prefs);
+        final storedKey = '$_responseCachePrefix$key';
+        final raw = jsonEncode({
           'saved_at': cached.savedAt,
           'data': cached.data,
-        }),
-      );
-      if ((_cacheVersions[key] ?? 0) != expectedVersion) {
-        await (await _responsePrefs()).remove('$_responseCachePrefix$key');
-      }
+        });
+        final bytes = utf8.encode(raw).length;
+        if (bytes > _maxDiskCacheEntryBytes) {
+          await prefs.remove(storedKey);
+          index.remove(storedKey);
+          return;
+        }
+        if ((_cacheVersions[key] ?? 0) != expectedVersion) return;
+        await prefs.setString(storedKey, raw);
+        index[storedKey] = (savedAt: cached.savedAt, bytes: bytes);
+        if ((_cacheVersions[key] ?? 0) != expectedVersion) {
+          await prefs.remove(storedKey);
+          index.remove(storedKey);
+        }
+        await _pruneDiskCache(prefs, index);
+      });
     } catch (_) {
       // 缓存写入失败不影响正常请求结果。
     }
   }
+
+  Future<void> _queueCacheWrite(Future<void> Function() action) {
+    final next = _cacheWriteQueue.then((_) => action());
+    _cacheWriteQueue = next.catchError((Object _) {});
+    return next;
+  }
+
+  Future<Map<String, ({int savedAt, int bytes})>> _readDiskCacheIndex(
+      SharedPreferences prefs) async {
+    final existing = _diskCacheIndex;
+    if (existing != null) return existing;
+    final index = <String, ({int savedAt, int bytes})>{};
+    for (final key in prefs
+        .getKeys()
+        .where((key) => key.startsWith(_responseCachePrefix))) {
+      final raw = prefs.getString(key) ?? '';
+      var savedAt = 0;
+      try {
+        final value = jsonDecode(raw);
+        if (value is Map && value['data'] is Map) {
+          savedAt = (value['saved_at'] as num?)?.toInt() ?? 0;
+        }
+      } catch (_) {}
+      index[key] = (savedAt: savedAt, bytes: utf8.encode(raw).length);
+    }
+    return _diskCacheIndex = index;
+  }
+
+  Future<void> _pruneDiskCache(SharedPreferences prefs,
+      Map<String, ({int savedAt, int bytes})> index) async {
+    var totalBytes =
+        index.values.fold<int>(0, (sum, entry) => sum + entry.bytes);
+    final oldestFirst = index.keys.toList()
+      ..sort((a, b) => index[a]!.savedAt.compareTo(index[b]!.savedAt));
+    for (final key in oldestFirst) {
+      final entry = index[key]!;
+      if (entry.savedAt > 0 &&
+          entry.bytes <= _maxDiskCacheEntryBytes &&
+          index.length <= _maxDiskCacheEntries &&
+          totalBytes <= _maxDiskCacheBytes) {
+        continue;
+      }
+      await prefs.remove(key);
+      index.remove(key);
+      totalBytes -= entry.bytes;
+    }
+  }
+
+  /// 只淘汰过大的、损坏的或超出容量上限的旧响应，不按时间删除首屏缓存。
+  Future<void> trimResponseCache() async {
+    try {
+      await _queueCacheWrite(() async {
+        final prefs = await _responsePrefs();
+        await _pruneDiskCache(prefs, await _readDiskCacheIndex(prefs));
+      });
+    } catch (_) {
+      // 缓存维护失败不阻塞应用启动。
+    }
+  }
+
+  @visibleForTesting
+  Future<void> flushResponseCache() => _cacheWriteQueue;
 
   /// POST → 返回 data(不做模型转换)
   Future<void> postVoid(String path, Map<String, dynamic> body) async {

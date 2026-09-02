@@ -3,6 +3,148 @@ import 'package:flutter/material.dart';
 
 import '../api/models.dart';
 
+/// 选择退出范围。返回 true 表示同时退出其他设备，false 表示仅退出本机，
+/// null 表示取消。
+Future<bool?> showLogoutScopeDialog(BuildContext context) {
+  return showModalBottomSheet<bool>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    isScrollControlled: true,
+    showDragHandle: false,
+    builder: (sheetContext) {
+      final scheme = Theme.of(sheetContext).colorScheme;
+
+      Widget option({
+        required IconData icon,
+        required String title,
+        required String subtitle,
+        required Color color,
+        required VoidCallback onTap,
+      }) {
+        return Material(
+          color: scheme.surfaceContainerHighest.withValues(alpha: 0.42),
+          borderRadius: BorderRadius.circular(18),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, color: color),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 3),
+                        Text(subtitle,
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: scheme.onSurfaceVariant,
+                                height: 1.25)),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded,
+                      color: scheme.onSurfaceVariant),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
+
+      return SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          child: Material(
+            color: scheme.surface,
+            borderRadius: BorderRadius.circular(28),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 28, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child:
+                            Icon(Icons.logout_rounded, color: scheme.primary),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('退出登录',
+                                style: TextStyle(
+                                    fontSize: 18, fontWeight: FontWeight.w800)),
+                            SizedBox(height: 3),
+                            Text('选择要退出的登录范围', style: TextStyle(fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  option(
+                    icon: Icons.smartphone_rounded,
+                    title: '仅退出本机',
+                    subtitle: '只清除此设备的登录状态',
+                    color: scheme.primary,
+                    onTap: () => Navigator.pop(sheetContext, false),
+                  ),
+                  const SizedBox(height: 10),
+                  option(
+                    icon: Icons.devices_rounded,
+                    title: '退出所有设备',
+                    subtitle: '使其他设备上的登录状态也失效',
+                    color: scheme.error,
+                    onTap: () => Navigator.pop(sheetContext, true),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: const StadiumBorder(),
+                      ),
+                      child: const Text('取消'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
 /// 无封面书籍的默认封面(站点官方占位图)
 const String kDefaultCover =
     'https://www.lightnovel.fun/sample-assets/legacy/default_article_cover_v.jpg';
@@ -47,6 +189,44 @@ class LkLoadingIndicator extends StatelessWidget {
     return minHeight == null
         ? indicator
         : SizedBox(height: minHeight, child: indicator);
+  }
+}
+
+/// 轻量的渐隐分割线:中间略清晰,两端自然淡出,适合卡片内部的内容分区。
+class LkFadedDivider extends StatelessWidget {
+  final double height;
+  final Color? color;
+
+  const LkFadedDivider({super.key, this.height = 1, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final base = color ?? scheme.onSurface;
+    final peak = Theme.of(context).brightness == Brightness.dark ? 0.2 : 0.12;
+    return SizedBox(
+      width: double.infinity,
+      height: height,
+      child: Center(
+        child: SizedBox(
+          width: double.infinity,
+          height: 1,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  base.withValues(alpha: 0),
+                  base.withValues(alpha: peak),
+                  base.withValues(alpha: peak),
+                  base.withValues(alpha: 0),
+                ],
+                stops: const [0, 0.18, 0.82, 1],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

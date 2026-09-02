@@ -51,6 +51,7 @@ class LKStore {
       ..nickname = p.getString('nickname') ?? ''
       ..avatar = p.getString('avatar') ?? '';
     themeMode.value = _parseTheme(p.getString('theme_mode'));
+    unawaited(LKClient.shared.trimResponseCache());
   }
 
   static Future<void> save() async {
@@ -92,6 +93,12 @@ class LKStore {
     if (oldUid > 0) {
       await p.remove(_profileCacheKey(oldUid));
       await p.remove(_medalCacheKey(oldUid));
+      final accountPageCaches = p
+          .getKeys()
+          .where((key) =>
+              key.startsWith(_pageCachePrefix) && key.contains('_u${oldUid}_'))
+          .toList(growable: false);
+      await Future.wait(accountPageCaches.map(p.remove));
     }
     await LKClient.shared.clearResponseCache();
     await readerCacheClear;
@@ -111,10 +118,11 @@ class LKStore {
           .getKeys()
           .where((key) =>
               key == _globalMedalsKey ||
-              key == 'home_recommend_v2' ||
+              key.startsWith('home_recommend_v2') ||
               key.startsWith('section_latest_') ||
               key.startsWith('my_profile_cache_') ||
-              key.startsWith('my_medals_cache_'))
+              key.startsWith('my_medals_cache_') ||
+              key.startsWith(_pageCachePrefix))
           .toList(growable: false);
       await Future.wait(keys.map(prefs.remove));
     } catch (_) {
@@ -127,10 +135,11 @@ class LKStore {
       final prefs = await SharedPreferences.getInstance();
       final keys = prefs.getKeys().where((key) =>
           key == _globalMedalsKey ||
-          key == 'home_recommend_v2' ||
+          key.startsWith('home_recommend_v2') ||
           key.startsWith('section_latest_') ||
           key.startsWith('my_profile_cache_') ||
-          key.startsWith('my_medals_cache_'));
+          key.startsWith('my_medals_cache_') ||
+          key.startsWith(_pageCachePrefix));
       var total = 0;
       for (final key in keys) {
         final value = prefs.get(key);
@@ -145,11 +154,159 @@ class LKStore {
   static String _medalCacheKey(int uid) => 'my_medals_cache_$uid';
   static String _profileCacheKey(int uid) => 'my_profile_cache_$uid';
   static const _globalMedalsKey = 'global_user_medals_cache_v1';
+  static const _pageCachePrefix = 'page_cache_v1_';
   static Map<int, List<LKMedal>>? _globalMedalsMemory;
   static Future<Map<int, List<LKMedal>>>? _globalMedalsLoad;
   static Timer? _globalMedalsWriteTimer;
   static const _localShelfKey = 'local_shelf_books_v1';
   static final ValueNotifier<int> localShelfRev = ValueNotifier<int>(0);
+
+  /// 页面缓存键始终包含账号范围,避免登录切换后短暂展示上一个账号的数据。
+  static String pageCacheKey({
+    required String kind,
+    required int uid,
+    required String variant,
+  }) {
+    return [
+      _pageCachePrefix,
+      kind,
+      '_u',
+      uid.toString(),
+      '_',
+      Uri.encodeComponent(variant),
+    ].join();
+  }
+
+  static Future<List<LKBook>?> cachedBooksPage(String key) async {
+    try {
+      final raw = (await SharedPreferences.getInstance()).getString(key);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return null;
+      return decoded
+          .whereType<Map>()
+          .map((item) => LKBook.fromJson(Map<String, dynamic>.from(item)))
+          .where((book) => book.bookId > 0)
+          .toList(growable: false);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> cacheBooksPage(String key, List<LKBook> books) async {
+    try {
+      // 限制单个偏好值的体积,保留足够内容恢复上次浏览画面。
+      final data =
+          books.take(100).map((book) => book.toJson()).toList(growable: false);
+      await (await SharedPreferences.getInstance())
+          .setString(key, jsonEncode(data));
+    } catch (_) {
+      // 缓存失败不影响在线内容。
+    }
+  }
+
+  static Future<List<LKDynamicItem>?> cachedDynamicPage(String key) async {
+    try {
+      final raw = (await SharedPreferences.getInstance()).getString(key);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return null;
+      return decoded
+          .whereType<Map>()
+          .map(
+              (item) => LKDynamicItem.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> cacheDynamicPage(
+      String key, List<LKDynamicItem> items) async {
+    try {
+      final data =
+          items.take(100).map(_dynamicCacheJson).toList(growable: false);
+      await (await SharedPreferences.getInstance())
+          .setString(key, jsonEncode(data));
+    } catch (_) {
+      // 缓存失败不影响在线内容。
+    }
+  }
+
+  static Map<String, dynamic> _dynamicCacheJson(LKDynamicItem item) => {
+        'dynamic_id': item.dynamicId,
+        'author_uid': item.authorUid,
+        'target_type': item.targetType,
+        'event_type': item.eventType,
+        'nickname': item.nickname,
+        'avatar': item.avatar,
+        'author': {
+          'uid': item.authorUid,
+          'nickname': item.nickname,
+          'avatar': item.avatar,
+          'medals': item.authorMedals
+              .map((medal) => {
+                    'medal_id': medal.medalId,
+                    'name': medal.name,
+                    'image': medal.image,
+                    'equipped': medal.equipped,
+                  })
+              .toList(growable: false),
+        },
+        'title': item.title,
+        'summary': item.summary,
+        'stats': {
+          'like_count': item.likeCount,
+          'comment_count': item.commentCount,
+          'favorite_count': item.favoriteCount,
+        },
+        'interaction_state': {
+          'liked': item.liked,
+          'favorited': item.favorited,
+          'read': item.read,
+        },
+        'read': item.read,
+        'feed_time': item.time,
+        'target_brief': {
+          'book_id': item.bookId,
+          'title': item.bookTitle,
+          'cover_url': item.bookCover,
+        },
+        'media': item.media
+            .map((media) => {
+                  'url': media.url,
+                  'width': media.width,
+                  'height': media.height,
+                  'res_id': media.resId,
+                  'res_url': media.resUrl,
+                  'res_path': media.resPath,
+                  'stored_url': media.storedUrl,
+                  'source_url': media.sourceUrl,
+                })
+            .toList(growable: false),
+        'poll': item.poll == null
+            ? null
+            : {
+                'poll_id': item.poll!.pollId,
+                'title': item.poll!.title,
+                'description': item.poll!.description,
+                'deadline_at': item.poll!.deadlineAt,
+                'participant_count': item.poll!.participantCount,
+                'ended': item.poll!.ended,
+                'viewer_voted': item.poll!.voted,
+                'allow_multiple': item.poll!.multiple,
+                'options': item.poll!.options
+                    .map((option) => {
+                          'option_id': option.id,
+                          'text': option.text,
+                          'image': option.image,
+                          'vote_count': option.voteCount,
+                          'percent': option.percent,
+                          'voted': option.selected,
+                        })
+                    .toList(growable: false),
+              },
+      };
 
   /// 未登录时使用的本地书架,只保存公开的书籍展示字段。
   static Future<List<LKBook>> localShelf() async {

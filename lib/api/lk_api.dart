@@ -53,8 +53,8 @@ class LKApi {
     return ok;
   }
 
-  static Future<void> logout() async {
-    if (client.session.isLoggedIn) {
+  static Future<void> logout({bool allDevices = true}) async {
+    if (allDevices && client.session.isLoggedIn) {
       try {
         await client.post('/api/bff/logout-v1', client.authed());
       } catch (_) {}
@@ -66,7 +66,7 @@ class LKApi {
   // ==================== 首页 / 发现 ====================
 
   static Future<List<LKBook>> homeFeed(String channel, int page,
-      {int pageSize = 20}) async {
+      {int pageSize = 20, bool forceRefresh = false}) async {
     final d = await client.post(
         '/api/bff/home-feed-v1',
         {
@@ -76,37 +76,42 @@ class LKApi {
           'page_size': pageSize,
         },
         cacheKey: 'home_feed_$channel-$page-$pageSize',
-        cacheTtl: const Duration(minutes: 5));
+        allowCachedFallback: false,
+        forceRefresh: forceRefresh);
     return _bookList(d);
   }
 
   /// 官网首页「最新」频道的专用信息流。
   static Future<List<LKBook>> homeRecentUpdatesFeed(int page,
-      {int pageSize = 20}) async {
+      {int pageSize = 20, bool forceRefresh = false}) async {
     final size = LKClient.clampPageSize(pageSize);
     final d = await client.post(
       '/api/bff/home-recent-updates-feed-v1',
       {'page': page, 'pageSize': size, 'page_size': size},
       cacheKey: 'home_recent_updates-$page-$size',
-      cacheTtl: const Duration(minutes: 5),
+      allowCachedFallback: false,
+      forceRefresh: forceRefresh,
     );
     return _bookList(d);
   }
 
   static Future<List<LKBook>> channelFeed(String path, int page,
-      {int pageSize = 20}) async {
+      {int pageSize = 20, bool forceRefresh = false}) async {
     final d = await client.post(
         path, {'page': page, 'pageSize': pageSize, 'page_size': pageSize},
         cacheKey: 'channel_feed_${Uri.encodeComponent(path)}-$page-$pageSize',
-        cacheTtl: const Duration(minutes: 5));
+        allowCachedFallback: false,
+        forceRefresh: forceRefresh);
     return _bookList(d);
   }
 
-  static Future<List<LKBook>> rank(int page, {int pageSize = 20}) async {
+  static Future<List<LKBook>> rank(int page,
+      {int pageSize = 20, bool forceRefresh = false}) async {
     final d = await client.post(
         '/api/bff/book-rank-list-v1', {'page': page, 'pageSize': pageSize},
         cacheKey: 'book_rank-$page-$pageSize',
-        cacheTtl: const Duration(minutes: 5));
+        allowCachedFallback: false,
+        forceRefresh: forceRefresh);
     return _bookList(d);
   }
 
@@ -144,7 +149,7 @@ class LKApi {
   /// 搜索分类(标签/频道/预设)
   static Future<Map<String, dynamic>> searchTaxonomy() async =>
       client.post('/api/bff/apk-search-taxonomy-v1', const {},
-          cacheKey: 'search_taxonomy', cacheTtl: const Duration(hours: 12));
+          cacheKey: 'search_taxonomy');
 
   static Future<List<LKBook>> searchSuggest(String q) async {
     final d = await client
@@ -164,11 +169,12 @@ class LKApi {
 
   // ==================== 阅读 ====================
 
-  static Future<LKBook> bookDetail(int bookId) async =>
+  static Future<LKBook> bookDetail(int bookId,
+          {bool forceRefresh = false}) async =>
       LKBook.fromJson(await client.post('/api/new-content-read/get-book-detail',
           client.authed({'book_id': bookId, 'with_volumes': 0}),
           cacheKey: 'book_detail_${client.session.uid}-$bookId',
-          cacheTtl: const Duration(minutes: 10)));
+          forceRefresh: forceRefresh));
 
   static Future<LKReaderBootstrap> readerBootstrap(int bookId) async =>
       LKReaderBootstrap.fromJson(await client.post(
@@ -178,7 +184,7 @@ class LKApi {
       ));
 
   static Future<List<LKVolume>> volumes(int bookId, int page,
-      {int pageSize = 50}) async {
+      {int pageSize = 50, bool forceRefresh = false}) async {
     final d = await client.post(
         '/api/new-content-read/get-book-volumes',
         {
@@ -187,14 +193,14 @@ class LKApi {
           'pageSize': LKClient.clampPageSize(pageSize),
         },
         cacheKey: 'book_volumes_$bookId-$page-$pageSize',
-        cacheTtl: const Duration(minutes: 10));
+        forceRefresh: forceRefresh);
     return ((d['list'] as List?) ?? const [])
         .map((e) => LKVolume.fromJson(e as Map<String, dynamic>))
         .toList();
   }
 
   static Future<LKChapterPage> chapterPage(int bookId, int volumeId, int page,
-      {int pageSize = 50}) async {
+      {int pageSize = 50, bool forceRefresh = false}) async {
     final size = LKClient.clampPageSize(pageSize);
     final d = await client.post(
         '/api/new-content-read/get-volume-chapters',
@@ -205,24 +211,27 @@ class LKApi {
           'pageSize': size,
         },
         cacheKey: 'volume_chapters_$bookId-$volumeId-$page-$size',
-        cacheTtl: const Duration(minutes: 10));
+        forceRefresh: forceRefresh);
     return LKChapterPage.fromJson(d,
         fallbackPage: page, fallbackPageSize: size);
   }
 
   static Future<List<LKChapter>> chapters(int bookId, int volumeId, int page,
-          {int pageSize = 50}) async =>
-      (await chapterPage(bookId, volumeId, page, pageSize: pageSize)).items;
+          {int pageSize = 50, bool forceRefresh = false}) async =>
+      (await chapterPage(bookId, volumeId, page,
+              pageSize: pageSize, forceRefresh: forceRefresh))
+          .items;
 
   static Future<List<LKVolume>> allVolumes(int bookId) => collectPaged(
         loadPage: (page, pageSize) => volumes(bookId, page, pageSize: pageSize),
         keyOf: (volume) => '${volume.volumeId}:${volume.title}',
       );
 
-  static Future<List<LKChapter>> allChapters(int bookId, int volumeId) =>
+  static Future<List<LKChapter>> allChapters(int bookId, int volumeId,
+          {bool forceRefresh = false}) =>
       collectPaged(
-        loadPage: (page, pageSize) =>
-            chapters(bookId, volumeId, page, pageSize: pageSize),
+        loadPage: (page, pageSize) => chapters(bookId, volumeId, page,
+            pageSize: pageSize, forceRefresh: forceRefresh),
         keyOf: (chapter) => '${chapter.chapterId}:${chapter.title}',
       );
 
@@ -943,7 +952,6 @@ class LKApi {
           'pageSize': LKClient.clampPageSize(pageSize),
         }),
         cacheKey: 'public_user_${client.session.uid}-$uid-$page-$pageSize',
-        cacheTtl: const Duration(minutes: 5),
         forceRefresh: forceRefresh);
     return LKPublicUserPage.fromJson(d,
         fallbackPage: page, fallbackPageSize: pageSize);
@@ -951,7 +959,7 @@ class LKApi {
 
   /// 公开用户书架(只读,不附带会话凭据)
   static Future<LKPublicBookshelfPage> publicUserBookshelf(int uid, int page,
-      {int pageSize = 20}) async {
+      {int pageSize = 20, bool forceRefresh = false}) async {
     final d = await client.post(
         '/api/bff/public-user-bookshelf-v1',
         {
@@ -960,14 +968,16 @@ class LKApi {
           'pageSize': LKClient.clampPageSize(pageSize),
         },
         cacheKey: 'public_bookshelf_$uid-$page-$pageSize',
-        cacheTtl: const Duration(minutes: 5));
+        forceRefresh: forceRefresh);
     return LKPublicBookshelfPage.fromJson(d,
         fallbackPage: page, fallbackPageSize: pageSize);
   }
 
   /// 用户公开动态(只读)
   static Future<LKDynamicPage> publicUserDynamics(int uid,
-      {String cursor = '', int pageSize = 20}) async {
+      {String cursor = '',
+      int pageSize = 20,
+      bool forceRefresh = false}) async {
     final size = LKClient.clampPageSize(pageSize);
     final d = await client.post(
         '/api/dynamic/get-user-feed-v1',
@@ -979,7 +989,7 @@ class LKApi {
         }),
         cacheKey:
             'public_dynamic_${client.session.uid}-$uid-${Uri.encodeComponent(cursor)}-$size',
-        cacheTtl: const Duration(minutes: 2));
+        forceRefresh: forceRefresh);
     return LKDynamicPage.fromJson(d);
   }
 

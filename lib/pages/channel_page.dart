@@ -20,6 +20,7 @@ class _ChannelPageState extends State<ChannelPage> {
   int _page = 0;
   bool _loading = false;
   bool _hasMore = true;
+  int _requestSerial = 0;
   String? _error;
   bool _listMode = false;
 
@@ -40,14 +41,16 @@ class _ChannelPageState extends State<ChannelPage> {
     ReaderPrefs.setFeedListMode(_listMode);
   }
 
-  Future<void> _load(int page, bool append) async {
-    if (_loading) return;
+  Future<void> _load(int page, bool append, {bool forceRefresh = false}) async {
+    if (_loading && !forceRefresh) return;
+    final request = ++_requestSerial;
     setState(() => _loading = true);
     try {
       final items = widget.path == '/api/bff/home-feed-v1'
-          ? await LKApi.homeFeed('hot', page)
-          : await LKApi.channelFeed(widget.path, page);
-      if (!mounted) return;
+          ? await LKApi.homeFeed('hot', page, forceRefresh: forceRefresh)
+          : await LKApi.channelFeed(widget.path, page,
+              forceRefresh: forceRefresh);
+      if (!mounted || request != _requestSerial) return;
       setState(() {
         if (append) {
           _items.addAll(items);
@@ -61,9 +64,13 @@ class _ChannelPageState extends State<ChannelPage> {
         _error = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && request == _requestSerial) {
+        setState(() => _error = e.toString());
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && request == _requestSerial) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -83,7 +90,7 @@ class _ChannelPageState extends State<ChannelPage> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () => _load(1, false),
+        onRefresh: () => _load(1, false, forceRefresh: true),
         child: _error != null && _items.isEmpty
             ? ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -171,6 +178,7 @@ class _RankPageState extends State<RankPage> {
   List<dynamic> _items = [];
   String? _error;
   bool _listMode = false;
+  int _requestSerial = 0;
 
   @override
   void initState() {
@@ -189,13 +197,20 @@ class _RankPageState extends State<RankPage> {
     ReaderPrefs.setFeedListMode(_listMode);
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceRefresh = false}) async {
+    final request = ++_requestSerial;
     try {
-      final items = await LKApi.rank(1, pageSize: 50);
-      if (!mounted) return;
-      setState(() => _items = items);
+      final items =
+          await LKApi.rank(1, pageSize: 50, forceRefresh: forceRefresh);
+      if (!mounted || request != _requestSerial) return;
+      setState(() {
+        _items = items;
+        _error = null;
+      });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && request == _requestSerial) {
+        setState(() => _error = e.toString());
+      }
     }
   }
 
@@ -218,7 +233,7 @@ class _RankPageState extends State<RankPage> {
           ? Center(
               child: Text(_error!, style: const TextStyle(color: Colors.grey)))
           : RefreshIndicator(
-              onRefresh: _load,
+              onRefresh: () => _load(forceRefresh: true),
               child: _listMode
                   ? ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),

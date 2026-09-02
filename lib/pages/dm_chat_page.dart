@@ -440,25 +440,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
                 onTap: () async {
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (dialogContext) => AlertDialog(
-                      title: const Text('退出登录'),
-                      content: const Text('确定要退出当前账号吗？'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(dialogContext, false),
-                          child: const Text('取消'),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(dialogContext, true),
-                          child: const Text('退出'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirmed != true) return;
-                  await LKApi.logout();
+                  final allDevices = await showLogoutScopeDialog(context);
+                  if (allDevices == null) return;
+                  await LKApi.logout(allDevices: allDevices);
                   await LKStore.clear();
                   if (!context.mounted) return;
                   showLkError(context, '已退出登录');

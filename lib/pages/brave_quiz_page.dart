@@ -390,7 +390,6 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
             ),
           if (_questionIndex > 0) const SizedBox(width: 10),
           Expanded(
-            flex: 2,
             child: FilledButton(
               onPressed: _submitting ? null : _nextQuestion,
               child: _submitting
@@ -403,12 +402,6 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
             ),
           ),
         ],
-      ),
-      const SizedBox(height: 12),
-      Text(
-        '完成 ${paper.questions.length} 道轻国知识题并达到 ${paper.passingScore} 分，即可获得勇者身份。每天仅可提交一次。',
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
       ),
     ]);
   }

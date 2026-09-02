@@ -3,13 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
+import '../api/follow_relation.dart';
 import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
+import '../services/avatar_cache.dart';
 import '../widgets/common.dart';
 import 'catalog_paging.dart';
+import 'login_page.dart';
 import 'reader_page.dart';
 import 'search_page.dart';
+import 'user_profile_page.dart';
 
 int _bookDetailInt(dynamic value) {
   if (value is num) return value.toInt();
@@ -18,6 +22,31 @@ int _bookDetailInt(dynamic value) {
 
 bool _bookDetailFlag(dynamic value) =>
     value == true || value == 1 || value == '1' || value == 'true';
+
+LKBook _preservePublisher(LKBook book, LKBook? fallback) {
+  if (fallback == null ||
+      (fallback.publisherUid <= 0 &&
+          fallback.publisherName.trim().isEmpty &&
+          fallback.publisherAvatar.trim().isEmpty)) {
+    return book;
+  }
+  final data = book.toJson();
+  if (book.publisherUid <= 0 && fallback.publisherUid > 0) {
+    data['publisher_uid'] = fallback.publisherUid;
+  }
+  if (book.publisherName.trim().isEmpty &&
+      fallback.publisherName.trim().isNotEmpty) {
+    data['publisher_name'] = fallback.publisherName;
+  }
+  if (book.publisherAvatar.trim().isEmpty &&
+      fallback.publisherAvatar.trim().isNotEmpty) {
+    data['publisher_avatar'] = fallback.publisherAvatar;
+  }
+  if (!book.publisherFollowed && fallback.publisherFollowed) {
+    data['publisher_followed'] = true;
+  }
+  return LKBook.fromJson(data);
+}
 
 Widget _braveAccessBadge(BuildContext context) {
   final color = Theme.of(context).colorScheme.primary;
@@ -56,7 +85,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
   int _readChapterId = 0;
   String _readChapterTitle = '';
   bool _hasHistory = false;
+  final _publisherRelation = FollowRelationState();
+  bool get _publisherFollowed => _publisherRelation.followed;
+  bool _publisherFollowBusy = false;
   String? _error;
+  int _bookRequestSerial = 0;
   bool _volumesLoading = true;
   String? _volumesError;
   int _volumesRequestSerial = 0;
@@ -71,6 +104,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   final Map<int, List<LKChapter>> _volumeChapters = {};
   final Map<int, String> _volumeErrors = {};
   final Set<int> _loadingVolumeIds = <int>{};
+  final Map<int, int> _volumeChapterRequests = {};
   bool _loadingAllVolumes = false;
   List<LKChapter> _catalogPreview = const [];
   int _catalogPreviewVolumeId = 0;
@@ -109,6 +143,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   @override
   void initState() {
     super.initState();
+    LKClient.sessionRev.addListener(_onPublisherSessionChanged);
     _load();
     _scroll.addListener(() {
       final o = _scroll.offset;
@@ -121,22 +156,41 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   @override
   void dispose() {
+    LKClient.sessionRev.removeListener(_onPublisherSessionChanged);
     _scroll.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceRefresh = false}) async {
+    final request = ++_bookRequestSerial;
     if (mounted) {
       setState(() {
         _error = null;
         _volumesLoading = true;
       });
     }
-    await Future.wait<void>([_loadPrimary(), _loadVolumes()]);
-    await _loadCatalogPreview();
+    await Future.wait<void>([
+      _loadPrimary(request: request, forceRefresh: forceRefresh),
+      _loadVolumes(forceRefresh: forceRefresh),
+    ]);
+    if (!mounted || request != _bookRequestSerial) return;
+    await _loadCatalogPreview(forceRefresh: forceRefresh);
+    if (forceRefresh && mounted) {
+      final expanded = _volumes
+          .where((volume) => _expandedVolumeIds.contains(volume.volumeId))
+          .toList();
+      for (var start = 0; start < expanded.length; start += 3) {
+        if (!mounted || request != _bookRequestSerial) return;
+        await Future.wait(expanded
+            .skip(start)
+            .take(3)
+            .map((volume) => _loadVolumeChapters(volume, forceRefresh: true)));
+      }
+    }
   }
 
-  Future<void> _loadPrimary() async {
+  Future<void> _loadPrimary(
+      {required int request, bool forceRefresh = false}) async {
     try {
       final bootstrap = await LKApi.readerBootstrap(widget.bookId);
       final detailBook = bootstrap.book;
@@ -147,7 +201,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
       if (!LKClient.shared.session.isLoggedIn) {
         localShelf = await LKStore.isLocalShelf(widget.bookId);
       }
-      if (!mounted) return;
+      if (!mounted || request != _bookRequestSerial) return;
       setState(() {
         _book = book;
         _inShelf = bootstrap.inShelf || localShelf;
@@ -155,36 +209,61 @@ class _BookDetailPageState extends State<BookDetailPage> {
         _readVolumeId = bootstrap.readVolumeId;
         _readChapterId = bootstrap.readChapterId;
         _readChapterTitle = bootstrap.readChapterTitle;
+        _bindPublisher(book);
         _error = null;
       });
+      unawaited(
+          _refreshPublisherFollowStatus(book, forceRefresh: forceRefresh));
       // 聚合接口先让页面和阅读按钮可用，完整简介随后静默刷新。
-      unawaited(_loadBook(background: true));
+      if (forceRefresh) {
+        await _loadBook(request: request, background: true, forceRefresh: true);
+      } else {
+        unawaited(_loadBook(request: request, background: true));
+      }
     } catch (_) {
-      await Future.wait<void>([_loadBook(), _loadLibraryState()]);
+      if (!mounted || request != _bookRequestSerial) return;
+      await Future.wait<void>([
+        _loadBook(request: request, forceRefresh: forceRefresh),
+        _loadLibraryState(),
+      ]);
     }
   }
 
-  Future<void> _loadBook({bool background = false}) async {
+  Future<void> _loadBook(
+      {required int request,
+      bool background = false,
+      bool forceRefresh = false}) async {
     try {
-      final detailBook = await LKApi.bookDetail(widget.bookId);
+      final detailBook =
+          await LKApi.bookDetail(widget.bookId, forceRefresh: forceRefresh);
+      if (!mounted || request != _bookRequestSerial) return;
       // 详情接口个别缓存/兼容响应可能缺少 book_id,但当前页面路由 ID 是可靠的。
-      final book = detailBook.bookId > 0
+      final detail = detailBook.bookId > 0
           ? detailBook
           : LKBook.fromJson({...detailBook.toJson(), 'book_id': widget.bookId});
+      // 发布者资料以 reader-bootstrap 的 publisher 对象为准；详情接口
+      // 若只返回展示名称，不应覆盖已经取得的 UID 和头像。
+      final book = _preservePublisher(detail, _book);
       if (!mounted) return;
       setState(() {
         _book = book;
+        _bindPublisher(book);
         _error = null;
       });
-      unawaited(_loadCatalogPreview());
+      unawaited(_refreshPublisherFollowStatus(book));
+      if (!forceRefresh) unawaited(_loadCatalogPreview());
     } catch (e) {
-      if (!background && mounted && _book == null) {
+      if (!background &&
+          mounted &&
+          request == _bookRequestSerial &&
+          _book == null) {
         setState(() => _error = e.toString());
       }
     }
   }
 
-  Future<void> _loadVolumes({bool append = false}) async {
+  Future<void> _loadVolumes(
+      {bool append = false, bool forceRefresh = false}) async {
     if (append && (_volumesLoading || !_volumesHasMore)) return;
     final request = append ? _volumesRequestSerial : ++_volumesRequestSerial;
     final page = append ? _volumesPage + 1 : 1;
@@ -196,8 +275,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
       });
     }
     try {
-      final pageItems =
-          await LKApi.volumes(widget.bookId, page, pageSize: pageSize);
+      final pageItems = await LKApi.volumes(widget.bookId, page,
+          pageSize: pageSize, forceRefresh: forceRefresh);
       if (!mounted || request != _volumesRequestSerial) return;
       final volumes = append
           ? (() {
@@ -222,7 +301,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
         }
         _volumesError = null;
       });
-      unawaited(_loadCatalogPreview());
+      if (!forceRefresh) unawaited(_loadCatalogPreview());
     } catch (_) {
       if (mounted && request == _volumesRequestSerial) {
         setState(() => _volumesError = '目录加载失败，请检查网络后重试');
@@ -242,15 +321,18 @@ class _BookDetailPageState extends State<BookDetailPage> {
     );
   }
 
-  Future<void> _loadCatalogPreview() async {
+  Future<void> _loadCatalogPreview({bool forceRefresh = false}) async {
     if (!_usesPagedCatalog) return;
     final book = _book;
     final volume = _initialCatalogVolume;
     if (book == null || volume == null) return;
-    if (_catalogPreviewLoading && _catalogPreviewVolumeId == volume.volumeId) {
+    if (!forceRefresh &&
+        _catalogPreviewLoading &&
+        _catalogPreviewVolumeId == volume.volumeId) {
       return;
     }
-    if (_catalogPreviewVolumeId == volume.volumeId &&
+    if (!forceRefresh &&
+        _catalogPreviewVolumeId == volume.volumeId &&
         _catalogPreview.isNotEmpty) {
       return;
     }
@@ -263,7 +345,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
       });
     }
     try {
-      final page = await LKApi.chapterPage(book.bookId, volume.volumeId, 1);
+      final page = await LKApi.chapterPage(book.bookId, volume.volumeId, 1,
+          forceRefresh: forceRefresh);
       if (!mounted || request != _catalogPreviewRequestSerial) return;
       setState(() {
         _catalogPreview = page.items.take(8).toList(growable: false);
@@ -387,6 +470,186 @@ class _BookDetailPageState extends State<BookDetailPage> {
     return '开始阅读';
   }
 
+  Future<void> _togglePublisherFollow() async {
+    final book = _book;
+    if (_publisherFollowBusy || book == null || book.publisherUid <= 0) return;
+    final session = LKClient.shared.session;
+    if (!session.isLoggedIn) {
+      if (!mounted) return;
+      await Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const LoginPage()));
+      if (!mounted || !LKClient.shared.session.isLoggedIn) return;
+      setState(() => _bindPublisher(book));
+      await _refreshPublisherFollowStatus(book, forceRefresh: true);
+      return;
+    }
+    if (session.uid == book.publisherUid) return;
+
+    final request = _publisherRelation.beginMutation();
+    final follow = !_publisherFollowed;
+    setState(() => _publisherFollowBusy = true);
+    try {
+      await LKApi.toggleFollow(book.publisherUid, follow);
+      if (!mounted || !_publisherRelation.isCurrent(request)) return;
+      setState(() => _publisherRelation.complete(request, follow));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(follow ? '已关注' : '已取消关注')),
+      );
+    } catch (e) {
+      if (mounted && _publisherRelation.isCurrent(request)) {
+        showLkError(context, '操作失败：$e');
+      }
+    } finally {
+      if (mounted && _publisherRelation.isCurrent(request)) {
+        setState(() {
+          _publisherRelation.fail(request);
+          _publisherFollowBusy = false;
+        });
+      }
+    }
+  }
+
+  void _bindPublisher(LKBook book) {
+    final session = LKClient.shared.session;
+    final changed = _publisherRelation.bind(
+      viewerUid: session.isLoggedIn ? session.uid : 0,
+      targetUid: book.publisherUid,
+      initialValue: session.isLoggedIn && book.publisherFollowed,
+    );
+    if (changed) _publisherFollowBusy = false;
+  }
+
+  void _onPublisherSessionChanged() {
+    final book = _book;
+    if (!mounted || book == null) return;
+    setState(() => _bindPublisher(book));
+    unawaited(_refreshPublisherFollowStatus(book, forceRefresh: true));
+  }
+
+  Future<void> _openPublisherProfile(LKBook book) async {
+    await openUserProfile(context, book.publisherUid);
+    if (!mounted || _book?.publisherUid != book.publisherUid) return;
+    await _refreshPublisherFollowStatus(book, forceRefresh: true);
+  }
+
+  Future<void> _refreshPublisherFollowStatus(LKBook book,
+      {bool forceRefresh = false}) async {
+    final session = LKClient.shared.session;
+    if (_publisherFollowBusy ||
+        !session.isLoggedIn ||
+        book.publisherUid <= 0 ||
+        session.uid == book.publisherUid) {
+      return;
+    }
+    final viewerUid = session.uid;
+    final request = _publisherRelation.beginRefresh(force: forceRefresh);
+    if (request == null) return;
+    try {
+      // poster_user.followed 只属于书籍响应；用户主页的 relation.followed
+      // 是针对当前登录账号重新计算的关系状态。
+      final page = await LKApi.publicUserHome(book.publisherUid, 1,
+          pageSize: 1, forceRefresh: true);
+      if (!mounted ||
+          !_publisherRelation.isCurrent(request) ||
+          viewerUid != LKClient.shared.session.uid ||
+          _book?.publisherUid != book.publisherUid ||
+          _publisherFollowBusy) {
+        return;
+      }
+      setState(
+          () => _publisherRelation.complete(request, page.profile.followed));
+    } catch (_) {
+      _publisherRelation.fail(request);
+      // 关系查询失败时保留 publisher 接口中的初始状态，不阻塞详情页。
+    }
+  }
+
+  void _showFullBookTitle(String title) {
+    final value = title.trim();
+    if (value.isEmpty || !mounted) return;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(value,
+              style: TextStyle(
+                  color: isDark ? scheme.onSurface : scheme.onInverseSurface)),
+          backgroundColor:
+              isDark ? scheme.surfaceContainerHighest : scheme.inverseSurface,
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      );
+  }
+
+  Widget _publisherRow(LKBook book) {
+    final scheme = Theme.of(context).colorScheme;
+    final name =
+        book.publisherName.trim().isEmpty ? '未知用户' : book.publisherName.trim();
+    final canOpenProfile = book.publisherUid > 0;
+    final canFollow = canOpenProfile &&
+        (!LKClient.shared.session.isLoggedIn ||
+            LKClient.shared.session.uid != book.publisherUid);
+    return InkWell(
+      onTap: canOpenProfile ? () => _openPublisherProfile(book) : null,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 14,
+              backgroundColor: scheme.primary.withValues(alpha: 0.12),
+              backgroundImage: book.publisherAvatar.trim().isNotEmpty
+                  ? YomiruAvatarCache.provider(book.publisherAvatar)
+                  : null,
+              child: book.publisherAvatar.trim().isEmpty
+                  ? Icon(Icons.person_outline_rounded,
+                      size: 17, color: scheme.primary)
+                  : null,
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600)),
+            ),
+            if (canFollow)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: SizedBox(
+                  width: 64,
+                  height: 32,
+                  child: OutlinedButton(
+                    onPressed:
+                        _publisherFollowBusy ? null : _togglePublisherFollow,
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      shape: const StadiumBorder(),
+                    ),
+                    child: Text(_publisherFollowed ? '已关注' : '关注'),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = _book;
@@ -399,7 +662,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
           : b == null
               ? const LkLoadingIndicator()
               : RefreshIndicator(
-                  onRefresh: _load,
+                  onRefresh: () => _load(forceRefresh: true),
                   child: CustomScrollView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     controller: _scroll,
@@ -413,8 +676,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         foregroundColor:
                             isDark ? Colors.white : const Color(0xFF263238),
                         expandedHeight: 8,
-                        title: Text(b.title,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        title: GestureDetector(
+                          onTap: () => _showFullBookTitle(b.title),
+                          child: Text(b.title,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ),
                       ),
                       SliverToBoxAdapter(
                         child: Padding(
@@ -422,56 +688,114 @@ class _BookDetailPageState extends State<BookDetailPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  CoverImage(
-                                      url: b.coverUrl,
-                                      width: 112,
-                                      height: 152,
-                                      radius: 10),
-                                  const SizedBox(width: 16),
-                                  Expanded(
+                              SizedBox(
+                                width: double.infinity,
+                                child: Card(
+                                  margin: EdgeInsets.zero,
+                                  clipBehavior: Clip.antiAlias,
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        14, 14, 14, 12),
                                     child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        Text(b.title,
-                                            maxLines: 3,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.bold,
-                                                height: 1.3)),
-                                        const SizedBox(height: 8),
-                                        Text('作者: ${b.authorName}',
-                                            style: TextStyle(
-                                                fontSize: 13,
-                                                color: Colors.grey.shade600)),
-                                        const SizedBox(height: 4),
-                                        Row(children: [
-                                          _miniBadge(scheme,
-                                              b.isCompleted ? '完结' : '连载'),
-                                          const SizedBox(width: 6),
-                                          Text(
-                                              '${b.volumeCount}卷 · ${b.chapterCount}章',
-                                              style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: Colors.grey.shade500)),
-                                        ]),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          b.wordCount >= 10000
-                                              ? '${(b.wordCount / 10000).toStringAsFixed(1)} 万字'
-                                              : '${b.wordCount} 字',
-                                          style: TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.grey.shade500),
+                                        Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            CoverImage(
+                                                url: b.coverUrl,
+                                                width: 112,
+                                                height: 152,
+                                                radius: 10),
+                                            const SizedBox(width: 16),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  InkWell(
+                                                    onTap: () =>
+                                                        _showFullBookTitle(
+                                                            b.title),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            6),
+                                                    child: Padding(
+                                                      padding: const EdgeInsets
+                                                          .symmetric(
+                                                          vertical: 2),
+                                                      child: Text(b.title,
+                                                          maxLines: 3,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style:
+                                                              const TextStyle(
+                                                                  fontSize: 18,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .bold,
+                                                                  height: 1.3)),
+                                                    ),
+                                                  ),
+                                                  if (b.authorName
+                                                      .trim()
+                                                      .isNotEmpty) ...[
+                                                    const SizedBox(height: 8),
+                                                    Text('作者: ${b.authorName}',
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: TextStyle(
+                                                            fontSize: 13,
+                                                            color: Colors.grey
+                                                                .shade600)),
+                                                  ],
+                                                  const SizedBox(height: 8),
+                                                  Row(children: [
+                                                    _miniBadge(
+                                                        scheme,
+                                                        b.isCompleted
+                                                            ? '完结'
+                                                            : '连载'),
+                                                    const SizedBox(width: 6),
+                                                    Text(
+                                                        '${b.volumeCount}卷 · ${b.chapterCount}章',
+                                                        style: TextStyle(
+                                                            fontSize: 12,
+                                                            color: Colors.grey
+                                                                .shade500)),
+                                                  ]),
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    b.wordCount >= 10000
+                                                        ? '${(b.wordCount / 10000).toStringAsFixed(1)} 万字'
+                                                        : '${b.wordCount} 字',
+                                                    style: TextStyle(
+                                                        fontSize: 12,
+                                                        color: Colors
+                                                            .grey.shade500),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
                                         ),
+                                        if (b.publisherUid > 0 ||
+                                            b.publisherName.trim().isNotEmpty ||
+                                            b.publisherAvatar
+                                                .trim()
+                                                .isNotEmpty) ...[
+                                          const SizedBox(height: 12),
+                                          const LkFadedDivider(),
+                                          const SizedBox(height: 10),
+                                          _publisherRow(b),
+                                        ],
                                       ],
                                     ),
                                   ),
-                                ],
+                                ),
                               ),
                               if (b.tags.isNotEmpty) ...[
                                 const SizedBox(height: 14),
@@ -750,9 +1074,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
                 ),
               ),
             if (showPreview && _catalogPreview.isNotEmpty) ...[
-              const Divider(height: 1),
+              const LkFadedDivider(),
               ..._chapterRows(volume, _catalogPreview),
-              const Divider(height: 1),
+              const LkFadedDivider(),
               TextButton.icon(
                 onPressed: () => _openCatalog(volume),
                 icon: const Icon(Icons.format_list_bulleted_rounded, size: 18),
@@ -935,13 +1259,17 @@ class _BookDetailPageState extends State<BookDetailPage> {
     }
   }
 
-  Future<void> _loadVolumeChapters(LKVolume v) async {
+  Future<void> _loadVolumeChapters(LKVolume v,
+      {bool forceRefresh = false}) async {
     final id = v.volumeId;
     final book = _book;
     if (book == null) return;
-    if (_volumeChapters.containsKey(id) || _loadingVolumeIds.contains(id)) {
+    if (!forceRefresh &&
+        (_loadingVolumeIds.contains(id) || _volumeChapters.containsKey(id))) {
       return;
     }
+    final request = (_volumeChapterRequests[id] ?? 0) + 1;
+    _volumeChapterRequests[id] = request;
     if (mounted) {
       setState(() {
         _loadingVolumeIds.add(id);
@@ -949,17 +1277,20 @@ class _BookDetailPageState extends State<BookDetailPage> {
       });
     }
     try {
-      final chs = await LKApi.allChapters(book.bookId, id);
-      if (!mounted) return;
+      final chs =
+          await LKApi.allChapters(book.bookId, id, forceRefresh: forceRefresh);
+      if (!mounted || _volumeChapterRequests[id] != request) return;
       setState(() {
         _volumeChapters[id] = chs;
         _volumeErrors.remove(id);
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || _volumeChapterRequests[id] != request) return;
       setState(() => _volumeErrors[id] = '连接失败，请检查网络后重试');
     } finally {
-      if (mounted) setState(() => _loadingVolumeIds.remove(id));
+      if (mounted && _volumeChapterRequests[id] == request) {
+        setState(() => _loadingVolumeIds.remove(id));
+      }
     }
   }
 
@@ -1153,9 +1484,10 @@ class _ChaptersPageState extends State<ChaptersPage> {
     });
   }
 
-  Future<void> _refresh() => _loadPage(reset: true);
+  Future<void> _refresh() => _loadPage(reset: true, forceRefresh: true);
 
-  Future<void> _loadPage({bool reset = false}) async {
+  Future<void> _loadPage(
+      {bool reset = false, bool forceRefresh = false}) async {
     if (!reset && (_initialLoading || _loadingMore || !_hasMore)) {
       return;
     }
@@ -1181,7 +1513,7 @@ class _ChaptersPageState extends State<ChaptersPage> {
         descending: _descending,
       );
       final page = await LKApi.chapterPage(widget.bookId, _volumeId, sourcePage,
-          pageSize: _pageSize);
+          pageSize: _pageSize, forceRefresh: forceRefresh);
       if (!mounted || request != _requestSerial) return;
       final pageItems = _descending
           ? page.items.reversed.toList(growable: false)
@@ -1401,7 +1733,7 @@ class _ChaptersPageState extends State<ChaptersPage> {
                                       )),
                             ),
                           ),
-                          const Divider(height: 1),
+                          const LkFadedDivider(),
                         ],
                       );
                     },

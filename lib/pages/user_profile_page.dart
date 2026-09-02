@@ -15,9 +15,9 @@ import 'book_detail_page.dart';
 import 'media_viewer_page.dart';
 import 'search_page.dart';
 
-void openUserProfile(BuildContext context, int uid) {
+Future<void> openUserProfile(BuildContext context, int uid) async {
   if (uid <= 0) return;
-  Navigator.push(
+  await Navigator.push(
     context,
     MaterialPageRoute(builder: (_) => UserProfilePage(uid: uid)),
   );
@@ -51,6 +51,9 @@ class _UserProfilePageState extends State<UserProfilePage>
   String? _error;
   String? _dynamicError;
   String? _bookshelfError;
+  int _homeLoadSerial = 0;
+  int _dynamicLoadSerial = 0;
+  int _bookshelfLoadSerial = 0;
 
   @override
   void initState() {
@@ -93,6 +96,7 @@ class _UserProfilePageState extends State<UserProfilePage>
   }
 
   Future<void> _loadInitial({bool forceRefresh = false}) async {
+    final request = ++_homeLoadSerial;
     if (mounted) {
       setState(() {
         _error = null;
@@ -101,7 +105,7 @@ class _UserProfilePageState extends State<UserProfilePage>
     try {
       final home = await LKApi.publicUserHome(widget.uid, 1,
           pageSize: 20, forceRefresh: forceRefresh);
-      if (!mounted) return;
+      if (!mounted || request != _homeLoadSerial) return;
       setState(() {
         _home = home;
         _followed = home.profile.followed;
@@ -118,13 +122,13 @@ class _UserProfilePageState extends State<UserProfilePage>
               home.profile.medals,
         }));
       }
-      final pending = <Future<void>>[_loadDynamics()];
+      final pending = <Future<void>>[_loadDynamics(forceRefresh: forceRefresh)];
       if (home.profile.publicBookshelf) {
-        pending.add(_loadInitialBookshelf());
+        pending.add(_loadInitialBookshelf(forceRefresh: forceRefresh));
       }
       await Future.wait(pending);
     } catch (_) {
-      if (mounted) {
+      if (mounted && request == _homeLoadSerial) {
         setState(() {
           _error = '用户主页加载失败，请点击重试';
         });
@@ -132,22 +136,29 @@ class _UserProfilePageState extends State<UserProfilePage>
     }
   }
 
-  Future<void> _loadInitialBookshelf() async {
+  Future<void> _loadInitialBookshelf({bool forceRefresh = false}) async {
+    final request = ++_bookshelfLoadSerial;
     try {
-      final bookshelf =
-          await LKApi.publicUserBookshelf(widget.uid, 1, pageSize: 20);
-      if (!mounted) return;
+      final bookshelf = await LKApi.publicUserBookshelf(widget.uid, 1,
+          pageSize: 20, forceRefresh: forceRefresh);
+      if (!mounted || request != _bookshelfLoadSerial) return;
       setState(() {
         _bookshelf = bookshelf;
         _bookshelfError = null;
       });
     } catch (_) {
-      if (mounted) setState(() => _bookshelfError = '书架无法加载，请点击重试');
+      if (mounted && request == _bookshelfLoadSerial) {
+        setState(() => _bookshelfError = '书架无法加载，请点击重试');
+      }
     }
   }
 
-  Future<void> _loadDynamics({bool append = false}) async {
-    if (_dynamicLoading || append && !_dynamicHasMore) return;
+  Future<void> _loadDynamics(
+      {bool append = false, bool forceRefresh = false}) async {
+    if ((_dynamicLoading && !forceRefresh) || append && !_dynamicHasMore) {
+      return;
+    }
+    final request = ++_dynamicLoadSerial;
     if (mounted) {
       setState(() {
         _dynamicLoading = true;
@@ -159,8 +170,9 @@ class _UserProfilePageState extends State<UserProfilePage>
         widget.uid,
         cursor: append ? _dynamicCursor : '',
         pageSize: 20,
+        forceRefresh: forceRefresh,
       );
-      if (!mounted) return;
+      if (!mounted || request != _dynamicLoadSerial) return;
       YomiruAvatarCache.precache(
           context, result.items.map((item) => item.avatar));
       setState(() {
@@ -171,20 +183,25 @@ class _UserProfilePageState extends State<UserProfilePage>
         _dynamicError = null;
       });
     } catch (_) {
-      if (mounted) setState(() => _dynamicError = '动态无法加载，请点击重试');
+      if (mounted && request == _dynamicLoadSerial) {
+        setState(() => _dynamicError = '动态无法加载，请点击重试');
+      }
     } finally {
-      if (mounted) setState(() => _dynamicLoading = false);
+      if (mounted && request == _dynamicLoadSerial) {
+        setState(() => _dynamicLoading = false);
+      }
     }
   }
 
   Future<void> _loadMorePublications() async {
     final home = _home;
+    final request = _homeLoadSerial;
     if (home == null || _publicationLoading || !home.hasMore) return;
     setState(() => _publicationLoading = true);
     try {
       final next = await LKApi.publicUserHome(widget.uid, home.page + 1,
           pageSize: home.pageSize);
-      if (!mounted) return;
+      if (!mounted || request != _homeLoadSerial) return;
       setState(() {
         _home = LKPublicUserPage(
           profile: home.profile,
@@ -202,13 +219,14 @@ class _UserProfilePageState extends State<UserProfilePage>
 
   Future<void> _loadMoreBookshelf() async {
     final bookshelf = _bookshelf;
+    final request = _bookshelfLoadSerial;
     if (bookshelf == null || _bookshelfLoading || !bookshelf.hasMore) return;
     setState(() => _bookshelfLoading = true);
     try {
       final next = await LKApi.publicUserBookshelf(
           widget.uid, bookshelf.page + 1,
           pageSize: bookshelf.pageSize);
-      if (!mounted) return;
+      if (!mounted || request != _bookshelfLoadSerial) return;
       setState(() {
         _bookshelf = LKPublicBookshelfPage(
           visible: bookshelf.visible,
@@ -850,7 +868,7 @@ class _UserProfilePageState extends State<UserProfilePage>
     final shelf = _bookshelf;
     if (_bookshelfError != null && shelf == null) {
       return RefreshIndicator(
-        onRefresh: _loadInitial,
+        onRefresh: () => _loadInitial(forceRefresh: true),
         child: _emptyList(_bookshelfError!, onRetry: _loadInitial),
       );
     }

@@ -8,6 +8,36 @@ void main() {
     expect(dynamicEventLabel('book_created'), '新作品');
   });
 
+  test('builds the canonical dynamic website URL', () {
+    expect(dynamicWebsiteUrl(3630), 'https://www.lightnovel.fun/activity/3630');
+  });
+
+  test('uses a title as dynamic body when content is absent', () {
+    final titleOnly = LKDynamicItem.fromJson({
+      'dynamic_id': 3667,
+      'title': '只有标题的动态',
+    });
+    expect(titleOnly.displayContent, '只有标题的动态');
+
+    final withBody = LKDynamicItem.fromJson({
+      'dynamic_id': 3716,
+      'title': '动态标题',
+      'summary': '动态正文',
+    });
+    expect(withBody.displayContent, '动态正文');
+
+    final targetBriefTitle = LKDynamicItem.fromJson({
+      'dynamic_id': 3667,
+      'event_type': 'short_post_published',
+      'target_brief': {
+        'target_type': 'short_post',
+        'target_id': 3667,
+        'title': '接口放在 target_brief 的标题',
+      },
+    });
+    expect(targetBriefTitle.displayContent, '接口放在 target_brief 的标题');
+  });
+
   test('pure dynamic target id is not treated as a book id', () {
     final item = LKDynamicItem.fromJson({
       'dynamic_id': 3627,

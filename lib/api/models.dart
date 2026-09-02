@@ -31,6 +31,78 @@ int? _jsonIntOrNull(dynamic value) {
   return int.tryParse(value.toString());
 }
 
+Map<String, dynamic> _bookPublisher(Map<String, dynamic> json) =>
+    _jsonMap(json['publisher']) ??
+    _jsonMap(json['poster_user']) ??
+    _jsonMap(json['posterUser']) ??
+    _jsonMap(json['publisher_info']) ??
+    _jsonMap(json['publisherInfo']) ??
+    _firstJsonMap(json['poster_users']) ??
+    _firstJsonMap(json['posterUsers']) ??
+    _firstJsonMap(json['series_owners']) ??
+    _firstJsonMap(json['seriesOwners']) ??
+    const <String, dynamic>{};
+
+String _bookAuthorName(Map<String, dynamic> json) {
+  final raw =
+      json['author_name'] ?? json['writer_name'] ?? json['author'] ?? '';
+  if (raw is Map) {
+    return (raw['name'] ?? raw['nickname'] ?? raw['username'] ?? '').toString();
+  }
+  return raw.toString();
+}
+
+String _bookPublisherName(Map<String, dynamic> json) {
+  final publisher = _bookPublisher(json);
+  final rawPublisher = json['publisher'];
+  final raw = json['publisher_name'] ??
+      json['publisher_nickname'] ??
+      (rawPublisher is String ? rawPublisher : null) ??
+      publisher['nickname'] ??
+      publisher['username'] ??
+      publisher['name'] ??
+      '';
+  return raw.toString();
+}
+
+int _bookPublisherUid(Map<String, dynamic> json) {
+  final publisher = _bookPublisher(json);
+  return _jsonInt(json['publisher_uid'] ??
+      json['publisher_id'] ??
+      json['publisher_user_id'] ??
+      json['publisherUserId'] ??
+      publisher['uid'] ??
+      publisher['user_id'] ??
+      publisher['userId'] ??
+      publisher['id']);
+}
+
+String _bookPublisherAvatar(Map<String, dynamic> json) {
+  final publisher = _bookPublisher(json);
+  return (json['publisher_avatar'] ??
+          json['publisher_avatar_url'] ??
+          publisher['avatar'] ??
+          publisher['avatar_url'] ??
+          '')
+      .toString();
+}
+
+bool _bookPublisherFollowed(Map<String, dynamic> json) {
+  final publisher = _bookPublisher(json);
+  final relation = (json['publisher_relation_state'] ??
+          publisher['relation_state'] ??
+          publisher['relationState'] ??
+          '')
+      .toString()
+      .trim()
+      .toLowerCase();
+  return _jsonFlag(json['publisher_followed'] ??
+          publisher['followed'] ??
+          publisher['is_followed']) ||
+      relation == 'following' ||
+      relation == 'followed';
+}
+
 String dynamicEventLabel(String value) {
   final normalized =
       value.trim().toLowerCase().replaceAll(RegExp(r'[\s-]+'), '_');
@@ -42,6 +114,9 @@ String dynamicEventLabel(String value) {
   if (normalized.contains('repost')) return '转发';
   return normalized.replaceAll('_', ' ');
 }
+
+String dynamicWebsiteUrl(int dynamicId) =>
+    'https://www.lightnovel.fun/activity/$dynamicId';
 
 class LKUser {
   final int uid;
@@ -972,6 +1047,10 @@ class LKBook {
   final int bookId;
   final String title;
   final String authorName;
+  final int publisherUid;
+  final String publisherName;
+  final String publisherAvatar;
+  final bool publisherFollowed;
   final String coverUrl;
   final String summary;
   final List<String> tags;
@@ -990,6 +1069,10 @@ class LKBook {
     this.bookId = 0,
     this.title = '',
     this.authorName = '',
+    this.publisherUid = 0,
+    this.publisherName = '',
+    this.publisherAvatar = '',
+    this.publisherFollowed = false,
     this.coverUrl = '',
     this.summary = '',
     this.tags = const [],
@@ -1008,7 +1091,11 @@ class LKBook {
   factory LKBook.fromJson(Map<String, dynamic> j) => LKBook(
         bookId: (j['book_id'] as num?)?.toInt() ?? 0,
         title: (j['title'] as String?) ?? '',
-        authorName: (j['author_name'] as String?) ?? '',
+        authorName: _bookAuthorName(j),
+        publisherUid: _bookPublisherUid(j),
+        publisherName: _bookPublisherName(j),
+        publisherAvatar: _bookPublisherAvatar(j),
+        publisherFollowed: _bookPublisherFollowed(j),
         coverUrl: (j['cover_url'] as String?) ?? '',
         summary:
             (j['summary'] as String?) ?? (j['summary_short'] as String?) ?? '',
@@ -1033,6 +1120,10 @@ class LKBook {
         'book_id': bookId,
         'title': title,
         'author_name': authorName,
+        'publisher_uid': publisherUid,
+        'publisher_name': publisherName,
+        'publisher_avatar': publisherAvatar,
+        'publisher_followed': publisherFollowed,
         'cover_url': coverUrl,
         'summary': summary,
         'tags': tags,
@@ -1988,6 +2079,15 @@ class LKDynamicItem {
   final String bookCover;
   final List<LKDynamicMedia> media;
   final LKDynamicPoll? poll;
+  String get displayContent {
+    if (summary.trim().isNotEmpty) return summary;
+    if (title.trim().isNotEmpty) return title;
+    // 纯动态的标题由接口放在 target_brief.title 中；作品动态的同一字段
+    // 是书名，不能把书名误当成动态正文。
+    if (!isWorkPost && bookTitle.trim().isNotEmpty) return bookTitle;
+    return '';
+  }
+
   bool get isWorkPost =>
       bookId > 0 ||
       const {

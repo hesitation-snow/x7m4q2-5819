@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/models.dart';
+import '../api/pagination.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../services/app_update_service.dart';
@@ -440,8 +441,8 @@ class FeedTab extends StatefulWidget {
 }
 
 class _FeedTabState extends State<FeedTab> {
-  final List<dynamic> _items = [];
-  static const _recommendCacheKey = 'home_recommend_v2';
+  final List<LKBook> _items = [];
+  static const _recommendCachePrefix = 'home_recommend_v2_';
   List<LKBook> _recommendBooks = [];
   int _page = 0;
   bool _loading = false;
@@ -458,43 +459,103 @@ class _FeedTabState extends State<FeedTab> {
   @override
   void initState() {
     super.initState();
+    LKClient.sessionRev.addListener(_onSessionChanged);
     if (_showRecommend) _loadRecommend();
-    _load(1, false);
+    unawaited(_startLoad());
+  }
+
+  @override
+  void dispose() {
+    LKClient.sessionRev.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  String _feedCacheKey({
+    int? uid,
+    String? channelCode,
+    String? path,
+  }) {
+    return LKStore.pageCacheKey(
+      kind: 'home_feed',
+      uid: uid ?? LKClient.shared.session.uid,
+      variant: '${channelCode ?? widget.channelCode}|${path ?? widget.path}',
+    );
+  }
+
+  String _recommendCacheKeyFor(int uid) => '${_recommendCachePrefix}u$uid';
+
+  Future<void> _startLoad() async {
+    final request = _requestSerial;
+    final cacheKey = _feedCacheKey();
+    final cached = await LKStore.cachedBooksPage(cacheKey);
+    if (!mounted || request != _requestSerial || cacheKey != _feedCacheKey()) {
+      return;
+    }
+    if (cached != null) {
+      setState(() {
+        _items
+          ..clear()
+          ..addAll(cached);
+        _page = cached.isEmpty ? 0 : 1;
+        _hasMore = true;
+        _error = null;
+      });
+    }
+    await _load(1, false, silent: _items.isNotEmpty);
+  }
+
+  void _onSessionChanged() {
+    if (!mounted) return;
+    _requestSerial++;
+    setState(() {
+      _items.clear();
+      _recommendBooks = [];
+      _page = 0;
+      _hasMore = true;
+      _error = null;
+      _loading = false;
+    });
+    if (_showRecommend) unawaited(_loadRecommend());
+    unawaited(_startLoad());
   }
 
   /// 推荐卡只由信息流父状态加载一次，列表/网格模式共用同一份数据。
   Future<void> _loadRecommend() async {
+    final uid = LKClient.shared.session.uid;
+    final cacheKey = _recommendCacheKeyFor(uid);
     final p = await SharedPreferences.getInstance();
-    final raw =
-        _recommendBooks.isEmpty ? p.getString(_recommendCacheKey) : null;
+    final raw = _recommendBooks.isEmpty ? p.getString(cacheKey) : null;
     if (raw != null) {
       try {
         final cached = (jsonDecode(raw) as List)
             .map((e) => LKBook.fromJson((e as Map).cast<String, dynamic>()))
             .toList();
-        if (mounted && cached.isNotEmpty) {
+        if (mounted &&
+            cacheKey == _recommendCacheKeyFor(LKClient.shared.session.uid) &&
+            cached.isNotEmpty) {
           setState(() => _recommendBooks = cached);
         }
       } catch (_) {}
     }
     try {
       final books = await LKApi.homeRecommend(pageSize: 8);
-      if (!mounted) return;
+      if (!mounted ||
+          cacheKey != _recommendCacheKeyFor(LKClient.shared.session.uid)) {
+        return;
+      }
       if (books.isNotEmpty) setState(() => _recommendBooks = books);
-      unawaited(() async {
-        try {
-          await p.setString(
-            _recommendCacheKey,
-            jsonEncode(books
-                .map((b) => {
-                      'book_id': b.bookId,
-                      'title': b.title,
-                      'cover_url': b.coverUrl,
-                    })
-                .toList()),
-          );
-        } catch (_) {}
-      }());
+      if (books.isNotEmpty) {
+        unawaited(p.setString(
+          cacheKey,
+          jsonEncode(books
+              .map((b) => {
+                    'book_id': b.bookId,
+                    'title': b.title,
+                    'cover_url': b.coverUrl,
+                  })
+              .toList()),
+        ));
+      }
     } catch (_) {}
   }
 
@@ -502,49 +563,71 @@ class _FeedTabState extends State<FeedTab> {
   void didUpdateWidget(FeedTab old) {
     super.didUpdateWidget(old);
     if (old.channelCode != widget.channelCode || old.path != widget.path) {
+      _requestSerial++;
       _items.clear();
       _page = 0;
       _hasMore = true;
       _error = null;
       if (_showRecommend) _loadRecommend();
-      _load(1, false);
+      unawaited(_startLoad());
     }
   }
 
-  Future<void> _load(int page, bool append) async {
+  Future<void> _load(int page, bool append,
+      {bool silent = false, bool forceRefresh = false}) async {
     if (append && _loading) return;
     final serial = append ? _requestSerial : ++_requestSerial;
     final path = widget.path;
     final channelCode = widget.channelCode;
+    final cacheKey = _feedCacheKey();
     final isRank = path == 'rank';
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final items = isRank
-          ? await LKApi.rank(page, pageSize: 20)
-          : path == '/api/bff/home-feed-v1'
-              ? await LKApi.homeFeed(channelCode, page)
-              : path == '/api/bff/home-recent-updates-feed-v1'
-                  ? await LKApi.homeRecentUpdatesFeed(page)
-                  : await LKApi.channelFeed(path, page);
+      Future<LoadedPage<LKBook>> fetchPage(int number, String cursor) async {
+        final items = isRank
+            ? await LKApi.rank(number, pageSize: 20, forceRefresh: forceRefresh)
+            : path == '/api/bff/home-feed-v1'
+                ? await LKApi.homeFeed(channelCode, number,
+                    forceRefresh: forceRefresh)
+                : path == '/api/bff/home-recent-updates-feed-v1'
+                    ? await LKApi.homeRecentUpdatesFeed(number,
+                        forceRefresh: forceRefresh)
+                    : await LKApi.channelFeed(path, number,
+                        forceRefresh: forceRefresh);
+        return LoadedPage(
+            items: items, page: number, hasMore: items.length >= 20);
+      }
+
+      final result = append
+          ? await fetchPage(page, '')
+          : await refreshPageWindow(
+              loadPage: fetchPage,
+              keyOf: (book) => book.bookId,
+              targetItems: _items.length.clamp(0, 100),
+              isCurrent: () => mounted && serial == _requestSerial,
+            );
       if (!mounted || serial != _requestSerial) return;
+      final items = append
+          ? mergePagedItems(_items, result.items, keyOf: (book) => book.bookId)
+          : result.items;
       setState(() {
-        if (append) {
-          _items.addAll(items);
-        } else {
-          _items
-            ..clear()
-            ..addAll(items);
-        }
-        _page = page;
-        _hasMore = items.length >= 20;
+        _items
+          ..clear()
+          ..addAll(items);
+        _page = result.page;
+        _hasMore = result.hasMore;
         _error = null;
       });
+      unawaited(LKStore.cacheBooksPage(cacheKey, _items));
     } catch (e) {
       if (mounted && serial == _requestSerial) {
         setState(() => _error = e.toString());
+        if ((silent || !append) && _items.isNotEmpty) {
+          _showRefreshError();
+        }
       }
     } finally {
       if (mounted && serial == _requestSerial) {
@@ -554,13 +637,44 @@ class _FeedTabState extends State<FeedTab> {
   }
 
   Future<void> _refresh() async {
-    final requests = <Future<void>>[_load(1, false)];
+    final requests = <Future<void>>[_load(1, false, forceRefresh: true)];
     if (_showRecommend) requests.add(_loadRecommend());
     await Future.wait(requests);
   }
 
   // 主页排行榜不显示名次,正常展示
   int? _rankOf(int i) => null;
+
+  void _showRefreshError() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _items.isEmpty) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text('连接失败，已保留上次内容'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    });
+  }
+
+  Widget _loadMoreFooter() {
+    if (_error != null) {
+      return Center(
+        child: TextButton.icon(
+          onPressed: () => _load(_page + 1, true),
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('加载失败，点击重试'),
+        ),
+      );
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_loading) _load(_page + 1, true);
+    });
+    return const Padding(
+      padding: EdgeInsets.all(12),
+      child: LkLoadingIndicator(),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -591,12 +705,7 @@ class _FeedTabState extends State<FeedTab> {
         }
         final j = i - recommendCount;
         if (j >= _items.length) {
-          WidgetsBinding.instance
-              .addPostFrameCallback((_) => _load(_page + 1, true));
-          return const Padding(
-            padding: EdgeInsets.all(12),
-            child: LkLoadingIndicator(),
-          );
+          return _loadMoreFooter();
         }
         final book = _items[j];
         return BookCard(
@@ -624,9 +733,7 @@ class _FeedTabState extends State<FeedTab> {
               (_, i) {
                 if (i >= _items.length) {
                   // 触底加载更多(延迟到帧后,避免 build 期间 setState)
-                  WidgetsBinding.instance
-                      .addPostFrameCallback((_) => _load(_page + 1, true));
-                  return const LkLoadingIndicator();
+                  return _loadMoreFooter();
                 }
                 final book = _items[i];
                 return BookGridCard(
@@ -1421,7 +1528,7 @@ class _MyTabState extends State<MyTab> {
                   ),
                 ),
                 if (s.isLoggedIn) ...[
-                  Divider(height: 1, color: scheme.outlineVariant),
+                  const LkFadedDivider(),
                   if (_profileLoading && profile == null)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 12),

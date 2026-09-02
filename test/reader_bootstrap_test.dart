@@ -2,6 +2,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yomiru/api/models.dart';
 
 void main() {
+  test('book parser keeps literary author separate from site publisher', () {
+    final book = LKBook.fromJson({
+      'book_id': 1338,
+      'title': '测试作品',
+      'author': '雨森たきび',
+      'poster_user': {
+        'uid': 36721,
+        'nickname': 'touging',
+        'avatar_url': 'https://example.com/avatar.jpg',
+        'followed': 1,
+      },
+    });
+
+    expect(book.authorName, '雨森たきび');
+    expect(book.publisherUid, 36721);
+    expect(book.publisherName, 'touging');
+    expect(book.publisherAvatar, 'https://example.com/avatar.jpg');
+    expect(book.publisherFollowed, isTrue);
+  });
+
   test('reader bootstrap preserves the effective history target', () {
     final bootstrap = LKReaderBootstrap.fromJson({
       'book': {

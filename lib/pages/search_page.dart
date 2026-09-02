@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/models.dart';
+import '../api/pagination.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
 import '../services/avatar_cache.dart';
@@ -421,13 +422,14 @@ enum _ShelfFilter { all, unread, serializing, completed }
 class _ShelfPageState extends State<ShelfPage> {
   List<LKBook> _items = [];
   String? _error;
+  bool _errorFromAppend = false;
   int _page = 0;
   bool _hasMore = true;
   bool _loading = false;
   bool _listMode = false;
   bool _localMode = false;
   bool _reloadAfterCurrent = false;
-  final Set<int> _statusVerificationInFlight = <int>{};
+  int _statusVerificationGeneration = 0;
   _ShelfSort _sort = _ShelfSort.serverOrder;
   _ShelfFilter _filter = _ShelfFilter.all;
   int _loadSerial = 0;
@@ -441,7 +443,7 @@ class _ShelfPageState extends State<ShelfPage> {
     LKClient.sessionRev.addListener(_onSessionRev);
     LKStore.localShelfRev.addListener(_onLocalShelfRev);
     _loadListMode();
-    _load();
+    unawaited(_startLoad());
   }
 
   @override
@@ -455,6 +457,7 @@ class _ShelfPageState extends State<ShelfPage> {
   void _onSessionRev() {
     if (!mounted) return;
     _loadSerial++;
+    _statusVerificationGeneration++;
     setState(() {
       _localMode = !LKClient.shared.session.isLoggedIn;
       _items = [];
@@ -463,7 +466,7 @@ class _ShelfPageState extends State<ShelfPage> {
       _error = null;
       _loading = false;
     });
-    _load();
+    unawaited(_startLoad());
   }
 
   void _onLocalShelfRev() {
@@ -522,6 +525,39 @@ class _ShelfPageState extends State<ShelfPage> {
     if (mounted) setState(() => _listMode = value);
   }
 
+  String _shelfCacheKey(int uid) => LKStore.pageCacheKey(
+        kind: 'shelf',
+        uid: uid,
+        variant: 'cloud',
+      );
+
+  Future<void> _startLoad() async {
+    final request = _loadSerial;
+    if (_localMode || !LKClient.shared.session.isLoggedIn) {
+      await _load();
+      return;
+    }
+    final uid = LKClient.shared.session.uid;
+    final cacheKey = _shelfCacheKey(uid);
+    final cached = await LKStore.cachedBooksPage(cacheKey);
+    if (!mounted ||
+        request != _loadSerial ||
+        _localMode ||
+        LKClient.shared.session.uid != uid ||
+        cacheKey != _shelfCacheKey(LKClient.shared.session.uid)) {
+      return;
+    }
+    if (cached != null) {
+      setState(() {
+        _items = [...cached];
+        _page = cached.isEmpty ? 0 : 1;
+        _hasMore = true;
+        _error = null;
+      });
+    }
+    await _load(silent: _items.isNotEmpty);
+  }
+
   @override
   void didUpdateWidget(ShelfPage oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -530,11 +566,21 @@ class _ShelfPageState extends State<ShelfPage> {
     }
   }
 
-  Future<void> _load({int page = 1, bool append = false}) async {
-    if (_loading || append && !_hasMore) return;
+  Future<void> _load(
+      {int page = 1,
+      bool append = false,
+      bool silent = false,
+      bool forceRefresh = false}) async {
+    if (append && (_loading || !_hasMore)) return;
+    if (!append) _statusVerificationGeneration++;
     final requestSerial = ++_loadSerial;
     final localMode = _localMode || !LKClient.shared.session.isLoggedIn;
-    setState(() => _loading = true);
+    final uid = LKClient.shared.session.uid;
+    final cacheKey = _shelfCacheKey(uid);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       if (localMode) {
         final items = await LKStore.localShelf();
@@ -547,23 +593,48 @@ class _ShelfPageState extends State<ShelfPage> {
         });
         return;
       }
-      final items = await LKApi.bookshelf(page);
-      if (!mounted || requestSerial != _loadSerial || _localMode) return;
+      Future<LoadedPage<LKBook>> fetchPage(int number, String cursor) async {
+        final items = await LKApi.bookshelf(number);
+        return LoadedPage(
+            items: items, page: number, hasMore: items.length >= 50);
+      }
+
+      final result = append
+          ? await fetchPage(page, '')
+          : await refreshPageWindow(
+              loadPage: fetchPage,
+              keyOf: (book) => book.bookId,
+              targetItems: _items.length.clamp(0, 100),
+              maxPages: 2,
+              isCurrent: () => mounted && requestSerial == _loadSerial,
+            );
+      if (!mounted ||
+          requestSerial != _loadSerial ||
+          _localMode ||
+          uid != LKClient.shared.session.uid) {
+        return;
+      }
       setState(() {
-        if (append) {
-          final seen = _items.map((item) => item.bookId).toSet();
-          _items.addAll(items.where((item) => seen.add(item.bookId)));
-        } else {
-          _items = [...items];
-        }
-        _page = page;
-        _hasMore = items.length >= 50;
+        _items = append
+            ? mergePagedItems(_items, result.items,
+                keyOf: (book) => book.bookId)
+            : [...result.items];
+        _page = result.page;
+        _hasMore = result.hasMore;
         _error = null;
       });
-      unawaited(_verifyServerBookStatuses(items));
+      unawaited(LKStore.cacheBooksPage(cacheKey, _items));
+      unawaited(
+          _verifyServerBookStatuses(result.items, forceRefresh: forceRefresh));
     } catch (e) {
       if (mounted && requestSerial == _loadSerial) {
-        setState(() => _error = e.toString());
+        setState(() {
+          _error = e.toString();
+          _errorFromAppend = append;
+        });
+        if ((silent || !append) && _items.isNotEmpty) {
+          _showRefreshError();
+        }
       }
     } finally {
       if (mounted && requestSerial == _loadSerial) {
@@ -576,58 +647,73 @@ class _ShelfPageState extends State<ShelfPage> {
     }
   }
 
-  Future<void> _verifyServerBookStatuses(List<LKBook> books) async {
+  void _showRefreshError() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _items.isEmpty) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text('连接失败，已保留上次内容'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    });
+  }
+
+  Future<void> _verifyServerBookStatuses(List<LKBook> books,
+      {bool forceRefresh = false}) async {
     final ownerUid = LKClient.shared.session.uid;
+    final generation = _statusVerificationGeneration;
     if (ownerUid <= 0 || _localMode) return;
     final candidates = books
         .where((book) =>
             book.bookId > 0 &&
             book.isCompleted &&
-            book.serialStatus.trim().isEmpty &&
-            _statusVerificationInFlight.add(book.bookId))
+            book.serialStatus.trim().isEmpty)
         .toList(growable: false);
     if (candidates.isEmpty) return;
 
-    try {
-      // bookshelf-v1 only exposes is_completed and can disagree with the
-      // authoritative detail response. Verify likely false positives in small
-      // background batches so the shelf remains responsive.
-      const batchSize = 3;
-      for (var offset = 0; offset < candidates.length; offset += batchSize) {
-        final end = (offset + batchSize).clamp(0, candidates.length);
-        final batch = candidates.sublist(offset, end);
-        final entries = await Future.wait<MapEntry<int, LKBook>?>(
-          batch.map((book) async {
-            try {
-              return MapEntry(book.bookId, await LKApi.bookDetail(book.bookId));
-            } catch (_) {
-              return null;
-            }
-          }),
-        );
-        if (!mounted || _localMode || LKClient.shared.session.uid != ownerUid) {
-          return;
-        }
-        final verified = <int, LKBook>{
-          for (final entry in entries)
-            if (entry != null) entry.key: entry.value,
-        };
-        if (verified.isEmpty) continue;
-        setState(() {
-          _items = _items.map((book) {
-            final detail = verified[book.bookId];
-            if (detail == null) return book;
-            return LKBook.fromJson({
-              ...book.toJson(),
-              'serial_status': detail.serialStatus,
-              'is_completed': detail.isCompleted ? 1 : 0,
-            });
-          }).toList(growable: false);
-        });
+    // bookshelf-v1 only exposes is_completed and can disagree with the
+    // authoritative detail response. Verify likely false positives in small
+    // background batches so the shelf remains responsive.
+    const batchSize = 3;
+    for (var offset = 0; offset < candidates.length; offset += batchSize) {
+      final end = (offset + batchSize).clamp(0, candidates.length);
+      final batch = candidates.sublist(offset, end);
+      final entries = await Future.wait<MapEntry<int, LKBook>?>(
+        batch.map((book) async {
+          try {
+            return MapEntry(
+                book.bookId,
+                await LKApi.bookDetail(book.bookId,
+                    forceRefresh: forceRefresh));
+          } catch (_) {
+            return null;
+          }
+        }),
+      );
+      if (!mounted ||
+          _localMode ||
+          LKClient.shared.session.uid != ownerUid ||
+          generation != _statusVerificationGeneration) {
+        return;
       }
-    } finally {
-      _statusVerificationInFlight
-          .removeAll(candidates.map((book) => book.bookId));
+      final verified = <int, LKBook>{
+        for (final entry in entries)
+          if (entry != null) entry.key: entry.value,
+      };
+      if (verified.isEmpty) continue;
+      setState(() {
+        _items = _items.map((book) {
+          final detail = verified[book.bookId];
+          if (detail == null) return book;
+          return LKBook.fromJson({
+            ...book.toJson(),
+            'serial_status': detail.serialStatus,
+            'is_completed': detail.isCompleted ? 1 : 0,
+          });
+        }).toList();
+      });
+      unawaited(LKStore.cacheBooksPage(_shelfCacheKey(ownerUid), _items));
     }
   }
 
@@ -670,8 +756,9 @@ class _ShelfPageState extends State<ShelfPage> {
       _page = 0;
       _hasMore = true;
       _error = null;
+      _statusVerificationGeneration++;
     });
-    _load();
+    unawaited(_startLoad());
   }
 
   Widget _shelfSourceButton() {
@@ -769,6 +856,26 @@ class _ShelfPageState extends State<ShelfPage> {
     );
   }
 
+  Widget _shelfLoadMoreFooter() {
+    if (_error != null) {
+      return Center(
+        child: TextButton.icon(
+          onPressed: () => _errorFromAppend
+              ? _load(page: _page + 1, append: true)
+              : _load(forceRefresh: true),
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('加载失败，点击重试'),
+        ),
+      );
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_loading && _hasMore && _error == null) {
+        unawaited(_load(page: _page + 1, append: true));
+      }
+    });
+    return const LkLoadingIndicator();
+  }
+
   @override
   Widget build(BuildContext context) {
     final visibleItems = _visibleItems;
@@ -776,7 +883,7 @@ class _ShelfPageState extends State<ShelfPage> {
         ? Center(
             child: Text(_error!, style: const TextStyle(color: Colors.grey)))
         : RefreshIndicator(
-            onRefresh: () => _load(),
+            onRefresh: () => _load(forceRefresh: true),
             child: _loading && _items.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
@@ -800,15 +907,7 @@ class _ShelfPageState extends State<ShelfPage> {
                               ),
                             ),
                           ),
-                          if (_hasMore)
-                            Builder(builder: (_) {
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  _load(page: _page + 1, append: true);
-                                }
-                              });
-                              return const LkLoadingIndicator();
-                            }),
+                          if (_hasMore) _shelfLoadMoreFooter(),
                         ],
                       )
                     : _listMode
@@ -819,13 +918,7 @@ class _ShelfPageState extends State<ShelfPage> {
                             itemCount: visibleItems.length + (_hasMore ? 1 : 0),
                             itemBuilder: (_, i) {
                               if (i >= visibleItems.length) {
-                                WidgetsBinding.instance
-                                    .addPostFrameCallback((_) {
-                                  if (mounted) {
-                                    _load(page: _page + 1, append: true);
-                                  }
-                                });
-                                return const LkLoadingIndicator();
+                                return _shelfLoadMoreFooter();
                               }
                               final b = visibleItems[i];
                               return BookCard(
@@ -847,13 +940,7 @@ class _ShelfPageState extends State<ShelfPage> {
                             itemCount: visibleItems.length + (_hasMore ? 1 : 0),
                             itemBuilder: (_, i) {
                               if (i >= visibleItems.length) {
-                                WidgetsBinding.instance
-                                    .addPostFrameCallback((_) {
-                                  if (mounted) {
-                                    _load(page: _page + 1, append: true);
-                                  }
-                                });
-                                return const LkLoadingIndicator();
+                                return _shelfLoadMoreFooter();
                               }
                               final b = visibleItems[i];
                               return BookGridCard(
@@ -1468,43 +1555,55 @@ class _CommentsPageState extends State<CommentsPage> {
     final poll = item.poll;
     return Card(
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundImage: item.avatar.isNotEmpty
-                    ? YomiruAvatarCache.provider(item.avatar)
-                    : null,
-                child: item.avatar.isEmpty ? const Icon(Icons.person) : null,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(item.nickname.isEmpty ? '未知用户' : item.nickname,
+      child: InkWell(
+        onLongPress: () => _copyDynamicUrl(item),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundImage: item.avatar.isNotEmpty
+                      ? YomiruAvatarCache.provider(item.avatar)
+                      : null,
+                  child: item.avatar.isEmpty ? const Icon(Icons.person) : null,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(item.nickname.isEmpty ? '未知用户' : item.nickname,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                Text(item.time,
+                    style:
+                        TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+              ]),
+              const SizedBox(height: 12),
+              if (item.title.isNotEmpty && item.summary.trim().isNotEmpty) ...[
+                Text(item.title,
                     style: const TextStyle(fontWeight: FontWeight.w600)),
-              ),
-              Text(item.time,
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-            ]),
-            const SizedBox(height: 12),
-            if (item.title.isNotEmpty) ...[
-              Text(item.title,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 4),
+                const SizedBox(height: 4),
+              ],
+              if (item.displayContent.trim().isNotEmpty)
+                _renderContent(item.displayContent),
+              _mediaGallery(item.media),
+              if (poll != null) _pollCard(poll),
+              const SizedBox(height: 8),
+              Text('评论 ${item.commentCount} · 赞 ${item.likeCount}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
             ],
-            if (item.summary.isNotEmpty) _renderContent(item.summary),
-            _mediaGallery(item.media),
-            if (poll != null) _pollCard(poll),
-            const SizedBox(height: 8),
-            Text('评论 ${item.commentCount} · 赞 ${item.likeCount}',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  Future<void> _copyDynamicUrl(LKDynamicItem item) async {
+    if (item.dynamicId <= 0) return;
+    await Clipboard.setData(
+        ClipboardData(text: dynamicWebsiteUrl(item.dynamicId)));
+    if (mounted) showLkError(context, '已复制动态链接');
   }
 
   Widget _pollCard(LKDynamicPoll poll) {
