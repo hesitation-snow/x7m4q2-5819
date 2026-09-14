@@ -33,6 +33,7 @@ import 'reader_catalog_sheet.dart';
 import '../services/illustration_cache.dart';
 import '../services/app_motion.dart';
 import '../services/reader_volume_keys.dart';
+import '../services/reader_system_ui.dart';
 
 /// 正文块:文本(可含链接区间)或插画
 class _BodyBlock {
@@ -166,6 +167,7 @@ class _ReaderPageState extends State<ReaderPage>
   bool _bgFollowSystem = true;
   bool _keepOn = false;
   bool _hideBar = false;
+  late final ReaderSystemUi _systemUi;
   bool _tapTurn = false;
   bool _volumeTurn = false;
   bool _readerForeground = true;
@@ -294,6 +296,7 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void initState() {
     super.initState();
+    _systemUi = ReaderSystemUi();
     WidgetsBinding.instance.addObserver(this);
     _title = widget.chapterTitle;
     _effectiveVolumeId = widget.volumeId;
@@ -910,7 +913,7 @@ class _ReaderPageState extends State<ReaderPage>
     _progressN.dispose();
     _positionController.dispose();
     WakelockPlus.disable();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    _systemUi.dispose();
     super.dispose();
   }
 
@@ -920,6 +923,7 @@ class _ReaderPageState extends State<ReaderPage>
     _volumeKeys.sync(force: _readerForeground);
     switch (state) {
       case AppLifecycleState.resumed:
+        _applyImmersive();
         LKReadingSession.shared.resume();
         _startReadingReportTimer();
       case AppLifecycleState.inactive:
@@ -1057,8 +1061,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _applyImmersive() {
-    SystemChrome.setEnabledSystemUIMode(
-        _hideBar ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge);
+    _systemUi.apply(_hideBar);
   }
 
   void _syncVolumeKeys() => _volumeKeys.sync();
@@ -1067,7 +1070,10 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void didPushNext() => _syncVolumeKeys();
   @override
-  void didPopNext() => _syncVolumeKeys();
+  void didPopNext() {
+    _syncVolumeKeys();
+    _applyImmersive();
+  }
   @override
   void didPop() => _syncVolumeKeys();
 
