@@ -880,6 +880,7 @@ class LKPublicBook {
   final String summary;
   final String updatedAt;
   final String typeText;
+  final bool isBrave;
 
   LKPublicBook({
     this.bookId = 0,
@@ -888,7 +889,27 @@ class LKPublicBook {
     this.summary = '',
     this.updatedAt = '',
     this.typeText = '',
+    this.isBrave = false,
   });
+
+  LKPublicBook copyWith({
+    int? bookId,
+    String? title,
+    String? coverUrl,
+    String? summary,
+    String? updatedAt,
+    String? typeText,
+    bool? isBrave,
+  }) =>
+      LKPublicBook(
+        bookId: bookId ?? this.bookId,
+        title: title ?? this.title,
+        coverUrl: coverUrl ?? this.coverUrl,
+        summary: summary ?? this.summary,
+        updatedAt: updatedAt ?? this.updatedAt,
+        typeText: typeText ?? this.typeText,
+        isBrave: isBrave ?? this.isBrave,
+      );
 
   factory LKPublicBook.fromJson(Map<String, dynamic> j) => LKPublicBook(
         bookId: _jsonInt(j['book_id'] ??
@@ -913,6 +934,7 @@ class LKPublicBook {
                 j['kind'] ??
                 '')
             .toString(),
+        isBrave: _isBraveBook(j),
       );
 }
 
@@ -1065,6 +1087,7 @@ class LKBook {
   final int unreadChapterCount;
   final double ratingScore;
   final String updatedAt;
+  final bool isBrave;
   LKBook({
     this.bookId = 0,
     this.title = '',
@@ -1087,6 +1110,7 @@ class LKBook {
     this.unreadChapterCount = 0,
     this.ratingScore = 0,
     this.updatedAt = '',
+    this.isBrave = false,
   });
   factory LKBook.fromJson(Map<String, dynamic> j) => LKBook(
         bookId: (j['book_id'] as num?)?.toInt() ?? 0,
@@ -1114,6 +1138,7 @@ class LKBook {
         updatedAt: (j['latest_book_updated_at'] as String?) ??
             (j['updated_at'] as String?) ??
             '',
+        isBrave: _isBraveBook(j),
       );
 
   Map<String, dynamic> toJson() => {
@@ -1138,7 +1163,98 @@ class LKBook {
         'unread_chapter_count': unreadChapterCount,
         'rating_score': ratingScore,
         'updated_at': updatedAt,
+        'is_brave': isBrave ? 1 : 0,
       };
+
+  LKBook copyWith({
+    int? bookId,
+    String? title,
+    String? authorName,
+    int? publisherUid,
+    String? publisherName,
+    String? publisherAvatar,
+    bool? publisherFollowed,
+    String? coverUrl,
+    String? summary,
+    List<String>? tags,
+    int? wordCount,
+    int? volumeCount,
+    int? chapterCount,
+    int? defaultVolumeId,
+    int? defaultChapterId,
+    String? serialStatus,
+    bool? isCompleted,
+    String? lastReadChapterTitle,
+    int? unreadChapterCount,
+    double? ratingScore,
+    String? updatedAt,
+    bool? isBrave,
+  }) =>
+      LKBook(
+        bookId: bookId ?? this.bookId,
+        title: title ?? this.title,
+        authorName: authorName ?? this.authorName,
+        publisherUid: publisherUid ?? this.publisherUid,
+        publisherName: publisherName ?? this.publisherName,
+        publisherAvatar: publisherAvatar ?? this.publisherAvatar,
+        publisherFollowed: publisherFollowed ?? this.publisherFollowed,
+        coverUrl: coverUrl ?? this.coverUrl,
+        summary: summary ?? this.summary,
+        tags: tags ?? this.tags,
+        wordCount: wordCount ?? this.wordCount,
+        volumeCount: volumeCount ?? this.volumeCount,
+        chapterCount: chapterCount ?? this.chapterCount,
+        defaultVolumeId: defaultVolumeId ?? this.defaultVolumeId,
+        defaultChapterId: defaultChapterId ?? this.defaultChapterId,
+        serialStatus: serialStatus ?? this.serialStatus,
+        isCompleted: isCompleted ?? this.isCompleted,
+        lastReadChapterTitle:
+            lastReadChapterTitle ?? this.lastReadChapterTitle,
+        unreadChapterCount: unreadChapterCount ?? this.unreadChapterCount,
+        ratingScore: ratingScore ?? this.ratingScore,
+        updatedAt: updatedAt ?? this.updatedAt,
+        isBrave: isBrave ?? this.isBrave,
+      );
+}
+
+bool Function(int bookId)? _externalBraveChecker;
+void setBraveBookChecker(bool Function(int bookId)? checker) {
+  _externalBraveChecker = checker;
+}
+
+bool _isBraveBook(Map<String, dynamic> j) {
+  final bookId = _jsonInt(j['book_id'] ?? j['id']);
+  if (bookId > 0 && (_externalBraveChecker?.call(bookId) ?? false)) {
+    return true;
+  }
+
+  if (_jsonFlag(j['is_brave'] ?? j['isBrave'])) return true;
+  if (_jsonFlag(j['brave_required'] ?? j['braveRequired'])) return true;
+
+  final accessType =
+      (j['access_type'] ?? j['accessType'])?.toString().trim().toLowerCase();
+  if (accessType == 'brave') return true;
+
+  final metaJson = _jsonMap(j['meta_json']);
+  if (metaJson != null) {
+    final braveScope =
+        (metaJson['brave_scope'] as String?)?.trim().toLowerCase();
+    if (braveScope == 'brave') return true;
+  }
+
+  final tags = j['tags'];
+  if (tags is List &&
+      tags.any((t) {
+        final s = t.toString().trim();
+        return s == '勇者' || s == '勇者可读';
+      })) {
+    return true;
+  }
+
+  final badge = (j['display_badge_code'] ?? '').toString().toLowerCase();
+  if (badge.contains('brave')) return true;
+
+  return false;
 }
 
 String _bookSerialStatus(Map<String, dynamic> json) {
@@ -1328,6 +1444,7 @@ class LKChapter {
   final bool locked;
   final bool unlocked;
   final String accessType;
+  final bool braveRequired;
   LKChapter({
     this.chapterId = 0,
     this.chapterNo = 0,
@@ -1336,6 +1453,7 @@ class LKChapter {
     this.locked = false,
     this.unlocked = false,
     this.accessType = '',
+    this.braveRequired = false,
   });
   factory LKChapter.fromJson(Map<String, dynamic> j) => LKChapter(
         chapterId: (j['chapter_id'] as num?)?.toInt() ?? 0,
@@ -1346,9 +1464,10 @@ class LKChapter {
         unlocked: (j['unlocked'] as num?)?.toInt() == 1,
         accessType:
             (j['access_type'] as String?) ?? (j['accessType'] as String?) ?? '',
+        braveRequired: _jsonFlag(j['brave_required'] ?? j['braveRequired']),
       );
 
-  bool get braveOnly => accessType.toLowerCase() == 'brave';
+  bool get braveOnly => accessType.toLowerCase() == 'brave' || braveRequired;
 }
 
 class LKChapterPage {
@@ -1863,6 +1982,7 @@ class LKHistoryItem {
   final int progressPercent;
   final String lastReadAt;
   final int unreadChapters;
+  final bool isBrave;
   LKHistoryItem({
     this.bookId = 0,
     this.title = '',
@@ -1874,6 +1994,7 @@ class LKHistoryItem {
     this.progressPercent = 0,
     this.lastReadAt = '',
     this.unreadChapters = 0,
+    this.isBrave = false,
   });
   factory LKHistoryItem.fromJson(Map<String, dynamic> j) {
     final h =
@@ -1895,6 +2016,7 @@ class LKHistoryItem {
       progressPercent: (h['progress_percent'] as num?)?.toInt() ?? 0,
       lastReadAt: (h['last_read_at'] as String?) ?? '',
       unreadChapters: (j['unread_chapter_count'] as num?)?.toInt() ?? 0,
+      isBrave: _isBraveBook(j),
     );
   }
 }
@@ -2392,7 +2514,20 @@ class LKMessageSummary {
       likeCount: type == 'like' ? 0 : likeCount,
       fanCount: type == 'fan' ? 0 : fanCount,
       systemCount: type == 'system' ? 0 : systemCount,
-      dmCount: dmCount,
+      dmCount: type == 'dm' ? 0 : dmCount,
+    );
+    return cleared._withCalculatedTotal();
+  }
+
+  LKMessageSummary clearDm([int count = 0]) {
+    final nextDm = count <= 0 ? 0 : (dmCount - count).clamp(0, dmCount);
+    final cleared = LKMessageSummary(
+      replyCount: replyCount,
+      mentionCount: mentionCount,
+      likeCount: likeCount,
+      fanCount: fanCount,
+      systemCount: systemCount,
+      dmCount: nextDm,
     );
     return cleared._withCalculatedTotal();
   }
@@ -2414,6 +2549,27 @@ class LKMessageSummary {
         systemCount: systemCount,
         dmCount: dmCount,
       );
+}
+
+class LKMessageUser {
+  final int uid;
+  final String nickname;
+  final String avatar;
+
+  const LKMessageUser({
+    this.uid = 0,
+    this.nickname = '',
+    this.avatar = '',
+  });
+
+  factory LKMessageUser.fromJson(Map<String, dynamic> j) {
+    final uid = _jsonInt(j['uid'] ?? j['id'] ?? j['user_id']);
+    final nickname =
+        (j['nickname'] ?? j['username'] ?? j['name'] ?? '').toString();
+    final avatar =
+        (j['avatar'] ?? j['avatar_url'] ?? j['headimgurl'] ?? '').toString();
+    return LKMessageUser(uid: uid, nickname: nickname, avatar: avatar);
+  }
 }
 
 class LKMessageItem {
@@ -2443,6 +2599,13 @@ class LKMessageItem {
   final int targetReplyId;
   final int rootCommentId;
   final bool unread;
+  final List<LKMessageUser> likeUsers;
+  final int likeCount;
+  final String jumpType;
+  final String jumpTarget;
+  final String jumpValue;
+  final String targetBookTitle;
+  final String targetCover;
 
   const LKMessageItem({
     this.id = 0,
@@ -2471,6 +2634,13 @@ class LKMessageItem {
     this.targetReplyId = 0,
     this.rootCommentId = 0,
     this.unread = false,
+    this.likeUsers = const [],
+    this.likeCount = 0,
+    this.jumpType = '',
+    this.jumpTarget = '',
+    this.jumpValue = '',
+    this.targetBookTitle = '',
+    this.targetCover = '',
   });
 
   factory LKMessageItem.fromJson(Map<String, dynamic> j, {String type = ''}) {
@@ -2518,6 +2688,97 @@ class LKMessageItem {
       'fan' => '新的粉丝',
       _ => '系统通知',
     };
+
+    final usersRaw = j['users'] ?? j['like_users'] ?? j['actors'];
+    final likeUsers = <LKMessageUser>[];
+    if (usersRaw is List) {
+      for (final u in usersRaw) {
+        if (u is Map) {
+          likeUsers.add(LKMessageUser.fromJson(Map<String, dynamic>.from(u)));
+        }
+      }
+    }
+    final singleUid = _jsonInt(j['source_uid'] ??
+        source['uid'] ??
+        source['id'] ??
+        peer['uid'] ??
+        peer['id']);
+    final singleNick = (peer['nickname'] ??
+            peer['username'] ??
+            peer['name'] ??
+            source['nickname'] ??
+            source['name'] ??
+            '')
+        .toString();
+    final singleAvatar = (peer['avatar'] ??
+            peer['avatar_url'] ??
+            source['avatar'] ??
+            source['avatar_url'] ??
+            '')
+        .toString();
+    if (likeUsers.isEmpty &&
+        (singleUid > 0 || singleNick.isNotEmpty || singleAvatar.isNotEmpty)) {
+      likeUsers.add(LKMessageUser(
+        uid: singleUid,
+        nickname: singleNick,
+        avatar: singleAvatar,
+      ));
+    }
+
+    final likeCount = _jsonInt(j['like_count'] ??
+        j['likes_count'] ??
+        (likeUsers.isNotEmpty ? likeUsers.length : 0));
+
+    final jumpMap = _jsonMap(j['message_jump'] ?? j['jump']) ??
+        const <String, dynamic>{};
+    final jumpType = (j['jump_type'] ??
+            jumpMap['type'] ??
+            jumpMap['jump_type'] ??
+            '')
+        .toString();
+    final jumpTarget = (j['jump_target'] ??
+            jumpMap['target'] ??
+            jumpMap['jump_target'] ??
+            '')
+        .toString();
+    final jumpValue = (j['jump_value'] ??
+            jumpMap['value'] ??
+            jumpMap['jump_value'] ??
+            '')
+        .toString();
+
+    final targetBookTitle = (j['target_book_title'] ??
+            target['book_title'] ??
+            target['title'] ??
+            book['title'] ??
+            book['book_name'] ??
+            '')
+        .toString();
+    final targetCover = (j['cover_url'] ??
+            j['cover'] ??
+            target['cover_url'] ??
+            target['cover'] ??
+            book['cover_url'] ??
+            book['cover'] ??
+            '')
+        .toString();
+
+    final resolvedTargetType = (j['target_type'] ??
+            j['targetType'] ??
+            target['type'] ??
+            jumpType)
+        .toString();
+
+    final rawQuoteText = (j['quote_text'] ??
+            j['target_text'] ??
+            j['target_brief'] ??
+            j['quote_info'] ??
+            target['text'] ??
+            target['content'] ??
+            dynamicItem['content'] ??
+            '')
+        .toString();
+
     return LKMessageItem(
       id: _jsonInt(j['message_id'] ?? j['id']),
       type: type,
@@ -2529,32 +2790,24 @@ class LKMessageItem {
           j['message'] ??
           j['summary'] ??
           j['body']),
-      quoteText: (j['quote_text'] ?? '').toString(),
-      relatedTitle: (j['related_title'] ?? '').toString(),
+      quoteText: rawQuoteText,
+      relatedTitle: (j['related_title'] ?? targetBookTitle).toString(),
       categoryText: (j['category_text'] ?? '').toString(),
       sourceName: (j['source_name'] ??
               source['nickname'] ??
               source['name'] ??
-              peer['nickname'] ??
-              '')
+              singleNick)
           .toString(),
       sourceAvatar: (j['source_avatar'] ??
               source['avatar'] ??
               source['avatar_url'] ??
-              peer['avatar'] ??
-              peer['avatar_url'] ??
-              '')
+              singleAvatar)
           .toString(),
-      uid: _jsonInt(j['source_uid'] ??
-          source['uid'] ??
-          source['id'] ??
-          peer['uid'] ??
-          peer['id']),
-      nickname: (peer['nickname'] ?? peer['username'] ?? peer['name'] ?? '')
-          .toString(),
-      avatar: (peer['avatar'] ?? peer['avatar_url'] ?? '').toString(),
+      uid: singleUid,
+      nickname: singleNick,
+      avatar: singleAvatar,
       time: (j['created_at'] ?? j['time'] ?? '').toString(),
-      targetType: (j['target_type'] ?? '').toString(),
+      targetType: resolvedTargetType,
       targetUrl: targetUrl,
       contentTargetUrl: contentTargetUrl,
       targetBookId: firstPositiveId([
@@ -2562,6 +2815,7 @@ class LKMessageItem {
         target['book_id'],
         book['book_id'],
         dynamicItem['book_id'],
+        if (jumpType == 'book') jumpValue,
         idFromUrl(RegExp(r'/book/(\d+)')),
         idFromUrl(RegExp(r'/reader/(\d+)/\d+')),
       ]),
@@ -2583,12 +2837,14 @@ class LKMessageItem {
         target['dynamic_id'],
         dynamicItem['dynamic_id'],
         dynamicItem['id'],
+        if (jumpType == 'dynamic' || jumpType == 'activity') jumpValue,
         idFromUrl(RegExp(r'/activity/(\d+)')),
       ]),
       targetCommentId: firstPositiveId([
         j['target_comment_id'],
         comment['comment_id'],
         comment['id'],
+        if (jumpType == 'comment') jumpValue,
         urlCommentId,
       ]),
       targetReplyId: firstPositiveId([
@@ -2604,6 +2860,13 @@ class LKMessageItem {
         urlCommentId,
       ]),
       unread: unread,
+      likeUsers: likeUsers,
+      likeCount: likeCount,
+      jumpType: jumpType,
+      jumpTarget: jumpTarget,
+      jumpValue: jumpValue,
+      targetBookTitle: targetBookTitle,
+      targetCover: targetCover,
     );
   }
 }

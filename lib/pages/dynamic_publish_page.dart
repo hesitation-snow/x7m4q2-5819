@@ -1,3 +1,4 @@
+import '../services/app_motion.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -63,6 +64,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
       return;
     }
     final code = await showModalBottomSheet<String>(
+      sheetAnimationStyle: AppMotion.style(context),
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
@@ -99,6 +101,8 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                                     child: Padding(
                                       padding: const EdgeInsets.all(3),
                                       child: CachedNetworkImage(
+                                        fadeOutDuration: AppMotion.duration(context, 1000),
+                                        fadeInDuration: AppMotion.duration(context, 500),
                                         imageUrl:
                                             YomiruEmojiCatalog.normalizeUrl(
                                                 item.url),
@@ -166,7 +170,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('发动态'),
+        title: const Text('发布动态'),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
@@ -201,6 +205,8 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                       ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: CachedNetworkImage(
+                          fadeOutDuration: AppMotion.duration(context, 1000),
+                          fadeInDuration: AppMotion.duration(context, 500),
                           imageUrl: entry.value.url,
                           width: 84,
                           height: 84,
@@ -231,7 +237,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                     ? const SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: MotionProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.image_outlined),
                 label: const Text('添加图片'),

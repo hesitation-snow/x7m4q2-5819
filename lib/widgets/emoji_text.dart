@@ -1,3 +1,4 @@
+import '../services/app_motion.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
@@ -73,6 +74,8 @@ class LkEmojiText extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 1),
                   child: CachedNetworkImage(
+                    fadeOutDuration: AppMotion.duration(context, 1000),
+                    fadeInDuration: AppMotion.duration(context, 500),
                     imageUrl: segment.imageUrl!,
                     width: emojiSize,
                     height: emojiSize,

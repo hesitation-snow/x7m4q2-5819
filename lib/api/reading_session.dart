@@ -1,7 +1,6 @@
 /// 当前进程内最近一次真实阅读会话。
 ///
-/// 这份数据只用于调试服务器的阅读进度校验，不负责发放轻币，也不接受
-/// 外部传入的虚构时长或进度。正式版不会展示依赖它的诊断入口。
+/// 只记录前台阅读时长，供服务器校验任务进度；不负责发放奖励。
 class LKReadingSnapshot {
   final int bookId;
   final int volumeId;
@@ -21,9 +20,14 @@ class LKReadingSnapshot {
 }
 
 class LKReadingSession {
-  LKReadingSession._();
+  LKReadingSession({DateTime Function()? now}) : _now = now ?? DateTime.now;
 
-  static final shared = LKReadingSession._();
+  static final shared = LKReadingSession();
+  final DateTime Function() _now;
+  int accountId = 0;
+  int accountRevision = 0;
+  int generation = 0;
+  int reportedSeconds = 0;
 
   int _bookId = 0;
   int _volumeId = 0;
@@ -33,19 +37,40 @@ class LKReadingSession {
   DateTime? _activeSince;
   Duration _activeDuration = Duration.zero;
 
+  void reset() {
+    generation++;
+    reportedSeconds = 0;
+    accountId = 0;
+    accountRevision = 0;
+    _startedAt = null;
+    _activeSince = null;
+    _activeDuration = Duration.zero;
+  }
+
   void begin({
     required int bookId,
     required int volumeId,
     required int chapterId,
+    int accountId = 0,
+    int accountRevision = 0,
   }) {
-    if (_bookId == bookId && _chapterId == chapterId && _startedAt != null) {
+    if (_bookId == bookId &&
+        _chapterId == chapterId &&
+        _startedAt != null &&
+        this.accountId == accountId &&
+        this.accountRevision == accountRevision) {
+      resume();
       return;
     }
+    this.accountId = accountId;
+    this.accountRevision = accountRevision;
+    generation++;
+    reportedSeconds = 0;
     _bookId = bookId;
     _volumeId = volumeId;
     _chapterId = chapterId;
     _progressPercent = 0;
-    _startedAt = DateTime.now();
+    _startedAt = _now();
     _activeSince = _startedAt;
     _activeDuration = Duration.zero;
   }
@@ -54,14 +79,14 @@ class LKReadingSession {
   void pause() {
     final activeSince = _activeSince;
     if (activeSince == null) return;
-    _activeDuration += DateTime.now().difference(activeSince);
+    _activeDuration += _now().difference(activeSince);
     _activeSince = null;
   }
 
   /// 恢复前台计时。不会重置当前章节的累计时长。
   void resume() {
     if (_startedAt == null || _activeSince != null) return;
-    _activeSince = DateTime.now();
+    _activeSince = _now();
   }
 
   void update({required int volumeId, required double progress}) {
@@ -77,7 +102,7 @@ class LKReadingSession {
     var activeDuration = _activeDuration;
     final activeSince = _activeSince;
     if (activeSince != null) {
-      activeDuration += DateTime.now().difference(activeSince);
+      activeDuration += _now().difference(activeSince);
     }
     return LKReadingSnapshot(
       bookId: _bookId,

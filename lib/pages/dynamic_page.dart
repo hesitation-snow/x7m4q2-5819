@@ -1,3 +1,4 @@
+import '../services/app_motion.dart';
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -17,12 +18,17 @@ import '../widgets/emoji_text.dart';
 import 'book_detail_page.dart';
 import 'dynamic_publish_page.dart';
 import 'media_viewer_page.dart';
-import 'search_page.dart';
+import 'comments_page.dart';
 import 'user_profile_page.dart';
 
-/// 手机保持单列；平板按可用逻辑尺寸显示双列，宽屏平板横屏显示三列。
+/// 窄屏单列；平板和开启横屏适配的手机按可用宽度排列。
 int dynamicFeedColumnCount(Size viewport) {
-  if (viewport.shortestSide < 600 || viewport.width < 560) return 1;
+  final phoneLandscape = LKStore.landscapeEnabled.value &&
+      viewport.width > viewport.height;
+  if ((!phoneLandscape && viewport.shortestSide < 600) ||
+      viewport.width < 560) {
+    return 1;
+  }
   return viewport.width >= 1100 ? 3 : 2;
 }
 
@@ -316,12 +322,7 @@ class _DynamicPageState extends State<DynamicPage> {
   void _showRefreshError() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _items.isEmpty) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(
-          content: Text('连接失败，已保留上次内容'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      showFloatingPrompt(context, '连接失败，请检查网络连接');
     });
   }
 
@@ -410,7 +411,7 @@ class _DynamicPageState extends State<DynamicPage> {
                             const Spacer(),
                             if (LKClient.shared.session.isLoggedIn)
                               IconButton(
-                                tooltip: '发动态',
+                                tooltip: '发布动态',
                                 visualDensity: VisualDensity.compact,
                                 icon: const Icon(Icons.edit_note_rounded),
                                 onPressed: () async {
@@ -459,24 +460,50 @@ class _DynamicPageState extends State<DynamicPage> {
 
   Widget _mediaTile(LKDynamicMedia media, {double? width, double? height}) {
     if (media.url.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    final isDataSaver = LKStore.dataSaverMode.value;
     final image = ClipRRect(
       borderRadius: BorderRadius.circular(9),
-      child: CachedNetworkImage(
-        imageUrl: media.url,
-        width: width,
-        height: height,
-        memCacheWidth:
-            width == null ? null : imageCacheDimension(context, width),
-        fit: BoxFit.cover,
-        placeholder: (_, __) => ColoredBox(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: const Center(child: LkLoadingIndicator(size: 22)),
-        ),
-        errorWidget: (_, __, ___) => ColoredBox(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: const Center(child: Icon(Icons.broken_image_outlined)),
-        ),
-      ),
+      child: isDataSaver
+          ? Container(
+              width: width,
+              height: height,
+              color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.image_outlined,
+                        size: 28, color: scheme.onSurfaceVariant),
+                    const SizedBox(height: 4),
+                    Text(
+                      '流量节省模式\n点击查看大图',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 11, color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : CachedNetworkImage(
+              fadeOutDuration: AppMotion.duration(context, 1000),
+              fadeInDuration: AppMotion.duration(context, 500),
+              imageUrl: media.url,
+              width: width,
+              height: height,
+              memCacheWidth:
+                  width == null ? null : imageCacheDimension(context, width),
+              fit: BoxFit.cover,
+              placeholder: (_, __) => ColoredBox(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: const Center(child: LkLoadingIndicator(size: 22)),
+              ),
+              errorWidget: (_, __, ___) => ColoredBox(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: const Center(child: Icon(Icons.broken_image_outlined)),
+              ),
+            ),
     );
     return GestureDetector(
       onTap: () => Navigator.push(
@@ -578,7 +605,7 @@ class _DynamicPageState extends State<DynamicPage> {
     };
     return NotificationListener<ScrollNotification>(
       onNotification: _onFeedScroll,
-      child: RefreshIndicator(
+      child: MotionRefreshIndicator(
         onRefresh: _load,
         child: _error != null && _items.isEmpty
             ? _emptyState(_error!)
@@ -649,12 +676,16 @@ class _DynamicPageState extends State<DynamicPage> {
                                                         : null,
                                                     child: CircleAvatar(
                                                         radius: 16,
-                                                        backgroundImage: d
-                                                                .avatar
-                                                                .isNotEmpty
-                                                            ? YomiruAvatarCache
-                                                                .provider(
-                                                                    d.avatar)
+                                                        backgroundImage: YomiruAvatarCache
+                                                            .providerOrNull(
+                                                                d.avatar),
+                                                        child: YomiruAvatarCache
+                                                                    .providerOrNull(
+                                                                        d.avatar) ==
+                                                                null
+                                                            ? const Icon(
+                                                                Icons.person,
+                                                                size: 18)
                                                             : null),
                                                   ),
                                                   const SizedBox(width: 8),
@@ -694,10 +725,7 @@ class _DynamicPageState extends State<DynamicPage> {
                                                                       child:
                                                                           GestureDetector(
                                                                         onTap: () =>
-                                                                            ScaffoldMessenger.of(context).showSnackBar(
-                                                                          SnackBar(
-                                                                              content: Text(medal.name)),
-                                                                        ),
+                                                                            showFloatingPrompt(context, medal.name.isEmpty ? '未知勋章' : medal.name),
                                                                         child:
                                                                             CircleAvatar(
                                                                           radius:
@@ -706,7 +734,10 @@ class _DynamicPageState extends State<DynamicPage> {
                                                                               .colorScheme
                                                                               .surfaceContainerHighest,
                                                                           backgroundImage:
-                                                                              YomiruAvatarCache.provider(medal.image),
+                                                                              YomiruMedalCache.providerOrNull(medal.image),
+                                                                          child: YomiruMedalCache.providerOrNull(medal.image) == null
+                                                                              ? const Icon(Icons.military_tech, size: 10)
+                                                                              : null,
                                                                         ),
                                                                       ),
                                                                     )),
@@ -896,6 +927,7 @@ class _DynamicPageState extends State<DynamicPage> {
     if (d.dynamicId <= 0) return;
     final loggedIn = LKClient.shared.session.isLoggedIn;
     showModalBottomSheet<void>(
+      sheetAnimationStyle: AppMotion.style(context),
       context: context,
       builder: (_) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -912,7 +944,7 @@ class _DynamicPageState extends State<DynamicPage> {
           if (loggedIn) ...[
             ListTile(
               leading: const Icon(Icons.thumb_up_outlined),
-              title: Text(d.liked ? '取消赞' : '点赞'),
+              title: Text(d.liked ? '取消点赞' : '点赞'),
               onTap: () async {
                 Navigator.pop(context);
                 await LKApi.toggleDynamicLike(d.dynamicId, !d.liked);

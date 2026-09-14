@@ -1,3 +1,5 @@
+import '../services/app_motion.dart';
+import '../widgets/account_scope.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -10,7 +12,7 @@ import '../widgets/common.dart';
 import 'book_detail_page.dart';
 import 'dm_chat_page.dart';
 import 'reader_page.dart';
-import 'search_page.dart';
+import 'comments_page.dart';
 import 'user_profile_page.dart';
 
 class _MessageCategory {
@@ -25,9 +27,9 @@ const _messageCategories = <_MessageCategory>[
   _MessageCategory('reply', '回复', Icons.reply_outlined),
   _MessageCategory('mention', '提及', Icons.alternate_email),
   _MessageCategory('like', '点赞', Icons.favorite_border),
-  _MessageCategory('fan', '关注', Icons.person_add_alt_1_outlined),
-  _MessageCategory('system', '系统', Icons.notifications_none),
   _MessageCategory('dm', '私信', Icons.mail_outline),
+  _MessageCategory('system', '系统', Icons.notifications_none),
+  _MessageCategory('fan', '关注', Icons.person_add_alt_1_outlined),
 ];
 
 class _NotificationFeedData {
@@ -45,15 +47,26 @@ class _NotificationFeedData {
 }
 
 /// 消息中心。通知分类和私信会话分别加载，切换分类时保留已取得的数据。
-class MessagesPage extends StatefulWidget {
+class MessagesPage extends StatelessWidget {
   const MessagesPage({super.key});
 
   @override
-  State<MessagesPage> createState() => _MessagesPageState();
+  Widget build(BuildContext context) => AccountScope(
+        title: '消息中心',
+        builder: (_) => const _MessagesPageBody(),
+      );
 }
 
-class _MessagesPageState extends State<MessagesPage>
+class _MessagesPageBody extends StatefulWidget {
+  const _MessagesPageBody();
+
+  @override
+  State<_MessagesPageBody> createState() => _MessagesPageState();
+}
+
+class _MessagesPageState extends State<_MessagesPageBody>
     with SingleTickerProviderStateMixin {
+  final _session = SessionStamp();
   late final TabController _tabs;
   late final Map<String, _NotificationFeedData> _feeds;
   int _activeIndex = 0;
@@ -71,10 +84,11 @@ class _MessagesPageState extends State<MessagesPage>
   void initState() {
     super.initState();
     _feeds = {
-      for (final category in _messageCategories.take(5))
+      for (final category
+          in _messageCategories.where((item) => item.type != 'dm'))
         category.type: _NotificationFeedData(),
     };
-    _tabs = TabController(length: _messageCategories.length, vsync: this)
+    _tabs = MotionTabController(length: _messageCategories.length, vsync: this)
       ..addListener(_handleTabChanged);
     unawaited(_loadSummary());
     unawaited(_loadNotification(_messageCategories.first.type));
@@ -111,7 +125,7 @@ class _MessagesPageState extends State<MessagesPage>
     setState(() => _summaryLoading = true);
     try {
       final summary = await LKApi.messageUnread();
-      if (!mounted) return;
+      if (!mounted || !_session.isCurrent) return;
       if (mutationAtStart != _summaryMutationSerial) return;
       setState(() => _summary = summary);
       final type = _messageCategories[_activeIndex].type;
@@ -125,7 +139,9 @@ class _MessagesPageState extends State<MessagesPage>
     } catch (_) {
       // 各分类仍可独立使用，未读汇总失败不遮挡消息列表。
     } finally {
-      if (mounted) setState(() => _summaryLoading = false);
+      if (mounted && _session.isCurrent) {
+        setState(() => _summaryLoading = false);
+      }
     }
   }
 
@@ -162,7 +178,9 @@ class _MessagesPageState extends State<MessagesPage>
 
     try {
       final result = await LKApi.messages(type, page);
-      if (!mounted || request != feed.requestSerial) return;
+      if (!mounted || !_session.isCurrent || request != feed.requestSerial) {
+        return;
+      }
       setState(() {
         feed.items =
             loadMore ? _mergeMessages(feed.items, result.items) : result.items;
@@ -179,7 +197,9 @@ class _MessagesPageState extends State<MessagesPage>
         unawaited(_markCategoryRead(type));
       }
     } catch (error) {
-      if (!mounted || request != feed.requestSerial) return;
+      if (!mounted || !_session.isCurrent || request != feed.requestSerial) {
+        return;
+      }
       setState(() {
         if (loadMore) {
           feed.loadMoreError = error;
@@ -188,7 +208,7 @@ class _MessagesPageState extends State<MessagesPage>
         }
       });
     } finally {
-      if (mounted && request == feed.requestSerial) {
+      if (mounted && _session.isCurrent && request == feed.requestSerial) {
         setState(() {
           feed.loading = false;
           feed.refreshing = false;
@@ -218,7 +238,7 @@ class _MessagesPageState extends State<MessagesPage>
     feed.markingRead = true;
     try {
       await LKApi.markMessagesRead('category', category: type);
-      if (!mounted) return;
+      if (!mounted || !_session.isCurrent) return;
       setState(() {
         _summaryMutationSerial++;
         feed.markedRead = true;
@@ -236,7 +256,7 @@ class _MessagesPageState extends State<MessagesPage>
     setState(() => _markingAll = true);
     try {
       await LKApi.markMessagesRead('all');
-      if (!mounted) return;
+      if (!mounted || !_session.isCurrent) return;
       setState(() {
         _summaryMutationSerial++;
         _summary = _summary.clearNotifications();
@@ -244,13 +264,47 @@ class _MessagesPageState extends State<MessagesPage>
           feed.markedRead = true;
         }
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('通知已全部标记为已读')),
-      );
+      showFloatingPrompt(context, '通知已全部标记为已读');
     } catch (error) {
-      if (mounted) showLkError(context, error);
+      if (mounted && _session.isCurrent) showLkError(context, error);
     } finally {
-      if (mounted) setState(() => _markingAll = false);
+      if (mounted && _session.isCurrent) setState(() => _markingAll = false);
+    }
+  }
+
+  Future<void> _markAllDmsRead() async {
+    if (_markingAll) return;
+    setState(() => _markingAll = true);
+    try {
+      final unreadConversations =
+          _conversations.where((c) => c.unread > 0).toList();
+      if (unreadConversations.isNotEmpty) {
+        await Future.wait(
+          unreadConversations
+              .map((c) => LKApi.dmMarkRead(c.peerUid).catchError((_) {})),
+        );
+      }
+      if (!mounted || !_session.isCurrent) return;
+      setState(() {
+        _summaryMutationSerial++;
+        _summary = _summary.clearDm();
+        _conversations = [
+          for (final c in _conversations)
+            LKConversation(
+              peerUid: c.peerUid,
+              peerName: c.peerName,
+              peerAvatar: c.peerAvatar,
+              lastMessage: c.lastMessage,
+              updatedAt: c.updatedAt,
+              unread: 0,
+            ),
+        ];
+      });
+      showFloatingPrompt(context, '私信已全部标记为已读');
+    } catch (error) {
+      if (mounted && _session.isCurrent) showLkError(context, error);
+    } finally {
+      if (mounted && _session.isCurrent) setState(() => _markingAll = false);
     }
   }
 
@@ -263,13 +317,17 @@ class _MessagesPageState extends State<MessagesPage>
     });
     try {
       final conversations = await LKApi.dmConversations();
-      if (!mounted || request != _dmRequestSerial) return;
+      if (!mounted || !_session.isCurrent || request != _dmRequestSerial) {
+        return;
+      }
       setState(() => _conversations = conversations);
     } catch (error) {
-      if (!mounted || request != _dmRequestSerial) return;
+      if (!mounted || !_session.isCurrent || request != _dmRequestSerial) {
+        return;
+      }
       setState(() => _dmError = error);
     } finally {
-      if (mounted && request == _dmRequestSerial) {
+      if (mounted && _session.isCurrent && request == _dmRequestSerial) {
         setState(() => _dmLoading = false);
       }
     }
@@ -304,12 +362,16 @@ class _MessagesPageState extends State<MessagesPage>
         ),
         actions: [
           IconButton(
-            tooltip: '通知全部已读',
-            onPressed: _markingAll ? null : _markAllNotificationsRead,
+            tooltip: type == 'dm' ? '私信全部已读' : '通知全部已读',
+            onPressed: _markingAll
+                ? null
+                : () => type == 'dm'
+                    ? _markAllDmsRead()
+                    : _markAllNotificationsRead(),
             icon: _markingAll
                 ? const SizedBox.square(
                     dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: MotionProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.done_all_rounded),
           ),
@@ -321,7 +383,7 @@ class _MessagesPageState extends State<MessagesPage>
         ),
       ),
       body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
+        duration: AppMotion.duration(context, 180),
         child: KeyedSubtree(
           key: ValueKey(type),
           child: type == 'dm' ? _buildDmBody() : _buildNotificationBody(type),
@@ -354,21 +416,24 @@ class _MessagesPageState extends State<MessagesPage>
   Widget _buildNotificationBody(String type) {
     final feed = _feeds[type]!;
     if (feed.loading && feed.items.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: MotionProgressIndicator());
     }
     if (feed.error != null && feed.items.isEmpty) {
       return _refreshableState(
         icon: Icons.cloud_off_outlined,
-        title: '消息加载失败',
+        title: type == 'like' ? '点赞消息刷新失败，请稍后重试' : '消息加载失败',
         detail: feed.error.toString(),
         onRefresh: _refreshActive,
       );
     }
     if (feed.items.isEmpty) {
       return _refreshableState(
-        icon: Icons.mark_email_read_outlined,
-        title:
-            '暂时没有${_messageCategories.firstWhere((e) => e.type == type).label}消息',
+        icon: type == 'like'
+            ? Icons.favorite_border_rounded
+            : Icons.mark_email_read_outlined,
+        title: type == 'like'
+            ? '暂无点赞消息'
+            : '暂时没有${_messageCategories.firstWhere((e) => e.type == type).label}消息',
         onRefresh: _refreshActive,
       );
     }
@@ -382,7 +447,7 @@ class _MessagesPageState extends State<MessagesPage>
         }
         return false;
       },
-      child: RefreshIndicator(
+      child: MotionRefreshIndicator(
         onRefresh: _refreshActive,
         child: ListView.builder(
           key: PageStorageKey<String>('messages-$type'),
@@ -394,7 +459,11 @@ class _MessagesPageState extends State<MessagesPage>
             if (index == feed.items.length) {
               return _messageFooter(type, feed);
             }
-            return _messageCard(feed.items[index], feed.markedRead);
+            final item = feed.items[index];
+            if (type == 'like' || item.type == 'like') {
+              return _likeMessageCard(item, feed.markedRead);
+            }
+            return _messageCard(item, feed.markedRead);
           },
         ),
       ),
@@ -408,7 +477,7 @@ class _MessagesPageState extends State<MessagesPage>
         child: Center(
           child: SizedBox.square(
             dimension: 22,
-            child: CircularProgressIndicator(strokeWidth: 2),
+            child: MotionProgressIndicator(strokeWidth: 2),
           ),
         ),
       );
@@ -440,6 +509,281 @@ class _MessagesPageState extends State<MessagesPage>
     return const SizedBox(height: 8);
   }
 
+  Widget _likeMessageCard(LKMessageItem item, bool categoryMarkedRead) {
+    final scheme = Theme.of(context).colorScheme;
+    final canOpen = _canOpen(item);
+
+    // 点赞目标文案解析
+    final targetType = item.targetType.toLowerCase();
+    final String targetName;
+    if (targetType.contains('paragraph')) {
+      targetName = '你的段评';
+    } else if (targetType.contains('comment') || targetType.contains('reply')) {
+      targetName = '你的评论';
+    } else if (targetType.contains('book')) {
+      targetName = '你的书评';
+    } else if (item.targetDynamicId > 0 && item.targetCommentId == 0) {
+      targetName = '你的动态';
+    } else if (item.targetCommentId > 0) {
+      targetName = '你的评论';
+    } else if (item.targetChapterId > 0) {
+      targetName = '你的段评';
+    } else if (item.targetBookId > 0) {
+      targetName = '你的书评';
+    } else {
+      targetName = '你的内容';
+    }
+
+    final users = item.likeUsers;
+    final firstUser = users.isNotEmpty ? users.first : null;
+    final firstNick = (firstUser?.nickname.isNotEmpty ?? false)
+        ? firstUser!.nickname
+        : (item.nickname.isNotEmpty
+            ? item.nickname
+            : (item.sourceName.isNotEmpty ? item.sourceName : '书友'));
+    final firstUid = firstUser?.uid ?? (item.uid > 0 ? item.uid : 0);
+
+    final isMulti = users.length > 1 || item.likeCount > 1;
+    final count = item.likeCount > users.length ? item.likeCount : users.length;
+
+    // 引用正文
+    final quoteContent = item.quoteText.isNotEmpty
+        ? item.quoteText
+        : (item.content.isNotEmpty ? item.content : '');
+
+    return Card(
+      key: ValueKey<String>(_messageKey(item)),
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: canOpen ? () => _openMessage(item) : null,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 11),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildLikeAvatars(item),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text.rich(
+                            TextSpan(
+                              children: [
+                                WidgetSpan(
+                                  alignment: PlaceholderAlignment.middle,
+                                  child: GestureDetector(
+                                    onTap: firstUid > 0
+                                        ? () =>
+                                            openUserProfile(context, firstUid)
+                                        : null,
+                                    child: Text(
+                                      firstNick,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        color: scheme.onSurface,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: isMulti
+                                      ? ' 等 $count 人赞了$targetName'
+                                      : ' 赞了$targetName',
+                                  style: TextStyle(
+                                    color: scheme.onSurfaceVariant,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (item.unread && !categoryMarkedRead)
+                          Container(
+                            width: 8,
+                            height: 8,
+                            margin: const EdgeInsets.only(top: 5, left: 8),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: scheme.primary,
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (item.time.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        _formatTime(item.time),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    if (quoteContent.isNotEmpty ||
+                        item.targetBookTitle.isNotEmpty ||
+                        item.relatedTitle.isNotEmpty) ...[
+                      const SizedBox(height: 7),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHighest
+                              .withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color:
+                                scheme.outlineVariant.withValues(alpha: 0.35),
+                            width: 0.5,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (item.targetBookTitle.isNotEmpty ||
+                                item.relatedTitle.isNotEmpty) ...[
+                              Row(
+                                children: [
+                                  Icon(Icons.auto_stories_outlined,
+                                      size: 13, color: scheme.primary),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      item.targetBookTitle.isNotEmpty
+                                          ? item.targetBookTitle
+                                          : item.relatedTitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: scheme.primary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (quoteContent.isNotEmpty)
+                                const SizedBox(height: 4),
+                            ],
+                            if (quoteContent.isNotEmpty)
+                              Text(
+                                quoteContent,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: scheme.onSurfaceVariant,
+                                  height: 1.35,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (canOpen)
+                Padding(
+                  padding: const EdgeInsets.only(top: 14),
+                  child: Icon(Icons.chevron_right_rounded,
+                      size: 20, color: scheme.onSurfaceVariant),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLikeAvatars(LKMessageItem item) {
+    final scheme = Theme.of(context).colorScheme;
+    final users = item.likeUsers;
+
+    if (users.isEmpty) {
+      final avatar = item.avatar.isNotEmpty ? item.avatar : item.sourceAvatar;
+      return CircleAvatar(
+        radius: 20,
+        backgroundColor: scheme.surfaceContainerHighest,
+        backgroundImage: YomiruAvatarCache.providerOrNull(avatar),
+        child: YomiruAvatarCache.providerOrNull(avatar) == null
+            ? Icon(Icons.favorite_rounded, size: 18, color: scheme.primary)
+            : null,
+      );
+    }
+
+    if (users.length == 1) {
+      final u = users.first;
+      return GestureDetector(
+        onTap: u.uid > 0 ? () => openUserProfile(context, u.uid) : null,
+        child: CircleAvatar(
+          radius: 20,
+          backgroundColor: scheme.surfaceContainerHighest,
+          backgroundImage: YomiruAvatarCache.providerOrNull(u.avatar),
+          child: YomiruAvatarCache.providerOrNull(u.avatar) == null
+              ? Icon(Icons.person_outline,
+                  size: 18, color: scheme.onSurfaceVariant)
+              : null,
+        ),
+      );
+    }
+
+    // 2 ~ 3 个头像层叠展示（对应官方 _LikeAvatars）
+    final displayUsers = users.take(3).toList(growable: false);
+    const avatarRadius = 15.0;
+    const overlap = 14.0;
+    final totalWidth = (avatarRadius * 2) + (displayUsers.length - 1) * overlap;
+
+    return SizedBox(
+      width: totalWidth,
+      height: avatarRadius * 2,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (int i = 0; i < displayUsers.length; i++) ...[
+            Positioned(
+              left: i * overlap,
+              child: GestureDetector(
+                onTap: displayUsers[i].uid > 0
+                    ? () => openUserProfile(context, displayUsers[i].uid)
+                    : null,
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: scheme.surface,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: CircleAvatar(
+                    radius: avatarRadius,
+                    backgroundColor: scheme.surfaceContainerHighest,
+                    backgroundImage: YomiruAvatarCache.providerOrNull(
+                        displayUsers[i].avatar),
+                    child: YomiruAvatarCache.providerOrNull(
+                                displayUsers[i].avatar) ==
+                            null
+                        ? Icon(Icons.person_outline,
+                            size: 14, color: scheme.onSurfaceVariant)
+                        : null,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _messageCard(LKMessageItem item, bool categoryMarkedRead) {
     final scheme = Theme.of(context).colorScheme;
     final actor = item.nickname.isNotEmpty ? item.nickname : item.sourceName;
@@ -459,9 +803,8 @@ class _MessagesPageState extends State<MessagesPage>
               CircleAvatar(
                 radius: 21,
                 backgroundColor: scheme.surfaceContainerHighest,
-                backgroundImage:
-                    avatar.isEmpty ? null : YomiruAvatarCache.provider(avatar),
-                child: avatar.isEmpty
+                backgroundImage: YomiruAvatarCache.providerOrNull(avatar),
+                child: YomiruAvatarCache.providerOrNull(avatar) == null
                     ? Icon(_categoryFor(item.type).icon,
                         size: 21, color: scheme.onSurfaceVariant)
                     : null,
@@ -558,6 +901,7 @@ class _MessagesPageState extends State<MessagesPage>
       item.targetDynamicId > 0 ||
       item.targetBookId > 0 ||
       item.uid > 0 ||
+      (item.likeUsers.isNotEmpty && item.likeUsers.first.uid > 0) ||
       item.targetUrl.isNotEmpty ||
       item.contentTargetUrl.isNotEmpty;
 
@@ -577,18 +921,42 @@ class _MessagesPageState extends State<MessagesPage>
       await Navigator.push(
         context,
         MaterialPageRoute(
-            builder: (_) => CommentsPage(dynamicId: item.targetDynamicId)),
+            builder: (_) => CommentsPage(
+                  dynamicId: item.targetDynamicId,
+                  // 针对动态详情直接打开评论区
+                )),
       );
       return;
     }
     if (item.targetBookId > 0) {
+      final targetType = item.targetType.toLowerCase();
+      if (item.targetChapterId > 0 &&
+          (targetType.contains('paragraph') || !_targetsComments(item))) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ReaderPage(
+              bookId: item.targetBookId,
+              bookTitle: item.targetBookTitle.isNotEmpty
+                  ? item.targetBookTitle
+                  : item.relatedTitle,
+              chapterId: item.targetChapterId,
+              chapterTitle: item.title,
+              volumeId: item.targetVolumeId,
+            ),
+          ),
+        );
+        return;
+      }
       if (_targetsComments(item)) {
         await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => CommentsPage(
               bookId: item.targetBookId,
-              bookTitle: item.relatedTitle,
+              bookTitle: item.targetBookTitle.isNotEmpty
+                  ? item.targetBookTitle
+                  : item.relatedTitle,
               volumeId: item.targetVolumeId,
             ),
           ),
@@ -601,7 +969,9 @@ class _MessagesPageState extends State<MessagesPage>
           MaterialPageRoute(
             builder: (_) => ReaderPage(
               bookId: item.targetBookId,
-              bookTitle: item.relatedTitle,
+              bookTitle: item.targetBookTitle.isNotEmpty
+                  ? item.targetBookTitle
+                  : item.relatedTitle,
               chapterId: item.targetChapterId,
               chapterTitle: item.title,
               volumeId: item.targetVolumeId,
@@ -617,8 +987,11 @@ class _MessagesPageState extends State<MessagesPage>
       );
       return;
     }
-    if (item.uid > 0) {
-      openUserProfile(context, item.uid);
+    final targetUid = item.uid > 0
+        ? item.uid
+        : (item.likeUsers.isNotEmpty ? item.likeUsers.first.uid : 0);
+    if (targetUid > 0) {
+      openUserProfile(context, targetUid);
       return;
     }
     final raw = item.contentTargetUrl.isNotEmpty
@@ -634,7 +1007,7 @@ class _MessagesPageState extends State<MessagesPage>
 
   Widget _buildDmBody() {
     if (_dmLoading && _conversations.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: MotionProgressIndicator());
     }
     if (_dmError != null && _conversations.isEmpty) {
       return _refreshableState(
@@ -651,7 +1024,7 @@ class _MessagesPageState extends State<MessagesPage>
         onRefresh: _refreshActive,
       );
     }
-    return RefreshIndicator(
+    return MotionRefreshIndicator(
       onRefresh: _refreshActive,
       child: ListView.builder(
         key: const PageStorageKey<String>('messages-dm'),
@@ -674,12 +1047,12 @@ class _MessagesPageState extends State<MessagesPage>
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         leading: CircleAvatar(
           backgroundColor: scheme.surfaceContainerHighest,
-          backgroundImage: conversation.peerAvatar.isEmpty
-              ? null
-              : YomiruAvatarCache.provider(conversation.peerAvatar),
-          child: conversation.peerAvatar.isEmpty
-              ? Icon(Icons.person_outline, color: scheme.onSurfaceVariant)
-              : null,
+          backgroundImage:
+              YomiruAvatarCache.providerOrNull(conversation.peerAvatar),
+          child:
+              YomiruAvatarCache.providerOrNull(conversation.peerAvatar) == null
+                  ? Icon(Icons.person_outline, color: scheme.onSurfaceVariant)
+                  : null,
         ),
         title: Text(conversation.peerName.isEmpty
             ? '用户 ${conversation.peerUid}'
@@ -710,6 +1083,25 @@ class _MessagesPageState extends State<MessagesPage>
           ],
         ),
         onTap: () async {
+          if (conversation.unread > 0) {
+            setState(() {
+              _summary = _summary.clearDm(conversation.unread);
+              _conversations = [
+                for (final c in _conversations)
+                  if (c.peerUid == conversation.peerUid)
+                    LKConversation(
+                      peerUid: c.peerUid,
+                      peerName: c.peerName,
+                      peerAvatar: c.peerAvatar,
+                      lastMessage: c.lastMessage,
+                      updatedAt: c.updatedAt,
+                      unread: 0,
+                    )
+                  else
+                    c,
+              ];
+            });
+          }
           await Navigator.push(
             context,
             MaterialPageRoute(
@@ -719,7 +1111,7 @@ class _MessagesPageState extends State<MessagesPage>
               ),
             ),
           );
-          if (!mounted) return;
+          if (!mounted || !_session.isCurrent) return;
           await Future.wait<void>([_loadDm(), _loadSummary()]);
         },
       ),
@@ -733,7 +1125,7 @@ class _MessagesPageState extends State<MessagesPage>
     required Future<void> Function() onRefresh,
   }) {
     final scheme = Theme.of(context).colorScheme;
-    return RefreshIndicator(
+    return MotionRefreshIndicator(
       onRefresh: onRefresh,
       child: LayoutBuilder(
         builder: (context, constraints) => ListView(

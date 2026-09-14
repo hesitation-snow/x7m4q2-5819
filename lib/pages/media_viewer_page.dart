@@ -1,13 +1,26 @@
+import '../services/app_motion.dart';
+import 'dart:typed_data';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
+
+import '../services/illustration_cache_manager.dart';
+import '../services/illustration_identity.dart';
+import '../widgets/common.dart';
 
 /// 社交内容图片查看器:预览图保持紧凑,详情页支持缩放和保存。
 class MediaViewerPage extends StatefulWidget {
   final String url;
+  final BaseCacheManager? cacheManager;
 
-  const MediaViewerPage({super.key, required this.url});
+  const MediaViewerPage({
+    super.key,
+    required this.url,
+    this.cacheManager,
+  });
 
   @override
   State<MediaViewerPage> createState() => _MediaViewerPageState();
@@ -20,25 +33,37 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
     if (_saving) return;
     setState(() => _saving = true);
     try {
-      final response = await http.get(Uri.parse(widget.url), headers: const {
-        'User-Agent':
-            'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 LKFlutter',
-      }).timeout(const Duration(seconds: 30));
-      if (response.statusCode != 200) {
-        throw Exception('下载失败 HTTP ${response.statusCode}');
+      List<int>? bytes;
+      if (widget.cacheManager is IllustrationCacheManager) {
+        // 保存与当前大图展示共用同一请求，不能另开 http.get 绕过插画队列。
+        final file = await widget.cacheManager!.getSingleFile(widget.url);
+        bytes = await file.readAsBytes();
+      } else if (widget.cacheManager != null) {
+        final fileInfo = await widget.cacheManager!.getFileFromCache(widget.url);
+        if (fileInfo != null && fileInfo.file.existsSync()) {
+          bytes = await fileInfo.file.readAsBytes();
+        }
+      }
+      if (bytes == null) {
+        final response = await http.get(Uri.parse(widget.url), headers: const {
+          'User-Agent':
+              'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 LKFlutter',
+        }).timeout(const Duration(seconds: 30));
+        if (response.statusCode != 200) {
+          throw Exception('下载失败 HTTP ${response.statusCode}');
+        }
+        bytes = response.bodyBytes;
       }
       await Gal.putImageBytes(
-        response.bodyBytes,
+        Uint8List.fromList(bytes),
         name: 'yomiru_${DateTime.now().millisecondsSinceEpoch}',
         album: 'Yomiru',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('已保存到相册')));
+      showFloatingPrompt(context, '已保存到相册');
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('保存失败: $e')));
+        showFloatingPrompt(context, '保存失败: $e');
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -59,10 +84,16 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
               maxScale: 6,
               child: Center(
                 child: CachedNetworkImage(
+                  fadeOutDuration: AppMotion.duration(context, 1000),
+                  fadeInDuration: AppMotion.duration(context, 500),
+                  cacheManager: widget.cacheManager,
+                  cacheKey: widget.cacheManager is IllustrationCacheManager
+                      ? illustrationCacheKey(widget.url)
+                      : null,
                   imageUrl: widget.url,
                   fit: BoxFit.contain,
                   progressIndicatorBuilder: (_, __, ___) =>
-                      const CircularProgressIndicator(color: Colors.white70),
+                      const MotionProgressIndicator(color: Colors.white70),
                   errorWidget: (_, __, ___) => const Icon(
                     Icons.broken_image_outlined,
                     color: Colors.white54,
@@ -91,7 +122,7 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(
+                      child: MotionProgressIndicator(
                           strokeWidth: 2, color: Colors.white),
                     )
                   : const Icon(Icons.download_rounded),

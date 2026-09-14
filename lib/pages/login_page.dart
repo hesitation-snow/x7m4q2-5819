@@ -1,3 +1,4 @@
+import '../services/app_motion.dart';
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
@@ -123,7 +124,7 @@ class _LoginPageState extends State<LoginPage> {
                           ? const SizedBox(
                               width: 20,
                               height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2))
+                              child: MotionProgressIndicator(strokeWidth: 2))
                           : Text(s.isLoggedIn ? '重新登录' : '登 录'),
                     ),
                     if (s.isLoggedIn) ...[

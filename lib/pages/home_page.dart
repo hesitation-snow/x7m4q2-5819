@@ -1,7 +1,9 @@
+import '../services/app_motion.dart';
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -13,16 +15,18 @@ import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../services/app_update_service.dart';
 import '../widgets/common.dart';
+import '../widgets/filtered_list_continuation.dart';
 import 'book_detail_page.dart';
 import 'brave_quiz_page.dart';
 import 'channel_page.dart';
-import 'dm_chat_page.dart';
+import 'settings_page.dart';
 import 'dynamic_page.dart';
 import 'follow_list_page.dart';
 import 'login_page.dart';
 import 'medal_center_page.dart';
 import 'messages_page.dart';
 import 'search_page.dart';
+import 'shelf_page.dart';
 import 'user_profile_page.dart';
 import 'welfare_page.dart';
 
@@ -260,26 +264,28 @@ class _HomePageState extends State<HomePage> {
                                           radius: 15,
                                           backgroundColor:
                                               Colors.indigo.shade100,
-                                          backgroundImage: LKClient.shared
-                                                  .session.avatar.isNotEmpty
-                                              ? YomiruAvatarCache.provider(
+                                          backgroundImage:
+                                              YomiruAvatarCache.providerOrNull(
                                                   LKClient
-                                                      .shared.session.avatar)
-                                              : null,
-                                          child: LKClient.shared.session.avatar
-                                                  .isNotEmpty
-                                              ? null
-                                              : const Icon(Icons.person,
-                                                  size: 18,
-                                                  color: Colors.indigo),
+                                                      .shared.session.avatar),
+                                          child:
+                                              YomiruAvatarCache.providerOrNull(
+                                                          LKClient
+                                                              .shared
+                                                              .session
+                                                              .avatar) ==
+                                                      null
+                                                  ? const Icon(Icons.person,
+                                                      size: 18,
+                                                      color: Colors.indigo)
+                                                  : null,
                                         ),
                                       ),
                                     ),
                                     const SizedBox(width: 2),
                                     // 首页排版切换(网格/单列)
                                     IconButton(
-                                      tooltip:
-                                          _listMode ? '切换为网格排版' : '切换为单列排版',
+                                      tooltip: _listMode ? '切换为网格' : '切换为列表',
                                       visualDensity: VisualDensity.compact,
                                       icon: Icon(
                                         _listMode
@@ -318,7 +324,7 @@ class _HomePageState extends State<HomePage> {
                                       },
                                       child: AnimatedContainer(
                                         duration:
-                                            const Duration(milliseconds: 180),
+                                            AppMotion.duration(context, 180),
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 16, vertical: 5),
                                         alignment: Alignment.center,
@@ -394,6 +400,7 @@ class _HomePageState extends State<HomePage> {
               child: SingleChildScrollView(
                 physics: const NeverScrollableScrollPhysics(),
                 child: NavigationBar(
+                  animationDuration: AppMotion.duration(context, 500),
                   selectedIndex: _tab,
                   onDestinationSelected: _selectTab,
                   destinations: const [
@@ -460,6 +467,7 @@ class _FeedTabState extends State<FeedTab> {
   void initState() {
     super.initState();
     LKClient.sessionRev.addListener(_onSessionChanged);
+    LKStore.hideBraveBooks.addListener(_onHideBraveRev);
     if (_showRecommend) _loadRecommend();
     unawaited(_startLoad());
   }
@@ -467,7 +475,12 @@ class _FeedTabState extends State<FeedTab> {
   @override
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionChanged);
+    LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
     super.dispose();
+  }
+
+  void _onHideBraveRev() {
+    if (mounted) setState(() {});
   }
 
   String _feedCacheKey({
@@ -648,12 +661,7 @@ class _FeedTabState extends State<FeedTab> {
   void _showRefreshError() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _items.isEmpty) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(
-          content: Text('连接失败，已保留上次内容'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      showFloatingPrompt(context, '连接失败，请检查网络连接');
     });
   }
 
@@ -691,23 +699,52 @@ class _FeedTabState extends State<FeedTab> {
           icon: Icons.inbox_outlined, text: '没有获取到内容,请点击重试');
     }
 
-    final recommendCount = _showRecommend ? 1 : 0;
+    final hideBrave = LKStore.hideBraveBooks.value;
+    final visibleItems =
+        hideBrave ? _items.where((b) => !b.isBrave).toList() : _items;
+    final visibleRecommend = hideBrave
+        ? _recommendBooks.where((b) => !b.isBrave).toList()
+        : _recommendBooks;
+    final showRecommend = _showRecommend && visibleRecommend.isNotEmpty;
+
+    if (visibleItems.isEmpty) {
+      return MotionRefreshIndicator(
+        onRefresh: _refresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            if (showRecommend) _HomeRecommendCard(books: visibleRecommend),
+            FilteredListContinuation(
+              message: '当前列表作品已根据“隐藏勇者书籍”设置过滤',
+              hasMore: _hasMore,
+              loading: _loading,
+              error: _error,
+              pageKey: _page,
+              onLoadMore: () => _load(_page + 1, true),
+            )
+          ],
+        ),
+      );
+    }
+
+    final recommendCount = showRecommend ? 1 : 0;
     final listView = ListView.builder(
+      scrollCacheExtent: const ScrollCacheExtent.viewport(1.0),
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
-      itemCount: _items.length + recommendCount + (_hasMore ? 1 : 0),
+      itemCount: visibleItems.length + recommendCount + (_hasMore ? 1 : 0),
       itemBuilder: (_, i) {
-        if (_showRecommend && i == 0) {
+        if (showRecommend && i == 0) {
           return _HomeRecommendCard(
-            books: _recommendBooks,
+            books: visibleRecommend,
             padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
           );
         }
         final j = i - recommendCount;
-        if (j >= _items.length) {
+        if (j >= visibleItems.length) {
           return _loadMoreFooter();
         }
-        final book = _items[j];
+        final book = visibleItems[j];
         return BookCard(
           book: book,
           rank: _rankOf(j),
@@ -721,21 +758,23 @@ class _FeedTabState extends State<FeedTab> {
     );
 
     final gridView = CustomScrollView(
+      scrollCacheExtent: const ScrollCacheExtent.viewport(1.0),
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: [
-        if (_showRecommend)
-          SliverToBoxAdapter(child: _HomeRecommendCard(books: _recommendBooks)),
+        if (showRecommend)
+          SliverToBoxAdapter(
+              child: _HomeRecommendCard(books: visibleRecommend)),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
           sliver: SliverGrid(
             gridDelegate: bookGridDelegate(),
             delegate: SliverChildBuilderDelegate(
               (_, i) {
-                if (i >= _items.length) {
+                if (i >= visibleItems.length) {
                   // 触底加载更多(延迟到帧后,避免 build 期间 setState)
                   return _loadMoreFooter();
                 }
-                final book = _items[i];
+                final book = visibleItems[i];
                 return BookGridCard(
                   book: book,
                   rank: _rankOf(i),
@@ -746,21 +785,21 @@ class _FeedTabState extends State<FeedTab> {
                   ),
                 );
               },
-              childCount: _items.length + (_hasMore ? 1 : 0),
+              childCount: visibleItems.length + (_hasMore ? 1 : 0),
             ),
           ),
         ),
       ],
     );
 
-    return RefreshIndicator(
+    return MotionRefreshIndicator(
       onRefresh: _refresh,
       child: _listMode ? listView : gridView,
     );
   }
 
   Widget _refreshableHint({required IconData icon, required String text}) {
-    return RefreshIndicator(
+    return MotionRefreshIndicator(
       onRefresh: _refresh,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -879,7 +918,8 @@ class _HomeRecommendCard extends StatelessWidget {
                             url: b.coverUrl,
                             width: 96,
                             height: 128,
-                            radius: 10),
+                            radius: 10,
+                            isBrave: b.isBrave),
                         const SizedBox(height: 5),
                         Text(
                           b.title,
@@ -1034,7 +1074,11 @@ class _SectionTabState extends State<SectionTab> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     CoverImage(
-                        url: b.coverUrl, width: 143, height: 191, radius: 10),
+                        url: b.coverUrl,
+                        width: 143,
+                        height: 191,
+                        radius: 10,
+                        isBrave: b.isBrave),
                     const SizedBox(height: 6),
                     Text(
                       b.title,
@@ -1059,7 +1103,7 @@ class _SectionTabState extends State<SectionTab> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return RefreshIndicator(
+    return MotionRefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -1160,7 +1204,18 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
   @override
   void initState() {
     super.initState();
+    LKStore.hideBraveBooks.addListener(_onHideBraveRev);
     _load();
+  }
+
+  @override
+  void dispose() {
+    LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    super.dispose();
+  }
+
+  void _onHideBraveRev() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _load() async {
@@ -1205,14 +1260,20 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
       return Center(
           child: Text(_error!, style: const TextStyle(color: Colors.grey)));
     }
-    return RefreshIndicator(
+    final hideBrave = LKStore.hideBraveBooks.value;
+    final visibleItems = hideBrave
+        ? _items
+            .where((h) => h is! LKHistoryItem || !h.isBrave)
+            .toList(growable: false)
+        : _items;
+    return MotionRefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: _items.length,
+        itemCount: visibleItems.length,
         separatorBuilder: (_, __) => const SizedBox(height: 2),
         itemBuilder: (_, i) {
-          final h = _items[i];
+          final h = visibleItems[i];
           return InkWell(
             // 历史项点击进详情页(详情页有"继续阅读"按钮),长按删除
             onTap: () => Navigator.push(
@@ -1254,7 +1315,11 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                     padding: const EdgeInsets.all(10),
                     child: Row(children: [
                       CoverImage(
-                          url: h.coverUrl, width: 50, height: 66, radius: 8),
+                          url: h.coverUrl,
+                          width: 50,
+                          height: 66,
+                          radius: 8,
+                          isBrave: h is LKHistoryItem ? h.isBrave : false),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
@@ -1340,13 +1405,22 @@ class _MyTabState extends State<MyTab> {
     super.initState();
     // 登录/登出后刷新用户卡片
     LKClient.sessionRev.addListener(_onRev);
+    LKClient.followChanged.addListener(_onFollowChanged);
     _reloadProfile();
   }
 
   @override
   void dispose() {
     LKClient.sessionRev.removeListener(_onRev);
+    LKClient.followChanged.removeListener(_onFollowChanged);
     super.dispose();
+  }
+
+  void _onFollowChanged() {
+    if (LKClient.followChanged.value?.viewerUid ==
+        LKClient.shared.session.uid) {
+      unawaited(_reloadProfile());
+    }
   }
 
   void _onRev() {
@@ -1452,7 +1526,7 @@ class _MyTabState extends State<MyTab> {
     final nickname =
         profile?.nickname.isNotEmpty == true ? profile!.nickname : s.nickname;
     final profileUid = profile != null && profile.uid > 0 ? profile.uid : s.uid;
-    return RefreshIndicator(
+    return MotionRefreshIndicator(
       onRefresh: () => _reloadProfile(waitForMessages: true),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -1487,10 +1561,10 @@ class _MyTabState extends State<MyTab> {
                             child: CircleAvatar(
                               radius: 28,
                               backgroundColor: scheme.surfaceContainerHighest,
-                              backgroundImage: avatar.isNotEmpty
-                                  ? YomiruAvatarCache.provider(avatar)
-                                  : null,
-                              child: avatar.isEmpty
+                              backgroundImage:
+                                  YomiruAvatarCache.providerOrNull(avatar),
+                              child: YomiruAvatarCache.providerOrNull(avatar) ==
+                                      null
                                   ? Icon(Icons.person,
                                       size: 30, color: scheme.onSurfaceVariant)
                                   : null,
@@ -1532,7 +1606,7 @@ class _MyTabState extends State<MyTab> {
                   if (_profileLoading && profile == null)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Center(child: CircularProgressIndicator()),
+                      child: Center(child: MotionProgressIndicator()),
                     ),
                   if (profile != null) _profileSummary(profile),
                   if (_profileError != null && profile == null)
@@ -1609,13 +1683,12 @@ class _MyTabState extends State<MyTab> {
   }
 
   void _showMedalName(String name) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(name.isEmpty ? '未知勋章' : name)),
-    );
+    showFloatingPrompt(context, name.isEmpty ? '未知勋章' : name);
   }
 
   Future<void> _confirmOpenBraveQuiz() async {
     final open = await showDialog<bool>(
+      animationStyle: AppMotion.style(context),
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('进入勇者考试？'),
@@ -1655,7 +1728,14 @@ class _MyTabState extends State<MyTab> {
               _profileChip(Icons.workspace_premium_outlined,
                   profile.levelName.isEmpty ? '等级未知' : profile.levelName),
               _profileChip(
-                  Icons.monetization_on_outlined, '${profile.coin} 轻币'),
+                Icons.monetization_on_outlined,
+                '${profile.coin} 轻币',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const WelfareCoinRecordsPage()),
+                ),
+              ),
               _profileChip(
                 profile.isBrave ? Icons.shield_outlined : Icons.person_outline,
                 profile.isBrave ? '勇者' : '普通用户',
@@ -1752,10 +1832,8 @@ class _MyTabState extends State<MyTab> {
                 radius: 16,
                 backgroundColor:
                     Theme.of(context).colorScheme.surfaceContainerHighest,
-                backgroundImage: medal.image.isNotEmpty
-                    ? YomiruMedalCache.provider(medal.image)
-                    : null,
-                child: medal.image.isEmpty
+                backgroundImage: YomiruMedalCache.providerOrNull(medal.image),
+                child: YomiruMedalCache.providerOrNull(medal.image) == null
                     ? const Icon(Icons.military_tech, size: 18)
                     : null,
               ),

@@ -1,12 +1,17 @@
+import '../services/app_motion.dart';
+import 'dart:ui' as ui;
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
+import '../api/store.dart';
 
 /// 选择退出范围。返回 true 表示同时退出其他设备，false 表示仅退出本机，
 /// null 表示取消。
 Future<bool?> showLogoutScopeDialog(BuildContext context) {
   return showModalBottomSheet<bool>(
+    sheetAnimationStyle: AppMotion.style(context),
     context: context,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
@@ -180,7 +185,7 @@ class LkLoadingIndicator extends StatelessWidget {
       child: SizedBox(
         width: size,
         height: size,
-        child: CircularProgressIndicator(
+        child: MotionProgressIndicator(
           strokeWidth: strokeWidth,
           color: color,
         ),
@@ -230,13 +235,15 @@ class LkFadedDivider extends StatelessWidget {
   }
 }
 
-/// 带缓存、圆角与阴影的封面/头像
-class CoverImage extends StatelessWidget {
+/// 带缓存、圆角、阴影与防社死高斯模糊保护的封面/头像
+class CoverImage extends StatefulWidget {
   final String url;
   final double width;
   final double height;
   final double radius;
   final BoxFit fit;
+  final bool isBrave;
+  final bool showPeekButton;
   const CoverImage({
     super.key,
     required this.url,
@@ -244,47 +251,190 @@ class CoverImage extends StatelessWidget {
     this.height = 64,
     this.radius = 8,
     this.fit = BoxFit.cover,
+    this.isBrave = false,
+    this.showPeekButton = true,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final placeholder = Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Colors.indigo.shade100, Colors.indigo.shade200],
-        ),
-        borderRadius: BorderRadius.circular(radius),
-      ),
-      child: Icon(Icons.menu_book_rounded,
-          color: Colors.indigo.shade400, size: width * 0.45),
-    );
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(radius),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+  State<CoverImage> createState() => _CoverImageState();
+}
+
+class _CoverImageState extends State<CoverImage> {
+  bool _revealed = false;
+
+  @override
+  void didUpdateWidget(covariant CoverImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url || oldWidget.isBrave != widget.isBrave) {
+      _revealed = false;
+    }
+  }
+
+  Widget _buildPlaceholder(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double effectiveWidth = widget.width.isFinite && widget.width > 0
+            ? widget.width
+            : (constraints.maxWidth.isFinite && constraints.maxWidth > 0
+                ? constraints.maxWidth
+                : 72.0);
+        final double iconSize = (effectiveWidth * 0.42).clamp(24.0, 56.0);
+        return Container(
+          width: widget.width.isFinite ? widget.width : null,
+          height: widget.height.isFinite ? widget.height : null,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Colors.indigo.shade100, Colors.indigo.shade200],
+            ),
+            borderRadius: BorderRadius.circular(widget.radius),
           ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
-        child: CachedNetworkImage(
-          imageUrl: url.isEmpty ? kDefaultCover : url,
-          width: width,
-          height: height,
-          memCacheWidth: imageCacheDimension(context, width),
-          fit: fit,
-          placeholder: (_, __) => placeholder,
-          errorWidget: (_, __, ___) => placeholder,
-        ),
-      ),
+          child: Center(
+            child: Icon(
+              Icons.menu_book_rounded,
+              color: Colors.indigo.shade400,
+              size: iconSize,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveUrl = widget.url.trim();
+    final placeholder = _buildPlaceholder(context);
+    final boxWidth = widget.width.isFinite ? widget.width : null;
+    final boxHeight = widget.height.isFinite ? widget.height : null;
+
+    return ValueListenableBuilder<bool>(
+      valueListenable: LKStore.dataSaverMode,
+      builder: (context, dataSaver, _) {
+        if (dataSaver) {
+          return Container(
+            width: boxWidth,
+            height: boxHeight,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(widget.radius),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(widget.radius),
+              child: placeholder,
+            ),
+          );
+        }
+
+        final targetUrl = effectiveUrl.isEmpty ? kDefaultCover : effectiveUrl;
+
+        return ValueListenableBuilder<CoverBlurMode>(
+          valueListenable: LKStore.coverBlurMode,
+          builder: (context, blurMode, _) {
+            final isBlurTarget = switch (blurMode) {
+              CoverBlurMode.all => true,
+              CoverBlurMode.brave => widget.isBrave,
+              CoverBlurMode.none => false,
+            };
+            final shouldBlur = isBlurTarget && !_revealed;
+            final canShowPeek = widget.showPeekButton &&
+                (widget.width > 52 || !widget.width.isFinite);
+
+            Widget image = CachedNetworkImage(
+              fadeOutDuration: AppMotion.duration(context, 1000),
+              fadeInDuration: AppMotion.duration(context, 500),
+              imageUrl: targetUrl,
+              width: boxWidth,
+              height: boxHeight,
+              memCacheWidth: imageCacheDimension(context, widget.width),
+              fit: widget.fit,
+              placeholder: (_, __) => placeholder,
+              errorWidget: (_, __, ___) => effectiveUrl.isNotEmpty &&
+                      targetUrl != kDefaultCover
+                  ? CachedNetworkImage(
+                      fadeOutDuration: AppMotion.duration(context, 1000),
+                      fadeInDuration: AppMotion.duration(context, 500),
+                      imageUrl: kDefaultCover,
+                      width: boxWidth,
+                      height: boxHeight,
+                      memCacheWidth: imageCacheDimension(context, widget.width),
+                      fit: widget.fit,
+                      placeholder: (_, __) => placeholder,
+                      errorWidget: (_, __, ___) => placeholder,
+                    )
+                  : placeholder,
+            );
+
+            if (shouldBlur) {
+              image = ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                child: image,
+              );
+            }
+
+            return Container(
+              width: boxWidth,
+              height: boxHeight,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(widget.radius),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(widget.radius),
+                child: Stack(
+                  fit: StackFit.passthrough,
+                  children: [
+                    image,
+                    if (isBlurTarget && canShowPeek)
+                      Positioned(
+                        top: 5,
+                        right: 5,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => setState(() => _revealed = !_revealed),
+                          child: Container(
+                            padding: const EdgeInsets.all(4.5),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.55),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.25),
+                                  blurRadius: 3,
+                                  offset: const Offset(0, 1),
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              _revealed
+                                  ? Icons.visibility_rounded
+                                  : Icons.visibility_off_rounded,
+                              color: Colors.white,
+                              size: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -306,139 +456,152 @@ class BookCard extends StatelessWidget {
         isDark ? const Color(0xFFECEDF1) : const Color(0xFF263238);
     final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;
     final status = bookStatusLabel(book);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
-      child: Material(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
+    return RepaintBoundary(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
+        child: Material(
+          color: cardColor,
           borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                if (rank != null) _rankBadge(scheme, rank!),
-                if (rank != null) const SizedBox(width: 10),
-                CoverImage(
-                    url: book.coverUrl, width: 76, height: 101, radius: 8),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        book.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            height: 1.3,
-                            color: titleColor),
-                      ),
-                      const SizedBox(height: 5),
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              book.authorName.isEmpty ? '佚名' : book.authorName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: isDark
-                                      ? Colors.grey.shade400
-                                      : Colors.grey.shade600),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          _statusBadge(scheme, status, borderColor),
-                          if (book.unreadChapterCount > 0) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: scheme.primaryContainer,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                '${book.unreadChapterCount} 章更新',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: scheme.onPrimaryContainer,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          // 过长的 tag(如整段书名式 tag)不展示,避免 RIGHT OVERFLOW
-                          ..._shortTags(book.tags)
-                              .take(3)
-                              .map((t) => _tagChip(scheme, t)),
-                          if (book.wordCount > 0)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 6),
-                              child: Text(
-                                _fmtWord(book.wordCount),
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: isDark
-                                        ? Colors.grey.shade500
-                                        : Colors.grey.shade500),
-                              ),
-                            ),
-                        ],
-                      ),
-                      // 小说介绍(单列卡片的简介)
-                      if (book.summary.trim().isNotEmpty) ...[
-                        const SizedBox(height: 6),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  if (rank != null) _rankBadge(scheme, rank!),
+                  if (rank != null) const SizedBox(width: 10),
+                  CoverImage(
+                      key: ValueKey(book.bookId),
+                      url: book.coverUrl,
+                      width: 76,
+                      height: 101,
+                      radius: 8,
+                      isBrave: book.isBrave),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Text(
-                          book.summary,
+                          book.title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 12,
-                              height: 1.45,
-                              color: isDark
-                                  ? Colors.grey.shade400
-                                  : Colors.grey.shade600),
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              height: 1.3,
+                              color: titleColor),
                         ),
-                      ],
-                      // 最后更新时间
-                      if (book.updatedAt.isNotEmpty) ...[
                         const SizedBox(height: 5),
-                        Row(children: [
-                          Icon(Icons.schedule_rounded,
-                              size: 12,
-                              color: isDark
-                                  ? Colors.grey.shade500
-                                  : Colors.grey.shade500),
-                          const SizedBox(width: 4),
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                book.authorName.isEmpty
+                                    ? '佚名'
+                                    : book.authorName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: isDark
+                                        ? Colors.grey.shade400
+                                        : Colors.grey.shade600),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            _statusBadge(scheme, status, borderColor),
+                            if (book.isBrave) ...[
+                              const SizedBox(width: 6),
+                              _braveBadge(scheme),
+                            ],
+                            if (book.unreadChapterCount > 0) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: scheme.primaryContainer,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '${book.unreadChapterCount} 章更新',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: scheme.onPrimaryContainer,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            // 过长的 tag(如整段书名式 tag)不展示,避免 RIGHT OVERFLOW
+                            ..._shortTags(book.tags)
+                                .take(3)
+                                .map((t) => _tagChip(scheme, t)),
+                            if (book.wordCount > 0)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Text(
+                                  _fmtWord(book.wordCount),
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: isDark
+                                          ? Colors.grey.shade500
+                                          : Colors.grey.shade500),
+                                ),
+                              ),
+                          ],
+                        ),
+                        // 小说介绍(单列卡片的简介)
+                        if (book.summary.trim().isNotEmpty) ...[
+                          const SizedBox(height: 6),
                           Text(
-                            '更新于 ${book.updatedAt.length > 16 ? book.updatedAt.substring(0, 16) : book.updatedAt}',
+                            book.summary,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 12,
+                                height: 1.45,
+                                color: isDark
+                                    ? Colors.grey.shade400
+                                    : Colors.grey.shade600),
+                          ),
+                        ],
+                        // 最后更新时间
+                        if (book.updatedAt.isNotEmpty) ...[
+                          const SizedBox(height: 5),
+                          Row(children: [
+                            Icon(Icons.schedule_rounded,
+                                size: 12,
                                 color: isDark
                                     ? Colors.grey.shade500
                                     : Colors.grey.shade500),
-                          ),
-                        ]),
+                            const SizedBox(width: 4),
+                            Text(
+                              '更新于 ${book.updatedAt.length > 16 ? book.updatedAt.substring(0, 16) : book.updatedAt}',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: isDark
+                                      ? Colors.grey.shade500
+                                      : Colors.grey.shade500),
+                            ),
+                          ]),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-                Icon(Icons.chevron_right_rounded,
-                    size: 20,
-                    color:
-                        isDark ? Colors.grey.shade700 : Colors.grey.shade300),
-              ],
+                  Icon(Icons.chevron_right_rounded,
+                      size: 20,
+                      color:
+                          isDark ? Colors.grey.shade700 : Colors.grey.shade300),
+                ],
+              ),
             ),
           ),
         ),
@@ -495,6 +658,26 @@ class BookCard extends StatelessWidget {
     );
   }
 
+  Widget _braveBadge(ColorScheme scheme) {
+    const color = Color(0xFFE53935);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: color.withValues(alpha: 0.4), width: 0.6),
+      ),
+      child: const Text(
+        '勇者',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+
   Widget _tagChip(ColorScheme scheme, String tag) {
     return Container(
       margin: const EdgeInsets.only(right: 5),
@@ -517,6 +700,31 @@ class BookCard extends StatelessWidget {
 
   static String _fmtWord(int n) =>
       n >= 10000 ? '${(n / 10000).toStringAsFixed(1)}万字' : '$n字';
+}
+
+Widget _braveCornerBadge(ColorScheme scheme) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+    decoration: BoxDecoration(
+      color: const Color(0xFFE53935).withValues(alpha: 0.88),
+      borderRadius: BorderRadius.circular(4),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.3),
+          blurRadius: 4,
+          offset: const Offset(0, 1),
+        ),
+      ],
+    ),
+    child: const Text(
+      '勇者',
+      style: TextStyle(
+        fontSize: 9.5,
+        fontWeight: FontWeight.bold,
+        color: Colors.white,
+      ),
+    ),
+  );
 }
 
 /// 过长的 tag(如整段书名式 tag)过滤掉,避免溢出
@@ -546,125 +754,143 @@ class BookGridCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
     final status = bookStatusLabel(book);
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 大封面(3:4)
-          Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: CoverImage(
-                      url: book.coverUrl,
-                      width: double.infinity,
-                      height: double.infinity,
-                      radius: 12),
-                ),
-                if (rank != null)
-                  Positioned(
-                    top: 6,
-                    left: 6,
-                    child: Container(
-                      width: 26,
-                      height: 26,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: rank! <= 3
-                            ? (rank == 1
-                                ? const Color(0xFFF57F17)
-                                : rank == 2
-                                    ? const Color(0xFF78909C)
-                                    : const Color(0xFFBF6B4A))
-                            : Colors.black54,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.25),
-                              blurRadius: 4),
-                        ],
-                      ),
-                      child: Text('$rank',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13)),
-                    ),
+    return RepaintBoundary(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 大封面(3:4)
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: CoverImage(
+                        key: ValueKey(book.bookId),
+                        url: book.coverUrl,
+                        width: double.infinity,
+                        height: double.infinity,
+                        radius: 12,
+                        isBrave: book.isBrave),
                   ),
-                if (book.unreadChapterCount > 0)
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: scheme.primaryContainer.withValues(alpha: 0.94),
-                        borderRadius: BorderRadius.circular(7),
+                  if (rank != null)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Container(
+                        width: 26,
+                        height: 26,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: rank! <= 3
+                              ? (rank == 1
+                                  ? const Color(0xFFF57F17)
+                                  : rank == 2
+                                      ? const Color(0xFF78909C)
+                                      : const Color(0xFFBF6B4A))
+                              : Colors.black54,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.25),
+                                blurRadius: 4),
+                          ],
+                        ),
+                        child: Text('$rank',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13)),
                       ),
-                      child: Text(
-                        '${book.unreadChapterCount} 章更新',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onPrimaryContainer,
+                    ),
+                  if (book.isBrave)
+                    Positioned(
+                      top: 6,
+                      left: rank != null ? 36 : 6,
+                      child: _braveCornerBadge(scheme),
+                    ),
+                  if (book.unreadChapterCount > 0)
+                    Positioned(
+                      top: 6,
+                      right:
+                          (LKStore.coverBlurMode.value == CoverBlurMode.all ||
+                                  (LKStore.coverBlurMode.value ==
+                                          CoverBlurMode.brave &&
+                                      book.isBrave))
+                              ? 34
+                              : 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          color:
+                              scheme.primaryContainer.withValues(alpha: 0.94),
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Text(
+                          '${book.unreadChapterCount} 章更新',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onPrimaryContainer,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                // 状态角标
-                Positioned(
-                  bottom: 6,
-                  right: 6,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(6),
+                  // 状态角标
+                  Positioned(
+                    bottom: 6,
+                    right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(status,
+                          style: const TextStyle(
+                              fontSize: 10, color: Colors.white)),
                     ),
-                    child: Text(status,
-                        style:
-                            const TextStyle(fontSize: 10, color: Colors.white)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              book.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.25,
+                  color: isDark
+                      ? const Color(0xFFECEDF1)
+                      : const Color(0xFF263238)),
+            ),
+            const SizedBox(height: 3),
+            Row(children: [
+              if (book.tags.isNotEmpty)
+                Expanded(
+                  child: Text(
+                    shortTags(book.tags).join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 10.5, color: scheme.primary),
                   ),
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            book.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                fontSize: 13.5,
-                fontWeight: FontWeight.w600,
-                height: 1.25,
-                color:
-                    isDark ? const Color(0xFFECEDF1) : const Color(0xFF263238)),
-          ),
-          const SizedBox(height: 3),
-          Row(children: [
-            if (book.tags.isNotEmpty)
-              Expanded(
-                child: Text(
-                  shortTags(book.tags).join(' · '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10.5, color: scheme.primary),
+              if (book.wordCount > 0)
+                Text(
+                  book.wordCount >= 10000
+                      ? '${(book.wordCount / 10000).toStringAsFixed(1)}万字'
+                      : '${book.wordCount}字',
+                  style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
                 ),
-              ),
-            if (book.wordCount > 0)
-              Text(
-                book.wordCount >= 10000
-                    ? '${(book.wordCount / 10000).toStringAsFixed(1)}万字'
-                    : '${book.wordCount}字',
-                style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
-              ),
-          ]),
-        ],
+            ]),
+          ],
+        ),
       ),
     );
   }
@@ -676,11 +902,46 @@ void showLkError(BuildContext context, Object e) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(
+      snackBarAnimationStyle: AppMotion.style(context),
       SnackBar(
         content: Text(e.toString()),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+}
+
+/// 悬浮气泡提示（与书籍详情页点击书名弹出的悬浮框样式一致）
+void showFloatingPrompt(
+  BuildContext context,
+  String message, {
+  Duration duration = const Duration(seconds: 3),
+}) {
+  final value = message.trim();
+  if (value.isEmpty || !context.mounted) return;
+  final theme = Theme.of(context);
+  final scheme = theme.colorScheme;
+  final isDark = theme.brightness == Brightness.dark;
+  final messenger = ScaffoldMessenger.of(context);
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text(
+          value,
+          style: TextStyle(
+            color: isDark ? scheme.onSurface : scheme.onInverseSurface,
+          ),
+        ),
+        backgroundColor:
+            isDark ? scheme.surfaceContainerHighest : scheme.inverseSurface,
+        duration: duration,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
       ),
     );
 }

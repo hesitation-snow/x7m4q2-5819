@@ -1,3 +1,4 @@
+import '../services/app_motion.dart';
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
@@ -122,6 +123,7 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
       return;
     }
     final confirmed = await showDialog<bool>(
+      animationStyle: AppMotion.style(context),
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('确认交卷？'),
@@ -292,7 +294,7 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
       const SizedBox(height: 18),
       FilledButton(
         onPressed: () => Navigator.pop(context),
-        child: const Text('回到主页'),
+        child: const Text('完成'),
       ),
     ]);
   }
@@ -396,7 +398,7 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
                   ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: MotionProgressIndicator(strokeWidth: 2),
                     )
                   : Text(isLast ? '交卷' : '下一题'),
             ),

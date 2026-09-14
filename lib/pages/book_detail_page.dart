@@ -1,3 +1,4 @@
+import '../services/app_motion.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import '../widgets/common.dart';
 import 'catalog_paging.dart';
 import 'login_page.dart';
 import 'reader_page.dart';
+import 'comments_page.dart';
 import 'search_page.dart';
 import 'user_profile_page.dart';
 
@@ -45,20 +47,23 @@ LKBook _preservePublisher(LKBook book, LKBook? fallback) {
   if (!book.publisherFollowed && fallback.publisherFollowed) {
     data['publisher_followed'] = true;
   }
+  if (!book.isBrave && fallback.isBrave) {
+    data['is_brave'] = 1;
+  }
   return LKBook.fromJson(data);
 }
 
 Widget _braveAccessBadge(BuildContext context) {
-  final color = Theme.of(context).colorScheme.primary;
+  const color = Color(0xFFE53935);
   return Container(
     margin: const EdgeInsets.only(right: 8),
     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
     decoration: BoxDecoration(
       color: color.withValues(alpha: 0.12),
       borderRadius: BorderRadius.circular(5),
-      border: Border.all(color: color.withValues(alpha: 0.35)),
+      border: Border.all(color: color.withValues(alpha: 0.4)),
     ),
-    child: Text('勇者可读',
+    child: const Text('勇者可读',
         style: TextStyle(
             color: color, fontSize: 10.5, fontWeight: FontWeight.w600)),
   );
@@ -144,6 +149,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   void initState() {
     super.initState();
     LKClient.sessionRev.addListener(_onPublisherSessionChanged);
+    LKClient.followChanged.addListener(_onFollowChanged);
     _load();
     _scroll.addListener(() {
       final o = _scroll.offset;
@@ -157,6 +163,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   @override
   void dispose() {
     LKClient.sessionRev.removeListener(_onPublisherSessionChanged);
+    LKClient.followChanged.removeListener(_onFollowChanged);
     _scroll.dispose();
     super.dispose();
   }
@@ -348,9 +355,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
       final page = await LKApi.chapterPage(book.bookId, volume.volumeId, 1,
           forceRefresh: forceRefresh);
       if (!mounted || request != _catalogPreviewRequestSerial) return;
+      final hasBrave = page.items.any((c) => c.braveOnly);
+      if (hasBrave) {
+        unawaited(LKStore.markBookBrave(book.bookId));
+      }
       setState(() {
         _catalogPreview = page.items.take(8).toList(growable: false);
         _catalogPreviewError = null;
+        if (hasBrave && !(_book?.isBrave ?? false)) {
+          _book = _book?.copyWith(isBrave: true);
+        }
       });
     } catch (_) {
       if (mounted && request == _catalogPreviewRequestSerial) {
@@ -492,9 +506,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
       await LKApi.toggleFollow(book.publisherUid, follow);
       if (!mounted || !_publisherRelation.isCurrent(request)) return;
       setState(() => _publisherRelation.complete(request, follow));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(follow ? '已关注' : '已取消关注')),
-      );
+      showFloatingPrompt(context, follow ? '已关注' : '已取消关注');
     } catch (e) {
       if (mounted && _publisherRelation.isCurrent(request)) {
         showLkError(context, '操作失败：$e');
@@ -517,6 +529,19 @@ class _BookDetailPageState extends State<BookDetailPage> {
       initialValue: session.isLoggedIn && book.publisherFollowed,
     );
     if (changed) _publisherFollowBusy = false;
+  }
+
+  void _onFollowChanged() {
+    final change = LKClient.followChanged.value;
+    if (!mounted ||
+        _publisherFollowBusy ||
+        change == null ||
+        change.viewerUid != LKClient.shared.session.uid ||
+        change.targetUid != _book?.publisherUid) {
+      return;
+    }
+    final request = _publisherRelation.beginMutation();
+    setState(() => _publisherRelation.complete(request, change.followed));
   }
 
   void _onPublisherSessionChanged() {
@@ -565,29 +590,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   }
 
   void _showFullBookTitle(String title) {
-    final value = title.trim();
-    if (value.isEmpty || !mounted) return;
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(value,
-              style: TextStyle(
-                  color: isDark ? scheme.onSurface : scheme.onInverseSurface)),
-          backgroundColor:
-              isDark ? scheme.surfaceContainerHighest : scheme.inverseSurface,
-          duration: const Duration(seconds: 4),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-      );
+    showFloatingPrompt(context, title, duration: const Duration(seconds: 4));
   }
 
   Widget _publisherRow(LKBook book) {
@@ -608,13 +611,13 @@ class _BookDetailPageState extends State<BookDetailPage> {
             CircleAvatar(
               radius: 14,
               backgroundColor: scheme.primary.withValues(alpha: 0.12),
-              backgroundImage: book.publisherAvatar.trim().isNotEmpty
-                  ? YomiruAvatarCache.provider(book.publisherAvatar)
-                  : null,
-              child: book.publisherAvatar.trim().isEmpty
-                  ? Icon(Icons.person_outline_rounded,
-                      size: 17, color: scheme.primary)
-                  : null,
+              backgroundImage:
+                  YomiruAvatarCache.providerOrNull(book.publisherAvatar),
+              child:
+                  YomiruAvatarCache.providerOrNull(book.publisherAvatar) == null
+                      ? Icon(Icons.person_outline_rounded,
+                          size: 17, color: scheme.primary)
+                      : null,
             ),
             const SizedBox(width: 7),
             Flexible(
@@ -661,7 +664,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
               child: Text(_error!, style: const TextStyle(color: Colors.grey)))
           : b == null
               ? const LkLoadingIndicator()
-              : RefreshIndicator(
+              : MotionRefreshIndicator(
                   onRefresh: () => _load(forceRefresh: true),
                   child: CustomScrollView(
                     physics: const AlwaysScrollableScrollPhysics(),
@@ -708,7 +711,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                                 url: b.coverUrl,
                                                 width: 112,
                                                 height: 152,
-                                                radius: 10),
+                                                radius: 10,
+                                                isBrave: b.isBrave),
                                             const SizedBox(width: 16),
                                             Expanded(
                                               child: Column(
@@ -760,6 +764,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                                             ? '完结'
                                                             : '连载'),
                                                     const SizedBox(width: 6),
+                                                    if (b.isBrave)
+                                                      _braveAccessBadge(
+                                                          context),
                                                     Text(
                                                         '${b.volumeCount}卷 · ${b.chapterCount}章',
                                                         style: TextStyle(
@@ -977,10 +984,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
                   ),
                 ),
       floatingActionButton: AnimatedSlide(
-        duration: const Duration(milliseconds: 200),
+        duration: AppMotion.duration(context, 200),
         offset: _fabVisible ? Offset.zero : const Offset(0, 2),
         child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 200),
+          duration: AppMotion.duration(context, 200),
           opacity: _fabVisible ? 1 : 0,
           child: FloatingActionButton.extended(
             onPressed: _fabVisible ? _openReading : null,
@@ -1283,6 +1290,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
       setState(() {
         _volumeChapters[id] = chs;
         _volumeErrors.remove(id);
+        if (chs.any((c) => c.braveOnly)) {
+          unawaited(LKStore.markBookBrave(book.bookId));
+          if (!(_book?.isBrave ?? false)) {
+            _book = _book?.copyWith(isBrave: true);
+          }
+        }
       });
     } catch (_) {
       if (!mounted || _volumeChapterRequests[id] != request) return;
@@ -1319,7 +1332,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
             child: SizedBox(
               width: 18,
               height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: MotionProgressIndicator(strokeWidth: 2),
             ),
           ),
         ),
@@ -1583,7 +1596,7 @@ class _ChaptersPageState extends State<ChaptersPage> {
           child: SizedBox(
             width: 22,
             height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2),
+            child: MotionProgressIndicator(strokeWidth: 2),
           ),
         ),
       );
@@ -1676,7 +1689,7 @@ class _ChaptersPageState extends State<ChaptersPage> {
           ),
         ],
       ),
-      body: RefreshIndicator(
+      body: MotionRefreshIndicator(
         onRefresh: _refresh,
         child: _initialLoading && _chapters.isEmpty
             ? _centeredList(const LkLoadingIndicator())

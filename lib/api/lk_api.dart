@@ -6,10 +6,11 @@ import 'package:http/http.dart' as http;
 import 'lk_client.dart';
 import 'models.dart';
 import 'pagination.dart';
+import 'store.dart';
 
 /// 全接口分组封装(静态方法,统一走 LKClient.shared)
 class LKApi {
-  static final LKClient client = LKClient.shared;
+  static LKClient client = LKClient.shared;
   static final Map<String, Future<LKChapterDetail>> _chapterDetailInFlight = {};
 
   static Future<void> _invalidateOwnPublicProfile() async {
@@ -54,11 +55,12 @@ class LKApi {
   }
 
   static Future<void> logout({bool allDevices = true}) async {
+    final uid = client.session.uid;
+    final key = client.session.securityKey;
     if (allDevices && client.session.isLoggedIn) {
-      try {
-        await client.post('/api/bff/logout-v1', client.authed());
-      } catch (_) {}
+      await client.post('/api/bff/logout-v1', client.authed());
     }
+    if (client.session.uid != uid || client.session.securityKey != key) return;
     client.session.clear();
     LKClient.sessionRev.value++;
   }
@@ -212,8 +214,12 @@ class LKApi {
         },
         cacheKey: 'volume_chapters_$bookId-$volumeId-$page-$size',
         forceRefresh: forceRefresh);
-    return LKChapterPage.fromJson(d,
-        fallbackPage: page, fallbackPageSize: size);
+    final chPage =
+        LKChapterPage.fromJson(d, fallbackPage: page, fallbackPageSize: size);
+    if (chPage.items.any((c) => c.braveOnly)) {
+      unawaited(LKStore.markBookBrave(bookId));
+    }
+    return chPage;
   }
 
   static Future<List<LKChapter>> chapters(int bookId, int volumeId, int page,
@@ -280,6 +286,9 @@ class LKApi {
     final braveRequired = accessType == 'brave' ||
         _flag(data['brave_required']) ||
         _flag(data['braveRequired']);
+    if (braveRequired) {
+      unawaited(LKStore.markBookBrave(bookId));
+    }
     final unlocked = _flag(data['unlocked']);
     if (!_hasChapterBody(data) && braveRequired && !unlocked) {
       throw LKException(403, accessMessage, accessRestricted: true);
@@ -863,6 +872,14 @@ class LKApi {
         'client_msg_id': 'app-${DateTime.now().millisecondsSinceEpoch}',
       }));
 
+  static Future<void> dmMarkRead(int peerUid) => client.post(
+      '/api/bff/dm-mark-read-v1',
+      client.authed({
+        'peer_uid': peerUid,
+        'ts': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        'nonce': DateTime.now().microsecondsSinceEpoch.toRadixString(16),
+      }));
+
   // ==================== 用户 / 设置 ====================
 
   static Future<Map<String, dynamic>> myHome() async =>
@@ -1001,12 +1018,18 @@ class LKApi {
   }
 
   static Future<void> toggleFollow(int uid, bool follow) async {
+    final viewerUid = client.session.uid;
+    final key = client.session.securityKey;
     await client.post('/api/bff/toggle-user-follow-v1',
         client.authed({'uid': uid, 'act': follow ? 'follow' : 'unfollow'}));
     await Future.wait([
-      client.invalidateCachePrefix('public_user_${client.session.uid}-$uid-'),
+      client.invalidateCachePrefix('public_user_$viewerUid-$uid-'),
       _invalidateOwnPublicProfile(),
     ]);
+    if (client.session.uid == viewerUid && client.session.securityKey == key) {
+      LKClient.followChanged.value =
+          (viewerUid: viewerUid, targetUid: uid, followed: follow);
+    }
   }
 
   static Future<List<LKMedal>> myMedals() async {
@@ -1072,18 +1095,6 @@ class LKApi {
     if (taskKey.isNotEmpty) body['task_key'] = taskKey;
     return client.post('/api/bff/claim-welfare-task-v1', client.authed(body));
   }
-
-  static Future<Map<String, dynamic>> welfareTreasureBoxDetail() =>
-      client.post('/api/bff/welfare-treasure-box-detail-v1', client.authed());
-
-  static Future<Map<String, dynamic>> claimWelfareTreasureBox(
-          {int campaignId = 0, int campaignDay = 0}) =>
-      client.post(
-          '/api/bff/claim-welfare-treasure-box-v1',
-          client.authed({
-            'campaign_id': campaignId,
-            'campaign_day': campaignDay,
-          }));
 
   static Future<Map<String, dynamic>> welfareCoinRecords(int page,
       {int pageSize = 30}) async {

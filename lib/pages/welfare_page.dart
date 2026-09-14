@@ -1,27 +1,95 @@
+import '../services/app_motion.dart';
+import '../widgets/account_scope.dart';
+import '../widgets/scrollable_status.dart';
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/reading_session.dart';
+import '../services/reading_progress_reporter.dart';
+import '../services/daily_task_claims.dart';
+import '../services/deadline_countdown.dart';
 import '../widgets/common.dart';
+import 'book_detail_page.dart';
+import 'dynamic_page.dart';
+import 'reader_page.dart';
+import 'search_page.dart';
 
 // 本地协议测试开关：默认关闭，需显式 --dart-define 才会编译入口。
 const _enableWelfareProtocolProbe =
     bool.fromEnvironment('YOMIRU_WELFARE_PROTOCOL_PROBE');
 
-/// 任务中心：签到、任务、宝箱和轻币记录。
+enum _TaskItemStatus {
+  claimable,
+  actionable,
+  claimed,
+}
+
+/// 任务中心：签到、阅读、睡觉、日常任务和轻币记录。
 /// 所有请求都走 Yomiru 当前配置的正式站点，不读取其他客户端的服务器地址。
 class WelfarePage extends StatefulWidget {
-  const WelfarePage({super.key});
+  const WelfarePage({super.key, this.readingReporter});
+  final ReadingProgressReporter? readingReporter;
 
   @override
   State<WelfarePage> createState() => _WelfarePageState();
+
+  @visibleForTesting
+  static bool isTaskClaimed(Map<String, dynamic> task) =>
+      _WelfarePageState()._taskClaimed(task);
+
+  @visibleForTesting
+  static bool isTaskClaimable(Map<String, dynamic> task) =>
+      _WelfarePageState()._taskClaimable(task);
+
+  @visibleForTesting
+  static String taskButtonText(Map<String, dynamic> task) =>
+      _WelfarePageState()._taskButtonText(task);
+
+  @visibleForTesting
+  static int taskOrderWeight(Map<String, dynamic> task) =>
+      _WelfarePageState()._taskOrderWeight(task);
+
+  @visibleForTesting
+  static List<Map<String, dynamic>> orderTasks(
+          List<Map<String, dynamic>> tasks) =>
+      _WelfarePageState()._orderTasks(tasks);
+
+  @visibleForTesting
+  static List<Map<String, dynamic>> filterVisibleTasks(
+          Iterable<Map<String, dynamic>> tasks) =>
+      _WelfarePageState()._visibleTasks(tasks);
+
+  @visibleForTesting
+  static bool isAllowedRewardTask(Map<String, dynamic> task) =>
+      _WelfarePageState()._isAllowedRewardTask(task);
+
+  @visibleForTesting
+  static void markTaskClaimedTodayForTesting(Map<String, dynamic> task) {
+    _WelfarePageState._testingClaimedKeys.addAll(
+      _WelfarePageState()._taskClaimSignatures(task),
+    );
+  }
+
+  @visibleForTesting
+  static void clearClaimedTestingState() {
+    _WelfarePageState._testingClaimedKeys.clear();
+  }
 }
 
-class _WelfarePageState extends State<WelfarePage> {
+class _WelfarePageState extends State<WelfarePage>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  static const _cacheKeyPrefix = 'welfare_home_cache_v1_';
+  static final Set<String> _testingClaimedKeys = {};
+  final _dailyClaims = DailyTaskClaims(uid: () => LKClient.shared.session.uid);
+  int _loadSerial = 0;
+
   Map<String, dynamic>? _home;
   Map<String, dynamic> _signDetail = const {};
   Map<String, dynamic> _earnCoin = const {};
@@ -30,35 +98,187 @@ class _WelfarePageState extends State<WelfarePage> {
   bool _loading = true;
   String? _error;
   String _action = '';
-  Timer? _sleepTimer;
-  int _sleepRemainingSeconds = 0;
+  final _sleepClock = DeadlineCountdown();
+  int get _sleepRemainingSeconds => _sleepClock.value;
   bool _sleepCountdownExpired = false;
+  late final AnimationController _animController;
+
+  String get _cacheKey {
+    final uid = LKClient.shared.session.uid;
+    return '$_cacheKeyPrefix${uid > 0 ? uid : 'guest'}';
+  }
+
+  List<String> _taskClaimSignatures(Map<String, dynamic> task) {
+    final sigs = <String>[];
+    final id = _taskId(task);
+    if (id > 0) sigs.add('id:$id');
+    final key = _taskKey(task).toLowerCase().trim();
+    if (key.isNotEmpty) sigs.add('key:$key');
+    if (_isBrowseWorkTask(task)) sigs.add('cat:browse');
+    if (_isCollectWorkTask(task)) sigs.add('cat:collect');
+    final normTitle = _taskTitle(task).replaceAll(RegExp(r'\s+'), '');
+    if (normTitle.isNotEmpty) sigs.add('title:$normTitle');
+    return sigs;
+  }
+
+  bool _isTaskClaimedToday(Map<String, dynamic> task) {
+    final sigs = _taskClaimSignatures(task);
+    for (final sig in sigs) {
+      if (_dailyClaims.contains(sig) || _testingClaimedKeys.contains(sig)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _initDailyClaimedKeys() async {
+    try {
+      await _dailyClaims.load();
+    } catch (_) {}
+  }
+
+  Future<void> _recordTaskClaimedToday(
+      Map<String, dynamic> task, String key) async {
+    final sigs = _taskClaimSignatures(task);
+    if (sigs.isEmpty) return;
+    try {
+      await _dailyClaims.record(sigs, expectedKey: key);
+    } catch (_) {}
+  }
 
   @override
   void initState() {
     super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+    WidgetsBinding.instance.addObserver(this);
+    LKClient.sessionRev.addListener(_onSessionChanged);
+    _sleepClock.onElapsed = () {
+      if (!mounted) return;
+      _sleepCountdownExpired = true;
+      unawaited(_load());
+    };
+    _restoreCache();
     _load();
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (AppMotion.isDisabled(context)) {
+      _animController.stop();
+    } else if (!_animController.isAnimating) {
+      _animController.repeat(reverse: true);
+    }
+  }
+
+  @override
   void dispose() {
-    _sleepTimer?.cancel();
+    LKClient.sessionRev.removeListener(_onSessionChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    _sleepClock.dispose();
+    _animController.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _sleepClock.refresh();
+  }
+
+  void _onSessionChanged() {
+    _loadSerial++;
+    _sleepClock.stop();
+    _sleepClock.value = 0;
+    setState(() {
+      _home = null;
+      _signDetail = _earnCoin = _sleep = const {};
+      _tasks = const [];
+      _action = '';
+      _error = null;
+      _loading = LKClient.shared.session.isLoggedIn;
+    });
+    if (_loading) {
+      unawaited(_restoreCache());
+      unawaited(_load());
+    }
+  }
+
+  Future<void> _restoreCache() async {
+    final key = _cacheKey;
+    final revision = LKClient.sessionRev.value;
+    try {
+      await _initDailyClaimedKeys();
+      final prefs = await SharedPreferences.getInstance();
+      final cachedStr = prefs.getString(key);
+      if (cachedStr != null && cachedStr.isNotEmpty) {
+        final decoded = jsonDecode(cachedStr);
+        if (decoded is Map &&
+            mounted &&
+            _home == null &&
+            key == _cacheKey &&
+            revision == LKClient.sessionRev.value) {
+          final map = Map<String, dynamic>.from(decoded);
+          final root = _root(map);
+          final tasks = _orderTasks(_visibleTasks(_extractTasks(root)));
+          final homeEarnCoin = _section(
+              root, const ['earn_coin', 'earnCoin', 'welfare_earn_coin']);
+          setState(() {
+            _home = map;
+            _tasks = tasks;
+            _earnCoin = homeEarnCoin;
+            _loading = false;
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveCache(
+      Map<String, dynamic> data, String key, int revision) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (key != _cacheKey || revision != LKClient.sessionRev.value) return;
+      await prefs.setString(key, jsonEncode(data));
+    } catch (_) {}
+  }
+
+  Future<void> _checkAndSyncReadingProgress() async {
+    try {
+      await (widget.readingReporter ?? ReadingProgressReporter.shared)
+          .flush(force: true);
+    } catch (_) {
+      // 静默同步，不影响任务中心主请求
+    }
+  }
+
   Future<void> _load({bool forceTaskList = false}) async {
-    _sleepTimer?.cancel();
+    if (!LKClient.shared.session.isLoggedIn) return;
+    final serial = ++_loadSerial;
+    final key = _cacheKey;
+    final revision = LKClient.sessionRev.value;
+    bool isCurrent() =>
+        mounted &&
+        serial == _loadSerial &&
+        key == _cacheKey &&
+        revision == LKClient.sessionRev.value;
     if (mounted) {
       setState(() {
-        _loading = true;
+        if (_home == null) _loading = true;
         _error = null;
       });
     }
+    // 页面先显示缓存；阅读奖励详情等待增量确认后再查询。
+    final readingSync = _checkAndSyncReadingProgress();
+
     try {
+      await _initDailyClaimedKeys();
       final home = await LKApi.welfareHome();
       final root = _root(home);
-      if (!mounted) return;
-      // 首页数据到达后立即显示页面，详情接口在后台继续验证和补全卡片。
+      if (!isCurrent()) return;
+      unawaited(_saveCache(home, key, revision));
       setState(() {
         _home = home;
         _loading = false;
@@ -66,29 +286,35 @@ class _WelfarePageState extends State<WelfarePage> {
 
       final detailsFuture = Future.wait<Map<String, dynamic>>([
         _safeDetail(LKApi.welfareSignDetail()),
-        _safeDetail(LKApi.welfareEarnCoinDetail()),
+        _safeDetail(() async {
+          await readingSync;
+          if (!isCurrent()) return <String, dynamic>{};
+          return LKApi.welfareEarnCoinDetail();
+        }()),
         _safeDetail(LKApi.welfareSleepDetail()),
       ]);
       var tasks = _extractTasks(root);
-      if (forceTaskList || tasks.isEmpty) {
+      if (forceTaskList || _visibleTasks(tasks).length < 2) {
         try {
           final refreshedTasks =
               _extractTasks(_root(await LKApi.welfareTaskList()));
-          if (refreshedTasks.isNotEmpty) tasks = refreshedTasks;
+          if (refreshedTasks.isNotEmpty) {
+            tasks = [...tasks, ...refreshedTasks];
+          }
         } catch (_) {
           // 主页数据已经足够展示时，任务列表接口失败不影响其他模块。
         }
       }
-      tasks = _visibleTasks(tasks);
+      tasks = _orderTasks(_visibleTasks(tasks));
       final details = await detailsFuture;
       final signDetail = details[0];
       final homeEarnCoin =
           _section(root, const ['earn_coin', 'earnCoin', 'welfare_earn_coin']);
       final earnCoin = details[1].isNotEmpty ? details[1] : homeEarnCoin;
       final sleep = details[2];
-      _sleepRemainingSeconds = _sleepRemainingSecondsFrom(sleep);
+      if (!isCurrent()) return;
+      final seconds = _sleepRemainingSecondsFrom(sleep);
       _sleepCountdownExpired = false;
-      if (!mounted) return;
       setState(() {
         _signDetail = signDetail;
         _earnCoin = earnCoin;
@@ -96,9 +322,9 @@ class _WelfarePageState extends State<WelfarePage> {
         _tasks = tasks;
         _loading = false;
       });
-      _syncSleepTimer();
+      _sleepClock.start(_sleepClaimed || _sleepClaimable ? 0 : seconds);
     } catch (e) {
-      if (mounted) {
+      if (isCurrent()) {
         setState(() {
           _loading = false;
           _error = e.toString();
@@ -133,35 +359,119 @@ class _WelfarePageState extends State<WelfarePage> {
     await _runAction('sleep-claim', LKApi.claimWelfareSleep);
   }
 
+  bool _isSameTask(Map<String, dynamic> a, Map<String, dynamic> b) {
+    final idA = _taskId(a);
+    final idB = _taskId(b);
+    if (idA > 0 && idB > 0 && idA == idB) return true;
+    final keyA = _taskKey(a).toLowerCase().trim();
+    final keyB = _taskKey(b).toLowerCase().trim();
+    if (keyA.isNotEmpty && keyB.isNotEmpty && keyA == keyB) return true;
+    if (_isBrowseWorkTask(a) && _isBrowseWorkTask(b)) return true;
+    if (_isCollectWorkTask(a) && _isCollectWorkTask(b)) return true;
+    final titleA = _taskTitle(a).replaceAll(RegExp(r'\s+'), '');
+    final titleB = _taskTitle(b).replaceAll(RegExp(r'\s+'), '');
+    if (titleA.isNotEmpty && titleB.isNotEmpty && titleA == titleB) return true;
+    return false;
+  }
+
   Future<void> _claimTask(Map<String, dynamic> task) async {
     final taskId = _taskId(task);
     final taskKey = _taskKey(task);
-    await _runAction('task:$taskId:$taskKey',
-        () => LKApi.claimWelfareTask(taskId: taskId, taskKey: taskKey));
-  }
-
-  Future<void> _claimTreasure(Map<String, dynamic> treasure) async {
-    final campaignId = _int(
-        treasure['campaign_id'] ?? treasure['campaignId'] ?? treasure['id']);
-    final campaignDay = _int(
-        treasure['campaign_day'] ?? treasure['campaignDay'] ?? treasure['day']);
     await _runAction(
-        'treasure',
-        () => LKApi.claimWelfareTreasureBox(
-            campaignId: campaignId, campaignDay: campaignDay));
+      'task:$taskId:$taskKey',
+      () => LKApi.claimWelfareTask(taskId: taskId, taskKey: taskKey),
+      taskContext: task,
+    );
   }
 
   Future<void> _runAction(
-      String action, Future<Map<String, dynamic>> Function() request) async {
+    String action,
+    Future<Map<String, dynamic>> Function() request, {
+    Map<String, dynamic>? taskContext,
+  }) async {
     if (_action.isNotEmpty) return;
+    final claimKey = _dailyClaims.storageKey;
+    final revision = LKClient.sessionRev.value;
     setState(() => _action = action);
     try {
       await request();
-      if (!mounted) return;
+      if (!mounted || revision != LKClient.sessionRev.value) return;
+      if (claimKey != _dailyClaims.storageKey) {
+        await _load(forceTaskList: true);
+        return;
+      }
       showLkError(context, '操作成功');
+      if (action.startsWith('task:')) {
+        if (taskContext != null) {
+          await _recordTaskClaimedToday(taskContext, claimKey);
+        }
+        if (!mounted ||
+            revision != LKClient.sessionRev.value ||
+            claimKey != _dailyClaims.storageKey) {
+          return;
+        }
+        final parts = action.split(':');
+        final taskId = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
+        final taskKey = parts.length > 2 ? parts.sublist(2).join(':') : '';
+        setState(() {
+          final updated = _tasks.map((t) {
+            if ((taskContext != null && _isSameTask(t, taskContext)) ||
+                (taskId > 0 && _taskId(t) == taskId) ||
+                (taskKey.isNotEmpty && _taskKey(t) == taskKey)) {
+              return {
+                ...t,
+                'claimed': true,
+                'is_claimed': true,
+                'status': 2,
+                'button_text': '已领取',
+                'button_action': 'claimed',
+              };
+            }
+            return t;
+          }).toList();
+          _tasks = _orderTasks(updated);
+        });
+      }
       await _load(forceTaskList: action.startsWith('task:'));
     } catch (e) {
-      if (mounted) showLkError(context, e);
+      if (!mounted || revision != LKClient.sessionRev.value) return;
+      if (claimKey != _dailyClaims.storageKey) {
+        await _load(forceTaskList: true);
+        return;
+      }
+      final errStr = e.toString().toLowerCase();
+      if (action.startsWith('task:') &&
+          (errStr.contains('已领取') ||
+              errStr.contains('重复') ||
+              errStr.contains('今日已') ||
+              errStr.contains('已完成') ||
+              errStr.contains('already') ||
+              errStr.contains('claimed'))) {
+        if (taskContext != null) {
+          await _recordTaskClaimedToday(taskContext, claimKey);
+        }
+        if (mounted) {
+          setState(() {
+            final updated = _tasks.map((t) {
+              if (taskContext != null && _isSameTask(t, taskContext)) {
+                return {
+                  ...t,
+                  'claimed': true,
+                  'is_claimed': true,
+                  'status': 2,
+                  'button_text': '已领取',
+                  'button_action': 'claimed',
+                };
+              }
+              return t;
+            }).toList();
+            _tasks = _orderTasks(updated);
+          });
+          showLkError(context, '今日已领取');
+        }
+        return;
+      }
+      showLkError(context, e);
     } finally {
       if (mounted) setState(() => _action = '');
     }
@@ -203,7 +513,7 @@ class _WelfarePageState extends State<WelfarePage> {
   }
 
   int _taskId(Map<String, dynamic> task) =>
-      _int(_deepField(task, const ['task_id', 'taskId', 'taskID']));
+      _int(_deepField(task, const ['task_id', 'taskId', 'taskID', 'id']));
 
   String _taskKey(Map<String, dynamic> task) =>
       _text(_deepField(task, const ['task_key', 'taskKey', 'taskKEY', 'key']));
@@ -278,16 +588,6 @@ class _WelfarePageState extends State<WelfarePage> {
     return RegExp(r'^第[1-7]天$').hasMatch(title);
   }
 
-  List<Map<String, dynamic>> _visibleTasks(
-          Iterable<Map<String, dynamic>> tasks) =>
-      tasks
-          .where((task) =>
-              _hasTaskIdentity(task) &&
-              !_isRewardScheduleTask(task) &&
-              !_isEarnCoinTask(task) &&
-              !_isSignTask(task))
-          .toList();
-
   bool _isSleepTask(Map<String, dynamic> task) {
     final text =
         '${_taskTitle(task)} ${_taskDescription(task)} ${_taskKey(task)} '
@@ -296,9 +596,134 @@ class _WelfarePageState extends State<WelfarePage> {
     return text.contains('睡觉') || text.contains('sleep');
   }
 
-  List<Map<String, dynamic>> get _displayTasks => _visibleTasks(_tasks)
-      .where((task) => _sleepData.isEmpty || !_isSleepTask(task))
-      .toList();
+  /// 判定是否属于无效的网站/第三方测试任务
+  bool _isInvalidTestTask(Map<String, dynamic> task) {
+    final title = _taskTitle(task).toLowerCase();
+    final desc = _text(_deepField(task, const [
+      'task_desc',
+      'taskDesc',
+      'description',
+      'desc',
+      'subtitle'
+    ])).toLowerCase();
+    final key = _taskKey(task).toLowerCase();
+    final type = _taskType(task).toLowerCase();
+    final url = _text(_deepField(
+            task, const ['jump_url', 'jumpUrl', 'target_url', 'url', 'link']))
+        .toLowerCase();
+    final combined = '$title $desc $key $type $url';
+    return combined.contains('测试') ||
+        combined.contains('test') ||
+        combined.contains('网站') ||
+        combined.contains('网页') ||
+        combined.contains('demo') ||
+        combined.contains('第三方') ||
+        combined.contains('问卷') ||
+        combined.contains('广告');
+  }
+
+  /// 判定是否属于“浏览一个作品”任务
+  bool _isBrowseWorkTask(Map<String, dynamic> task) {
+    if (_isInvalidTestTask(task)) return false;
+    final title = _taskTitle(task);
+    final normTitle = title.replaceAll(RegExp(r'\s+'), '');
+    final key = _taskKey(task).toLowerCase();
+    final type = _taskType(task).toLowerCase();
+
+    return normTitle == '浏览一个作品' ||
+        normTitle == '浏览作品' ||
+        normTitle == '浏览' ||
+        normTitle == '其它任务' ||
+        normTitle == '其他任务' ||
+        (normTitle.contains('浏览') && !normTitle.contains('网')) ||
+        (key.contains('browse') && !key.contains('web')) ||
+        (type.contains('browse') && !type.contains('web'));
+  }
+
+  /// 判定是否属于“收藏一个作品”任务
+  bool _isCollectWorkTask(Map<String, dynamic> task) {
+    if (_isInvalidTestTask(task)) return false;
+    final title = _taskTitle(task);
+    final normTitle = title.replaceAll(RegExp(r'\s+'), '');
+    final key = _taskKey(task).toLowerCase();
+    final type = _taskType(task).toLowerCase();
+
+    return normTitle == '收藏一个作品' ||
+        normTitle == '收藏作品' ||
+        normTitle == '收藏' ||
+        normTitle == '加入书架' ||
+        normTitle.contains('收藏') ||
+        key.contains('collect') ||
+        key.contains('favorite') ||
+        key.contains('shelf') ||
+        type.contains('collect') ||
+        type.contains('favorite');
+  }
+
+  /// 任务中心仅允许“浏览一个作品”与“收藏一个作品”
+  bool _isAllowedRewardTask(Map<String, dynamic> task) =>
+      _isBrowseWorkTask(task) || _isCollectWorkTask(task);
+
+  /// 过滤出任务奖励板块允许展示的任务，并进行同类去重，至多展示 2 个
+  List<Map<String, dynamic>> _visibleTasks(
+      Iterable<Map<String, dynamic>> tasks) {
+    final candidates = tasks.where((task) =>
+        _hasTaskIdentity(task) &&
+        !_isRewardScheduleTask(task) &&
+        !_isEarnCoinTask(task) &&
+        !_isSignTask(task) &&
+        !_isSleepTask(task) &&
+        _isAllowedRewardTask(task));
+
+    Map<String, dynamic>? bestBrowse;
+    Map<String, dynamic>? bestCollect;
+
+    Map<String, dynamic> pickBest(
+        Map<String, dynamic>? current, Map<String, dynamic> incoming) {
+      if (current == null) return incoming;
+
+      final currentStatus = _taskStatus(current);
+      final incomingStatus = _taskStatus(incoming);
+
+      // 1. 已领取的任务具有最高权威性（当日任务已完成），绝不能被未刷新的可领取或进行中覆盖
+      if (currentStatus == _TaskItemStatus.claimed) return current;
+      if (incomingStatus == _TaskItemStatus.claimed) return incoming;
+
+      // 2. 其次优先可领取（已完成待领），高于普通进行中/去完成
+      if (incomingStatus == _TaskItemStatus.claimable &&
+          currentStatus != _TaskItemStatus.claimable) {
+        return incoming;
+      }
+
+      return current;
+    }
+
+    for (final task in candidates) {
+      final normalizedTask = _isTaskClaimedToday(task)
+          ? {
+              ...task,
+              'status': 2,
+              'claimed': true,
+              'is_claimed': true,
+              'button_text': '已领取',
+              'button_action': 'claimed',
+            }
+          : task;
+
+      if (_isBrowseWorkTask(normalizedTask)) {
+        bestBrowse = pickBest(bestBrowse, normalizedTask);
+      } else if (_isCollectWorkTask(normalizedTask)) {
+        bestCollect = pickBest(bestCollect, normalizedTask);
+      }
+    }
+
+    final result = <Map<String, dynamic>>[];
+    if (bestBrowse != null) result.add(bestBrowse);
+    if (bestCollect != null) result.add(bestCollect);
+    return result;
+  }
+
+  List<Map<String, dynamic>> get _displayTasks => _visibleTasks(_tasks);
 
   Map<String, dynamic> _sleepDataFor(Map<String, dynamic> data) {
     final nested = _map(data['detail']) ??
@@ -460,29 +885,6 @@ class _WelfarePageState extends State<WelfarePage> {
     return '${minutes.toString().padLeft(2, '0')}:${remaining.toString().padLeft(2, '0')}';
   }
 
-  void _syncSleepTimer() {
-    _sleepTimer?.cancel();
-    if (_sleepRemainingSeconds <= 0 || _sleepClaimed || _sleepClaimable) {
-      return;
-    }
-    _sleepTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      if (_sleepRemainingSeconds <= 1) {
-        timer.cancel();
-        setState(() {
-          _sleepRemainingSeconds = 0;
-          _sleepCountdownExpired = true;
-        });
-        _load();
-        return;
-      }
-      setState(() => _sleepRemainingSeconds--);
-    });
-  }
-
   Map<String, dynamic> _earnDataFor(Map<String, dynamic> data) {
     // 详情接口已经直接返回阅读任务时，优先保留这一层。
     // 某些响应会同时带有通用 data 字段；它并不一定是阅读任务本身。
@@ -514,6 +916,20 @@ class _WelfarePageState extends State<WelfarePage> {
       _deepField(_earnData, const ['task_key', 'taskKey', 'reading_task_key']));
 
   bool get _earnClaimed {
+    final btnText = _text(_taskField(
+        _earnData, const ['button_text', 'buttonText', 'btn_text'])).trim();
+    if (btnText == '今日已领取' || btnText == '已领取') return true;
+
+    final btnAction = _text(_taskField(
+            _earnData, const ['button_action', 'buttonAction', 'action']))
+        .toLowerCase()
+        .trim();
+    if (btnAction == 'claimed' || btnAction == 'received') return true;
+
+    final rawStatus = _taskField(
+        _earnData, const ['status', 'claim_status', 'reward_status', 'state']);
+    if (rawStatus is num && rawStatus.toInt() == 2) return true;
+
     final status = _taskField(_earnData, const [
       'taskClaimedToday',
       'task_claimed_today',
@@ -546,6 +962,26 @@ class _WelfarePageState extends State<WelfarePage> {
 
   bool get _earnClaimable {
     if (_earnClaimed) return false;
+
+    final btnText = _text(_taskField(
+        _earnData, const ['button_text', 'buttonText', 'btn_text'])).trim();
+    if (btnText == '领取' ||
+        btnText == '去领取' ||
+        btnText == '可领取' ||
+        btnText == '领取奖励') {
+      return true;
+    }
+
+    final btnAction = _text(_taskField(
+            _earnData, const ['button_action', 'buttonAction', 'action']))
+        .toLowerCase()
+        .trim();
+    if (btnAction == 'claim' || btnAction == 'receive') return true;
+
+    final rawStatus = _taskField(
+        _earnData, const ['status', 'claim_status', 'reward_status', 'state']);
+    if (rawStatus is num && rawStatus.toInt() == 1) return true;
+
     final state = _deepState(
       _earnData,
       flagKeys: const [
@@ -878,15 +1314,29 @@ class _WelfarePageState extends State<WelfarePage> {
       }
       if (node is! Map) return;
       final map = Map<String, dynamic>.from(node);
-      final title = _taskTitle(map);
-      final taskKey = _taskKey(map);
-      final id = _taskId(map);
-      final hasTaskMarker = title.isNotEmpty && (taskKey.isNotEmpty || id > 0);
-      final isSignTask = _isSignTask(map);
-      if (hasTaskMarker && !isSignTask && !_isEarnCoinTask(map)) {
-        final identity = taskKey.isNotEmpty ? taskKey : '$title:$id';
-        if (seen.add(identity)) result.add(map);
+      final shallowTitle = _text(map['task_title'] ??
+              map['taskTitle'] ??
+              map['title'] ??
+              map['task_name'] ??
+              map['name'])
+          .trim();
+      final shallowKey =
+          _text(map['task_key'] ?? map['taskKey'] ?? map['key']).trim();
+      final shallowId =
+          _int(map['task_id'] ?? map['taskId'] ?? map['taskID'] ?? map['id']);
+      final hasShallowMarker =
+          shallowTitle.isNotEmpty && (shallowKey.isNotEmpty || shallowId > 0);
+
+      if (hasShallowMarker) {
+        final isSignTask = _isSignTask(map);
+        if (!isSignTask && !_isEarnCoinTask(map)) {
+          final identity =
+              shallowKey.isNotEmpty ? shallowKey : '$shallowTitle:$shallowId';
+          if (seen.add(identity)) result.add(map);
+        }
+        return;
       }
+
       for (final child in map.values) {
         visit(child);
       }
@@ -995,9 +1445,6 @@ class _WelfarePageState extends State<WelfarePage> {
     return _section(_rootData, keys);
   }
 
-  Map<String, dynamic> get _treasure => _section(_rootData,
-      const ['treasure_box', 'treasureBox', 'daily_treasure_box_v1']);
-
   List<Map<String, dynamic>> get _signDays {
     final days = _listFor(_sign, const [
       'days',
@@ -1095,8 +1542,129 @@ class _WelfarePageState extends State<WelfarePage> {
         _statusIs(status, const ['signed', 'completed', 'claimed']);
   }
 
+  bool _taskClaimed(Map<String, dynamic> task) {
+    if (_isTaskClaimedToday(task)) return true;
+
+    final btnText = _text(_taskField(
+            task, const ['button_text', 'buttonText', 'btn_text', 'btnText']))
+        .trim();
+    if (btnText == '已领取' ||
+        btnText == '今日已领取' ||
+        btnText == '已完成' ||
+        btnText == '今日已完成' ||
+        btnText.contains('已领')) {
+      return true;
+    }
+
+    final btnAction = _text(
+            _taskField(task, const ['button_action', 'buttonAction', 'action']))
+        .toLowerCase()
+        .trim();
+    if (btnAction == 'claimed' ||
+        btnAction == 'received' ||
+        btnAction == 'completed') {
+      return true;
+    }
+
+    final rawStatus = _taskField(task, const [
+      'status',
+      'claim_status',
+      'reward_status',
+      'state',
+      'task_status'
+    ]);
+    if (rawStatus != null) {
+      final numStatus = int.tryParse(rawStatus.toString());
+      if (numStatus == 2) return true;
+    }
+
+    final statusStr = _text(rawStatus).toLowerCase().replaceAll(' ', '_');
+    if (statusStr == 'claimed' ||
+        statusStr == 'received' ||
+        statusStr == 'rewarded' ||
+        statusStr == 'already_received' ||
+        statusStr == 'has_received' ||
+        statusStr == 'has_claimed') {
+      return true;
+    }
+
+    return _deepState(
+          task,
+          flagKeys: const [
+            'claimed',
+            'is_claimed',
+            'reward_claimed',
+            'is_rewarded',
+            'received',
+            'is_received',
+            'today_claimed',
+            'today_reward_claimed',
+            'taskClaimedToday',
+            'task_claimed_today',
+          ],
+          statusKeys: const [
+            'claim_status',
+            'reward_status',
+            'status',
+            'reward_result',
+          ],
+          trueStatuses: const ['claimed', 'received', 'rewarded'],
+          falseStatuses: const [
+            'unclaimed',
+            'not_claimed',
+            'claimable',
+            'in_progress',
+            'pending',
+          ],
+        ) ==
+        true;
+  }
+
   bool _taskClaimable(Map<String, dynamic> task) {
     if (_taskClaimed(task)) return false;
+
+    final btnText = _text(_taskField(
+            task, const ['button_text', 'buttonText', 'btn_text', 'btnText']))
+        .trim();
+    if (btnText == '领取' ||
+        btnText == '去领取' ||
+        btnText == '可领取' ||
+        btnText == '领取奖励') {
+      return true;
+    }
+
+    final btnAction = _text(
+            _taskField(task, const ['button_action', 'buttonAction', 'action']))
+        .toLowerCase()
+        .trim();
+    if (btnAction == 'claim' || btnAction == 'receive') return true;
+
+    final rawStatus = _taskField(task, const [
+      'status',
+      'claim_status',
+      'reward_status',
+      'state',
+      'task_status'
+    ]);
+    if (rawStatus != null) {
+      final numStatus = int.tryParse(rawStatus.toString());
+      if (numStatus == 1) return true;
+    }
+
+    final statusStr = _text(rawStatus).toLowerCase().replaceAll(' ', '_');
+    if (const [
+      'claimable',
+      'can_claim',
+      'ready',
+      'eligible',
+      'completed',
+      'finished',
+      'done',
+      'achieved'
+    ].contains(statusStr)) {
+      return true;
+    }
+
     final state = _deepState(
       task,
       flagKeys: const [
@@ -1148,42 +1716,280 @@ class _WelfarePageState extends State<WelfarePage> {
     return _taskProgressComplete(task);
   }
 
-  bool _taskClaimed(Map<String, dynamic> task) {
-    return _deepState(
-          task,
-          flagKeys: const [
-            'claimed',
-            'is_claimed',
-            'reward_claimed',
-            'is_rewarded',
-            'received',
-            'is_received',
-            'today_claimed',
-            'today_reward_claimed',
-            'taskClaimedToday',
-            'task_claimed_today',
-          ],
-          statusKeys: const [
-            'claim_status',
-            'reward_status',
-            'status',
-            'reward_result',
-          ],
-          trueStatuses: const ['claimed', 'received', 'rewarded'],
-          falseStatuses: const [
-            'unclaimed',
-            'not_claimed',
-            'claimable',
-            'in_progress',
-            'pending',
-          ],
-        ) ==
-        true;
+  _TaskItemStatus _taskStatus(Map<String, dynamic> task) {
+    if (_taskClaimed(task)) return _TaskItemStatus.claimed;
+    if (_taskClaimable(task)) return _TaskItemStatus.claimable;
+    return _TaskItemStatus.actionable;
+  }
+
+  String _taskButtonText(Map<String, dynamic> task) {
+    final status = _taskStatus(task);
+    if (status == _TaskItemStatus.claimed) return '已领取';
+    if (status == _TaskItemStatus.claimable) {
+      final text =
+          _text(_taskField(task, const ['button_text', 'buttonText'])).trim();
+      return (text.isNotEmpty && text != '进行中') ? text : '领取';
+    }
+    // Actionable ("去完成")
+    final text =
+        _text(_taskField(task, const ['button_text', 'buttonText'])).trim();
+    if (text.isNotEmpty && text != '进行中' && text != '未完成') {
+      return text;
+    }
+    final title = _taskTitle(task);
+    final type = _taskType(task);
+    if (type.contains('read') ||
+        title.contains('阅读') ||
+        title.contains('小说') ||
+        title.contains('看书')) {
+      return '去阅读';
+    }
+    if (type.contains('share') || title.contains('分享')) {
+      return '去分享';
+    }
+    if (type.contains('comment') ||
+        title.contains('评论') ||
+        title.contains('书评')) {
+      return '去评论';
+    }
+    if (type.contains('collect') ||
+        type.contains('favorite') ||
+        type.contains('shelf') ||
+        title.contains('收藏') ||
+        title.contains('书架')) {
+      return '去收藏';
+    }
+    if (type.contains('browse') ||
+        title.contains('浏览') ||
+        title.contains('发现') ||
+        title.contains('逛')) {
+      return '去浏览';
+    }
+    return '去完成';
+  }
+
+  int _taskOrderWeight(Map<String, dynamic> task) {
+    final status = _taskStatus(task);
+    switch (status) {
+      case _TaskItemStatus.claimable:
+        return 0; // 可领取置顶
+      case _TaskItemStatus.actionable:
+        return 1; // 进行中/去完成居中
+      case _TaskItemStatus.claimed:
+        return 2; // 已领取下沉
+    }
+  }
+
+  List<Map<String, dynamic>> _orderTasks(List<Map<String, dynamic>> tasks) {
+    final list = List<Map<String, dynamic>>.from(tasks);
+    list.sort((a, b) {
+      final weightA = _taskOrderWeight(a);
+      final weightB = _taskOrderWeight(b);
+      if (weightA != weightB) return weightA.compareTo(weightB);
+      return _taskId(a).compareTo(_taskId(b));
+    });
+    return list;
+  }
+
+  IconData _taskIcon(Map<String, dynamic> task) {
+    final type = _taskType(task);
+    final title = _taskTitle(task);
+    if (type.contains('read') || title.contains('阅读') || title.contains('看书')) {
+      return Icons.menu_book_rounded;
+    }
+    if (type.contains('share') || title.contains('分享')) {
+      return Icons.share_rounded;
+    }
+    if (type.contains('comment') ||
+        title.contains('评论') ||
+        title.contains('书评')) {
+      return Icons.chat_bubble_outline_rounded;
+    }
+    if (type.contains('collect') ||
+        type.contains('favorite') ||
+        type.contains('shelf') ||
+        title.contains('收藏') ||
+        title.contains('书架')) {
+      return Icons.bookmark_added_outlined;
+    }
+    if (type.contains('browse') ||
+        title.contains('浏览') ||
+        title.contains('作品')) {
+      return Icons.explore_outlined;
+    }
+    if (type.contains('sign') || title.contains('签到')) {
+      return Icons.event_available_rounded;
+    }
+    return Icons.task_alt_rounded;
+  }
+
+  Future<void> _openTaskTarget(Map<String, dynamic> task) async {
+    final jumpUrl = _text(_deepField(task, const [
+      'jump_url',
+      'jumpUrl',
+      'target_url',
+      'targetUrl',
+      'url',
+      'link'
+    ])).trim();
+    final jumpType =
+        _text(_deepField(task, const ['jump_type', 'jumpType', 'type']))
+            .toLowerCase()
+            .trim();
+    final taskKey = _taskKey(task).toLowerCase();
+    final title = _taskTitle(task);
+
+    // 1. 浏览与收藏作品任务：进入对应书籍详情或搜索选书
+    if (_isBrowseWorkTask(task) ||
+        _isCollectWorkTask(task) ||
+        jumpType == 'browse' ||
+        jumpType == 'collect' ||
+        jumpType == 'favorite' ||
+        jumpType == 'shelf' ||
+        title.contains('浏览') ||
+        title.contains('收藏') ||
+        title.contains('作品') ||
+        title.contains('书架')) {
+      final bookId = _int(_deepField(
+          task, const ['book_id', 'bookId', 'target_id', 'targetId']));
+      if (bookId > 0) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => BookDetailPage(bookId: bookId)),
+        );
+      } else {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const SearchPage()),
+        );
+      }
+      if (mounted) _load();
+      return;
+    }
+
+    // 2. 如果有明确的外部或应用链接
+    if (jumpUrl.isNotEmpty) {
+      final uri = Uri.tryParse(jumpUrl);
+      if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+        try {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (_) {}
+        if (mounted) _load();
+        return;
+      }
+    }
+
+    // 2. 阅读类任务：进入阅读器或小说详情
+    if (jumpType == 'reader' ||
+        taskKey.contains('read') ||
+        title.contains('阅读') ||
+        title.contains('看书') ||
+        title.contains('小说') ||
+        title.contains('章节')) {
+      final snapshot = LKReadingSession.shared.snapshot();
+      final bookId = snapshot?.bookId ??
+          _int(_deepField(
+              task, const ['book_id', 'bookId', 'target_id', 'targetId']));
+      if (bookId > 0) {
+        if (snapshot != null &&
+            snapshot.bookId == bookId &&
+            snapshot.chapterId > 0 &&
+            snapshot.volumeId > 0) {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ReaderPage(
+                bookId: snapshot.bookId,
+                bookTitle: '最近阅读',
+                chapterId: snapshot.chapterId,
+                chapterTitle: '',
+                volumeId: snapshot.volumeId,
+              ),
+            ),
+          );
+        } else {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => BookDetailPage(bookId: bookId),
+            ),
+          );
+        }
+      } else {
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
+      }
+      if (mounted) _load();
+      return;
+    }
+
+    // 3. 浏览/找书类任务：进入书籍详情或搜索页
+    if (jumpType == 'browse' ||
+        jumpType == 'book' ||
+        taskKey.contains('browse') ||
+        title.contains('浏览') ||
+        title.contains('作品') ||
+        title.contains('找书')) {
+      final bookId = _int(_deepField(
+          task, const ['book_id', 'bookId', 'target_id', 'targetId']));
+      if (bookId > 0) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => BookDetailPage(bookId: bookId)),
+        );
+      } else {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const SearchPage()),
+        );
+      }
+      if (mounted) _load();
+      return;
+    }
+
+    // 4. 动态/社区/评论类任务：进入动态广场
+    if (jumpType == 'dynamic' ||
+        jumpType == 'comment' ||
+        taskKey.contains('comment') ||
+        taskKey.contains('dynamic') ||
+        title.contains('动态') ||
+        title.contains('评论') ||
+        title.contains('书评')) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const DynamicPage()),
+      );
+      if (mounted) _load();
+      return;
+    }
+
+    // 5. 分享类任务提示
+    if (jumpType == 'share' ||
+        taskKey.contains('share') ||
+        title.contains('分享')) {
+      showLkError(context, '请在小说详情页或阅读器中点击右上角进行分享');
+      return;
+    }
+
+    // 6. 签到类任务
+    if (taskKey.contains('sign') || title.contains('签到')) {
+      if (!_signed) {
+        await _claimSign();
+      } else {
+        showLkError(context, '今日已签到');
+      }
+      return;
+    }
+
+    showLkError(context, '请完成对应任务后返回领取奖励');
   }
 
   bool _taskProgressComplete(Map<String, dynamic> task) {
     final current = _int(_deepField(task, const [
       'progress',
+      'current_progress',
+      'currentProgress',
       'current',
       'current_count',
       'progress_count',
@@ -1193,6 +1999,8 @@ class _WelfarePageState extends State<WelfarePage> {
     ]));
     final total = _int(_deepField(task, const [
       'total',
+      'total_progress',
+      'totalProgress',
       'target',
       'required',
       'goal',
@@ -1281,14 +2089,38 @@ class _WelfarePageState extends State<WelfarePage> {
 
   String _displayTaskTitle(String title) {
     final normalized = title.replaceAll(RegExp(r'\s+'), '');
-    if (normalized == '其它任务' || normalized == '其他任务') {
+    if (normalized == '其它任务' ||
+        normalized == '其他任务' ||
+        normalized == '浏览' ||
+        normalized == '浏览作品' ||
+        normalized == '浏览一个作品' ||
+        (normalized.contains('浏览') && !normalized.contains('网'))) {
       return '浏览一个作品';
+    }
+    if (normalized == '收藏' ||
+        normalized == '收藏作品' ||
+        normalized == '加入书架' ||
+        normalized == '收藏一个作品' ||
+        normalized.contains('收藏')) {
+      return '收藏一个作品';
     }
     return title;
   }
 
-  String _taskDescription(Map<String, dynamic> task) => _text(_deepField(task,
-      const ['task_desc', 'taskDesc', 'description', 'desc', 'subtitle']));
+  String _taskDescription(Map<String, dynamic> task) {
+    final customDesc = _text(_deepField(task,
+        const ['task_desc', 'taskDesc', 'description', 'desc', 'subtitle']));
+    if (customDesc.isNotEmpty && !_isInvalidTestTask(task)) {
+      return customDesc;
+    }
+    if (_isBrowseWorkTask(task)) {
+      return '浏览一部感兴趣的作品';
+    }
+    if (_isCollectWorkTask(task)) {
+      return '收藏一部喜欢的作品到书架';
+    }
+    return customDesc;
+  }
 
   int _taskReward(Map<String, dynamic> task) => _int(_deepField(task, const [
         'reward_amount',
@@ -1301,6 +2133,21 @@ class _WelfarePageState extends State<WelfarePage> {
 
   @override
   Widget build(BuildContext context) {
+    final animateSkeleton = _loading &&
+        _home == null &&
+        _error == null &&
+        LKClient.shared.session.isLoggedIn &&
+        !AppMotion.isDisabled(context);
+    if (animateSkeleton != _animController.isAnimating) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (animateSkeleton && _loading && _home == null && _error == null) {
+          _animController.repeat(reverse: true);
+        } else {
+          _animController.stop();
+        }
+      });
+    }
     if (!LKClient.shared.session.isLoggedIn) {
       return Scaffold(
         appBar: AppBar(title: const Text('任务中心')),
@@ -1309,35 +2156,12 @@ class _WelfarePageState extends State<WelfarePage> {
     }
     return Scaffold(
       appBar: AppBar(title: const Text('任务中心')),
-      body: RefreshIndicator(
+      body: MotionRefreshIndicator(
         onRefresh: _load,
         child: _loading && _home == null
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-                children: [
-                  _loadingCard(78),
-                  const SizedBox(height: 10),
-                  _loadingCard(145),
-                  const SizedBox(height: 10),
-                  _loadingCard(120),
-                ],
-              )
+            ? _buildWelfareSkeleton(context)
             : _error != null && _home == null
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: 260,
-                        child: Center(
-                          child: FilledButton.tonal(
-                            onPressed: _load,
-                            child: Text(_error!),
-                          ),
-                        ),
-                      ),
-                    ],
-                  )
+                ? _buildErrorView(context)
                 : ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: EdgeInsets.fromLTRB(
@@ -1352,15 +2176,14 @@ class _WelfarePageState extends State<WelfarePage> {
                       ],
                       if (_sleepData.isNotEmpty) ...[
                         const SizedBox(height: 10),
-                        _buildSleepCard(),
+                        ValueListenableBuilder<int>(
+                          valueListenable: _sleepClock,
+                          builder: (_, __, ___) => _buildSleepCard(),
+                        ),
                       ],
                       if (_displayTasks.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         _buildTaskCard(),
-                      ],
-                      if (_treasure.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        _buildTreasureCard(),
                       ],
                       if (kDebugMode && _enableWelfareProtocolProbe) ...[
                         const SizedBox(height: 10),
@@ -1705,16 +2528,309 @@ class _WelfarePageState extends State<WelfarePage> {
     );
   }
 
+  Widget _buildWelfareSkeleton(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return AnimatedBuilder(
+      animation: _animController,
+      builder: (context, _) {
+        final alpha = 0.28 + _animController.value * 0.42;
+        final shimmerColor =
+            scheme.surfaceContainerHighest.withValues(alpha: alpha);
+
+        return ListView(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.fromLTRB(
+              12, 12, 12, 24 + MediaQuery.paddingOf(context).bottom),
+          children: [
+            // Balance card skeleton
+            Card(
+              elevation: 0,
+              color: scheme.surfaceContainerLow,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                          color: shimmerColor, shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 14),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                            width: 60,
+                            height: 14,
+                            decoration: BoxDecoration(
+                                color: shimmerColor,
+                                borderRadius: BorderRadius.circular(4))),
+                        const SizedBox(height: 8),
+                        Container(
+                            width: 90,
+                            height: 22,
+                            decoration: BoxDecoration(
+                                color: shimmerColor,
+                                borderRadius: BorderRadius.circular(6))),
+                      ],
+                    ),
+                    const Spacer(),
+                    Container(
+                        width: 68,
+                        height: 32,
+                        decoration: BoxDecoration(
+                            color: shimmerColor,
+                            borderRadius: BorderRadius.circular(16))),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // Sign in card skeleton
+            Card(
+              elevation: 0,
+              color: scheme.surfaceContainerLow,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Container(
+                            width: 90,
+                            height: 18,
+                            decoration: BoxDecoration(
+                                color: shimmerColor,
+                                borderRadius: BorderRadius.circular(4))),
+                        Container(
+                            width: 76,
+                            height: 32,
+                            decoration: BoxDecoration(
+                                color: shimmerColor,
+                                borderRadius: BorderRadius.circular(16))),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                        width: 160,
+                        height: 12,
+                        decoration: BoxDecoration(
+                            color: shimmerColor,
+                            borderRadius: BorderRadius.circular(4))),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 70,
+                      child: Row(
+                        children: List.generate(
+                          5,
+                          (i) => Expanded(
+                            child: Container(
+                              margin: EdgeInsets.only(right: i < 4 ? 8 : 0),
+                              decoration: BoxDecoration(
+                                  color: shimmerColor,
+                                  borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // 15-min reading skeleton
+            Card(
+              elevation: 0,
+              color: scheme.surfaceContainerLow,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Container(
+                            width: 100,
+                            height: 18,
+                            decoration: BoxDecoration(
+                                color: shimmerColor,
+                                borderRadius: BorderRadius.circular(4))),
+                        Container(
+                            width: 76,
+                            height: 32,
+                            decoration: BoxDecoration(
+                                color: shimmerColor,
+                                borderRadius: BorderRadius.circular(16))),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                        width: double.infinity,
+                        height: 8,
+                        decoration: BoxDecoration(
+                            color: shimmerColor,
+                            borderRadius: BorderRadius.circular(4))),
+                    const SizedBox(height: 8),
+                    Container(
+                        width: 120,
+                        height: 12,
+                        decoration: BoxDecoration(
+                            color: shimmerColor,
+                            borderRadius: BorderRadius.circular(4))),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // Task list skeleton
+            Card(
+              elevation: 0,
+              color: scheme.surfaceContainerLow,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                        width: 80,
+                        height: 18,
+                        decoration: BoxDecoration(
+                            color: shimmerColor,
+                            borderRadius: BorderRadius.circular(4))),
+                    const SizedBox(height: 12),
+                    for (int i = 0; i < 3; i++) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          children: [
+                            Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                    color: shimmerColor,
+                                    shape: BoxShape.circle)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                      width: 110,
+                                      height: 14,
+                                      decoration: BoxDecoration(
+                                          color: shimmerColor,
+                                          borderRadius:
+                                              BorderRadius.circular(4))),
+                                  const SizedBox(height: 6),
+                                  Container(
+                                      width: 150,
+                                      height: 11,
+                                      decoration: BoxDecoration(
+                                          color: shimmerColor,
+                                          borderRadius:
+                                              BorderRadius.circular(4))),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Container(
+                                width: 68,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                    color: shimmerColor,
+                                    borderRadius: BorderRadius.circular(16))),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildErrorView(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.6,
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: scheme.errorContainer.withValues(alpha: 0.4),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.wifi_off_rounded,
+                        size: 36, color: scheme.error),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    '连接失败，请检查网络连接',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: scheme.onSurface),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '暂时无法获取任务数据，请确认网络后重试',
+                    style:
+                        TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.tonalIcon(
+                    onPressed: _load,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('重新加载'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildTaskCard() {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('任务奖励',
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             for (final task in _displayTasks) _buildTaskTile(task),
           ],
         ),
@@ -1725,70 +2841,192 @@ class _WelfarePageState extends State<WelfarePage> {
   Widget _buildTaskTile(Map<String, dynamic> task) {
     final title = _displayTaskTitle(_taskTitle(task));
     final description = _taskDescription(task);
-    final claimed = _taskClaimed(task);
-    final claimable = !claimed && _taskClaimable(task);
+    final status = _taskStatus(task);
+    final claimed = status == _TaskItemStatus.claimed;
+    final claimable = status == _TaskItemStatus.claimable;
     final taskId = _taskId(task);
     final taskKey = _taskKey(task);
     final key = 'task:$taskId:$taskKey';
     final progress = _int(_taskField(task, const ['progress', 'current']));
     final total = _int(_taskField(task, const ['total', 'target', 'required']));
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: CircleAvatar(
-        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-        child: Icon(claimed ? Icons.check : Icons.task_alt_outlined),
+    final reward = _taskReward(task);
+    final btnText = _taskButtonText(task);
+
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(12),
+          border: claimable
+              ? Border.all(
+                  color: scheme.primary.withValues(alpha: 0.5), width: 1.2)
+              : null,
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 19,
+              backgroundColor: claimed
+                  ? scheme.surfaceContainerHighest
+                  : claimable
+                      ? scheme.primaryContainer
+                      : scheme.surfaceContainerHigh,
+              child: Icon(
+                claimed
+                    ? Icons.check_circle_rounded
+                    : claimable
+                        ? Icons.card_giftcard_rounded
+                        : _taskIcon(task),
+                size: 20,
+                color: claimed
+                    ? scheme.outline
+                    : claimable
+                        ? scheme.primary
+                        : scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          title.isEmpty ? '每日任务' : title,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: claimed ? scheme.outline : scheme.onSurface,
+                            decoration:
+                                claimed ? TextDecoration.lineThrough : null,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (reward > 0) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '+$reward 轻币',
+                            style: const TextStyle(
+                              color: Colors.amber,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    description.isNotEmpty
+                        ? description
+                        : (total > 0 ? '完成进度 $progress / $total' : '完成任务领取奖励'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (total > 0 && !claimed) ...[
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: (progress / total).clamp(0.0, 1.0),
+                        minHeight: 4,
+                        backgroundColor: scheme.surfaceContainerHighest,
+                        valueColor: AlwaysStoppedAnimation(
+                          claimable ? scheme.primary : scheme.outlineVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            _buildTaskActionButton(
+              task: task,
+              status: status,
+              btnText: btnText,
+              keyStr: key,
+            ),
+          ],
+        ),
       ),
-      title: Text(title.isEmpty ? '每日任务' : title),
-      subtitle: Text([
-        if (description.isNotEmpty) description,
-        if (total > 0) '$progress / $total',
-        _rewardText(_taskReward(task)),
-      ].join(' · ')),
-      trailing: claimable
-          ? FilledButton.tonal(
-              onPressed: _action == key ? null : () => _claimTask(task),
-              child: Text(_action == key ? '处理中' : '领取'),
-            )
-          : Text(claimed ? '已领取' : '进行中',
-              style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
     );
   }
 
-  Widget _buildTreasureCard() {
-    final claimable = _flag(_pick(_treasure, const [
-          'claimable',
-          'can_claim',
-          'opened',
-        ])) ||
-        _statusIs(_pick(_treasure, const ['status', 'reward_status']),
-            const ['claimable', 'ready']);
-    final reward = _int(_pick(_treasure, const [
-      'reward_coin',
-      'reward_amount',
-      'reward',
-      'rewardAmount',
-    ]));
-    final title = _text(_pick(_treasure, const [
-      'title',
-      'treasureBoxLabel',
-      'name',
-    ]));
-    return Card(
-      child: ListTile(
-        leading: const CircleAvatar(child: Icon(Icons.card_giftcard)),
-        title: Text(title.isEmpty ? '每日宝箱' : title),
-        subtitle: Text(reward > 0 ? '可获得 $reward 轻币' : '完成进度后可领取奖励'),
-        trailing: claimable
-            ? FilledButton.tonal(
-                onPressed: _action == 'treasure'
-                    ? null
-                    : () => _claimTreasure(_treasure),
-                child: Text(_action == 'treasure' ? '处理中' : '领取'),
-              )
-            : const Text('进行中'),
-      ),
-    );
+  Widget _buildTaskActionButton({
+    required Map<String, dynamic> task,
+    required _TaskItemStatus status,
+    required String btnText,
+    required String keyStr,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final isActing = _action == keyStr;
+
+    switch (status) {
+      case _TaskItemStatus.claimable:
+        return FilledButton(
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+            minimumSize: const Size(68, 34),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
+          ),
+          onPressed:
+              isActing || _action.isNotEmpty ? null : () => _claimTask(task),
+          child: Text(isActing ? '领取中' : btnText,
+              style:
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+        );
+      case _TaskItemStatus.actionable:
+        return FilledButton.tonal(
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+            minimumSize: const Size(68, 34),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
+          ),
+          onPressed: isActing || _action.isNotEmpty
+              ? null
+              : () => _openTaskTarget(task),
+          child: Text(btnText, style: const TextStyle(fontSize: 13)),
+        );
+      case _TaskItemStatus.claimed:
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.check_rounded, size: 14, color: scheme.outline),
+              const SizedBox(width: 2),
+              Text(
+                '已领取',
+                style: TextStyle(fontSize: 12, color: scheme.outline),
+              ),
+            ],
+          ),
+        );
+    }
   }
 
   Widget _buildServerValidationCard() {
@@ -1995,6 +3233,7 @@ class _WelfarePageState extends State<WelfarePage> {
 
   Future<void> _showDiagnostic(String title, List<String> lines) async {
     await showDialog<void>(
+      animationStyle: AppMotion.style(context),
       context: context,
       builder: (_) => AlertDialog(
         title: Text(title),
@@ -2010,23 +3249,28 @@ class _WelfarePageState extends State<WelfarePage> {
 
   String _errorText(Object error) =>
       error is LKException ? '${error.message}（错误码 ${error.code}）' : '$error';
-
-  static Widget _loadingCard(double height) => Card(
-        child: SizedBox(
-          height: height,
-          child: const Center(child: LkLoadingIndicator()),
-        ),
-      );
 }
 
-class WelfareCoinRecordsPage extends StatefulWidget {
+class WelfareCoinRecordsPage extends StatelessWidget {
   const WelfareCoinRecordsPage({super.key});
 
   @override
-  State<WelfareCoinRecordsPage> createState() => _WelfareCoinRecordsPageState();
+  Widget build(BuildContext context) => AccountScope(
+        title: '轻币记录',
+        builder: (_) => const _WelfareCoinRecordsPageBody(),
+      );
 }
 
-class _WelfareCoinRecordsPageState extends State<WelfareCoinRecordsPage> {
+class _WelfareCoinRecordsPageBody extends StatefulWidget {
+  const _WelfareCoinRecordsPageBody();
+
+  @override
+  State<_WelfareCoinRecordsPageBody> createState() =>
+      _WelfareCoinRecordsPageState();
+}
+
+class _WelfareCoinRecordsPageState extends State<_WelfareCoinRecordsPageBody> {
+  final _session = SessionStamp();
   final _records = <Map<String, dynamic>>[];
   int _page = 0;
   bool _hasMore = true;
@@ -2040,10 +3284,10 @@ class _WelfareCoinRecordsPageState extends State<WelfareCoinRecordsPage> {
   }
 
   Future<void> _load({bool append = false}) async {
-    if (_loading || append && !_hasMore) return;
+    if (!_session.isCurrent || _loading || append && !_hasMore) return;
     setState(() {
       _loading = true;
-      if (!append) _error = null;
+      _error = null;
     });
     try {
       final data = await LKApi.welfareCoinRecords(append ? _page + 1 : 1);
@@ -2065,20 +3309,21 @@ class _WelfareCoinRecordsPageState extends State<WelfareCoinRecordsPage> {
           pageInfo['hasMore'] ??
           data['has_more'] ??
           data['hasMore'];
-      if (!mounted) return;
+      if (!mounted || !_session.isCurrent) return;
       setState(() {
         if (!append) _records.clear();
         _records.addAll(items);
         _page = append ? _page + 1 : 1;
-        _hasMore = rawMore == null
-            ? items.length >= 30
-            : rawMore == true || rawMore == 1 || rawMore == '1';
+        _hasMore = items.isNotEmpty &&
+            (rawMore == null
+                ? items.length >= 30
+                : rawMore == true || rawMore == 1 || rawMore == '1');
         _error = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && _session.isCurrent) setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && _session.isCurrent) setState(() => _loading = false);
     }
   }
 
@@ -2088,38 +3333,33 @@ class _WelfareCoinRecordsPageState extends State<WelfareCoinRecordsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('轻币记录')),
-      body: RefreshIndicator(
+      body: MotionRefreshIndicator(
         onRefresh: _load,
         child: _records.isEmpty && _loading
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  SizedBox(height: 420, child: LkLoadingIndicator()),
-                ],
-              )
-            : _records.isEmpty && _error != null
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: 260,
-                        child: Center(
-                          child: FilledButton.tonal(
-                            onPressed: _load,
-                            child: Text(_error!),
-                          ),
-                        ),
-                      ),
-                    ],
-                  )
+            ? const ScrollableStatus(child: LkLoadingIndicator())
+            : _records.isEmpty
+                ? ScrollableStatus(
+                    child: _error != null
+                        ? FilledButton.tonal(
+                            onPressed: _load, child: const Text('加载失败，点击重试'))
+                        : const Text('暂无轻币记录'))
                 : ListView.separated(
                     physics: const AlwaysScrollableScrollPhysics(),
                     itemCount: _records.length + (_hasMore ? 1 : 0),
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (_, index) {
                       if (index == _records.length) {
+                        if (_error != null) {
+                          return Center(
+                              child: TextButton(
+                            onPressed: () => _load(append: true),
+                            child: const Text('加载失败，点击重试'),
+                          ));
+                        }
                         WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) _load(append: true);
+                          if (mounted && _session.isCurrent && !_loading) {
+                            _load(append: true);
+                          }
                         });
                         return const Padding(
                           padding: EdgeInsets.all(16),

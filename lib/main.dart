@@ -8,6 +8,8 @@ import 'api/store.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 import 'services/anonymous_telemetry.dart';
+import 'services/app_motion.dart';
+import 'services/reader_volume_keys.dart';
 
 final _rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
@@ -18,10 +20,15 @@ void _showSessionExpiredNotice() {
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('登录状态已失效，已自动退出，请重新登录'),
-          duration: Duration(seconds: 4),
+        snackBarAnimationStyle: AppMotion.style(messenger.context),
+        SnackBar(
+          content: const Text('登录状态已失效，已自动退出，请重新登录'),
+          duration: const Duration(seconds: 4),
           behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
         ),
       );
   });
@@ -32,6 +39,7 @@ void main() async {
   await LKStore.load();
   LKClient.sessionExpiredHandler = LKStore.clear;
   LKClient.sessionExpiredRev.addListener(_showSessionExpiredNotice);
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 128 * 1024 * 1024;
   runApp(const LKApp());
   unawaited(LKClient.shared.warmErrorCodeHints());
   // 统计请求独立于界面初始化：网络异常不会影响应用正常打开。
@@ -47,6 +55,10 @@ class LKApp extends StatelessWidget {
     final isDark = brightness == Brightness.dark;
     return ThemeData(
       useMaterial3: true,
+      pageTransitionsTheme: AppMotion.disabled
+          ? AppMotion.noPageTransitions
+          : const PageTransitionsTheme(),
+      splashFactory: AppMotion.disabled ? NoSplash.splashFactory : null,
       colorScheme: scheme,
       scaffoldBackgroundColor:
           isDark ? const Color(0xFF121316) : const Color(0xFFF6F7FB),
@@ -128,16 +140,28 @@ class LKApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: LKStore.themeMode,
-      builder: (_, mode, __) => MaterialApp(
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        LKStore.themeMode,
+        LKStore.dataSaverMode,
+        LKStore.animationsEnabled
+      ]),
+      builder: (context, _) => MaterialApp(
         scaffoldMessengerKey: _rootScaffoldMessengerKey,
         title: 'Yomiru',
         debugShowCheckedModeBanner: false,
+        navigatorObservers: [readerRouteObserver],
+        themeAnimationDuration:
+            AppMotion.disabled ? Duration.zero : kThemeAnimationDuration,
         theme: _buildTheme(Brightness.light),
         darkTheme: _buildTheme(Brightness.dark),
-        themeMode: mode,
-        builder: (context, child) => _SystemUIBridge(child: child),
+        themeMode: LKStore.themeMode.value,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+              disableAnimations: AppMotion.disabled ||
+                  MediaQuery.disableAnimationsOf(context)),
+          child: _SystemUIBridge(child: child),
+        ),
         home: const HomePage(),
         routes: {
           '/login': (_) => const LoginPage(),
@@ -172,6 +196,7 @@ class _SystemUIBridgeState extends State<_SystemUIBridge>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    LKStore.landscapeEnabled.addListener(_updateOrientations);
   }
 
   @override
@@ -182,7 +207,8 @@ class _SystemUIBridgeState extends State<_SystemUIBridge>
   }
 
   void _updateOrientations() {
-    final orientations = MediaQuery.sizeOf(context).shortestSide >= 600
+    final orientations = (LKStore.landscapeEnabled.value ||
+            MediaQuery.sizeOf(context).shortestSide >= 600)
         ? _largeScreenOrientations
         : _phoneOrientations;
     if (identical(_appliedOrientations, orientations)) return;
@@ -193,6 +219,7 @@ class _SystemUIBridgeState extends State<_SystemUIBridge>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    LKStore.landscapeEnabled.removeListener(_updateOrientations);
     SystemChrome.setPreferredOrientations(_phoneOrientations);
     super.dispose();
   }

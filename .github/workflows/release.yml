@@ -7,9 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag, for example v1.3.0'
+        description: 'Build tag, for example v1.4.0'
         required: true
-        default: v1.3.0
+        default: v1.4.0
+      publish_release:
+        description: 'Publish a GitHub Release after building'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -142,6 +146,7 @@ jobs:
           retention-days: 90
 
   publish-release:
+    if: github.event_name == 'push' || inputs.publish_release
     name: Publish GitHub Release
     needs:
       - build-android

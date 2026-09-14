@@ -21,6 +21,10 @@ void main() {
     expect(summary.clearCategory('mention').unreadCount, 18);
     expect(summary.clearNotifications().unreadCount, 6);
     expect(summary.clearNotifications().dmCount, 6);
+    expect(summary.clearCategory('dm').dmCount, 0);
+    expect(summary.clearCategory('dm').unreadCount, 15);
+    expect(summary.clearDm(2).dmCount, 4);
+    expect(summary.clearDm(2).unreadCount, 19);
   });
 
   test('notification preserves actor, content and navigation targets', () {

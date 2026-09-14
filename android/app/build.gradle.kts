@@ -49,8 +49,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             // 没有正式 keystore 时不配置签名;对应 release 任务会在执行前明确失败。
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")

@@ -8,13 +8,68 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'lk_client.dart';
 import 'models.dart';
 import 'reader_cache.dart';
+import 'reading_session.dart';
 import '../reader/reading_position.dart';
+
+/// 封面模糊模式
+enum CoverBlurMode {
+  all,
+  brave,
+  none,
+}
 
 /// 会话与主题持久化
 class LKStore {
   /// 主题模式(ValueNotifier 让 MaterialApp 即时切换)
   static final ValueNotifier<ThemeMode> themeMode =
       ValueNotifier(ThemeMode.system);
+
+  /// 流量节省模式(ValueNotifier 让全局图片加载即时响应)
+  static final ValueNotifier<bool> dataSaverMode = ValueNotifier(false);
+  static final ValueNotifier<bool> animationsEnabled = ValueNotifier(true);
+  static final ValueNotifier<bool> landscapeEnabled = ValueNotifier(false);
+
+  /// 书籍封面高斯模糊模式（全部书籍 / 勇者书籍 / 关闭）
+  static final ValueNotifier<CoverBlurMode> coverBlurMode =
+      ValueNotifier(CoverBlurMode.brave);
+
+  /// 防社死封面高斯模糊模式(ValueNotifier 让全局封面即时响应，与 coverBlurMode 保持联动)
+  static final ValueNotifier<bool> nsfwBlurCover = ValueNotifier(true);
+
+  /// 隐藏勇者书籍模式(ValueNotifier 让列表和书架即时响应)
+  static final ValueNotifier<bool> hideBraveBooks = ValueNotifier(true);
+
+  /// 已确认需勇者权限的小说 ID 缓存（内置预置 14162 标杆书籍）
+  static final Set<int> _braveBookIds = {14162};
+
+  static final bool _braveCheckerHooked = () {
+    setBraveBookChecker(isBraveBook);
+    return true;
+  }();
+
+  static bool isBraveBook(int bookId) {
+    // Ensure static hook is triggered
+    assert(_braveCheckerHooked);
+    return _braveBookIds.contains(bookId);
+  }
+
+  static Future<void> markBookBrave(int bookId) async {
+    if (bookId <= 0 || _braveBookIds.contains(bookId)) return;
+    _braveBookIds.add(bookId);
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList(
+      'known_brave_book_ids',
+      _braveBookIds.map((e) => e.toString()).toList(),
+    );
+  }
+
+  @visibleForTesting
+  static void resetBraveBookIdsForTesting([Set<int>? seed]) {
+    _braveBookIds
+      ..clear()
+      ..addAll(seed ?? {14162});
+  }
+
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
   static Future<void> load() async {
@@ -51,6 +106,29 @@ class LKStore {
       ..nickname = p.getString('nickname') ?? ''
       ..avatar = p.getString('avatar') ?? '';
     themeMode.value = _parseTheme(p.getString('theme_mode'));
+    dataSaverMode.value = p.getBool('data_saver_mode') ?? false;
+    animationsEnabled.value = p.getBool('animations_enabled') ?? true;
+    landscapeEnabled.value = p.getBool('landscape_enabled') ?? false;
+    final savedBlurMode = p.getString('cover_blur_mode');
+    if (savedBlurMode != null) {
+      coverBlurMode.value = switch (savedBlurMode) {
+        'all' => CoverBlurMode.all,
+        'brave' => CoverBlurMode.brave,
+        'none' => CoverBlurMode.none,
+        _ => CoverBlurMode.brave,
+      };
+    } else {
+      final legacyNsfw = p.getBool('nsfw_blur_cover') ?? true;
+      coverBlurMode.value =
+          legacyNsfw ? CoverBlurMode.brave : CoverBlurMode.none;
+    }
+    nsfwBlurCover.value = coverBlurMode.value != CoverBlurMode.none;
+    hideBraveBooks.value = p.getBool('hide_brave_books') ?? true;
+    setBraveBookChecker(isBraveBook);
+    final storedBraveIds = p.getStringList('known_brave_book_ids');
+    if (storedBraveIds != null) {
+      _braveBookIds.addAll(storedBraveIds.map(int.tryParse).whereType<int>());
+    }
     unawaited(LKClient.shared.trimResponseCache());
   }
 
@@ -75,8 +153,48 @@ class LKStore {
     await p.setString('theme_mode', mode.name);
   }
 
+  static Future<void> setAnimationsEnabled(bool enabled) async {
+    animationsEnabled.value = enabled;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('animations_enabled', enabled);
+  }
+
+  static Future<void> setLandscapeEnabled(bool enabled) async {
+    landscapeEnabled.value = enabled;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('landscape_enabled', enabled);
+  }
+
+  static Future<void> setDataSaverMode(bool enable) async {
+    if (dataSaverMode.value == enable) return;
+    dataSaverMode.value = enable;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('data_saver_mode', enable);
+  }
+
+  static Future<void> setCoverBlurMode(CoverBlurMode mode) async {
+    if (coverBlurMode.value == mode) return;
+    coverBlurMode.value = mode;
+    nsfwBlurCover.value = mode != CoverBlurMode.none;
+    final p = await SharedPreferences.getInstance();
+    await p.setString('cover_blur_mode', mode.name);
+    await p.setBool('nsfw_blur_cover', mode != CoverBlurMode.none);
+  }
+
+  static Future<void> setNsfwBlurCover(bool enable) async {
+    await setCoverBlurMode(enable ? CoverBlurMode.brave : CoverBlurMode.none);
+  }
+
+  static Future<void> setHideBraveBooks(bool enable) async {
+    if (hideBraveBooks.value == enable) return;
+    hideBraveBooks.value = enable;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('hide_brave_books', enable);
+  }
+
   static Future<void> clear() async {
     final oldUid = LKClient.shared.session.uid;
+    LKReadingSession.shared.reset();
     // Invalidate reader content before any awaited account cleanup so an
     // in-flight chapter response cannot repopulate the previous scope.
     final readerCacheClear = ReaderContentCache.clear();
@@ -93,6 +211,7 @@ class LKStore {
     if (oldUid > 0) {
       await p.remove(_profileCacheKey(oldUid));
       await p.remove(_medalCacheKey(oldUid));
+      await p.remove('welfare_home_cache_v1_$oldUid');
       final accountPageCaches = p
           .getKeys()
           .where((key) =>
@@ -112,22 +231,20 @@ class LKStore {
     _globalMedalsWriteTimer = null;
     _globalMedalsMemory = null;
     _globalMedalsLoad = null;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final keys = prefs
-          .getKeys()
-          .where((key) =>
-              key == _globalMedalsKey ||
-              key.startsWith('home_recommend_v2') ||
-              key.startsWith('section_latest_') ||
-              key.startsWith('my_profile_cache_') ||
-              key.startsWith('my_medals_cache_') ||
-              key.startsWith(_pageCachePrefix))
-          .toList(growable: false);
-      await Future.wait(keys.map(prefs.remove));
-    } catch (_) {
-      // 资料缓存失败不影响其他缓存清理。
-    }
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs
+        .getKeys()
+        .where((key) =>
+            key == _globalMedalsKey ||
+            key.startsWith('home_recommend_v2') ||
+            key.startsWith('section_latest_') ||
+            key.startsWith('my_profile_cache_') ||
+            key.startsWith('my_medals_cache_') ||
+            key.startsWith('welfare_home_cache_v1_') ||
+            key.startsWith(_pageCachePrefix))
+        .toList(growable: false);
+    final removed = await Future.wait(keys.map(prefs.remove));
+    if (removed.any((success) => !success)) throw StateError('部分页面缓存未清除');
   }
 
   static Future<int> contentCacheSizeBytes() async {
@@ -139,6 +256,7 @@ class LKStore {
           key.startsWith('section_latest_') ||
           key.startsWith('my_profile_cache_') ||
           key.startsWith('my_medals_cache_') ||
+          key.startsWith('welfare_home_cache_v1_') ||
           key.startsWith(_pageCachePrefix));
       var total = 0;
       for (final key in keys) {
@@ -408,8 +526,9 @@ class LKStore {
     }
   }
 
-  static Future<void> cacheMedals(int uid, List<LKMedal> medals) async {
-    if (uid <= 0) return;
+  static Future<void> cacheMedals(int uid, List<LKMedal> medals,
+      {bool Function()? isCurrent}) async {
+    if (uid <= 0 || (isCurrent != null && !isCurrent())) return;
     final data = medals
         .map((medal) => {
               'medal_id': medal.medalId,
@@ -418,8 +537,10 @@ class LKStore {
               'equipped': medal.equipped,
             })
         .toList();
-    await (await SharedPreferences.getInstance())
-        .setString(_medalCacheKey(uid), jsonEncode(data));
+    final prefs = await SharedPreferences.getInstance();
+    if (isCurrent != null && !isCurrent()) return;
+    await prefs.setString(_medalCacheKey(uid), jsonEncode(data));
+    if (isCurrent != null && !isCurrent()) return;
     await cacheGlobalMedals({uid: medals});
   }
 
@@ -539,6 +660,7 @@ class ReaderPrefs {
       keepScreenOn: prefs.getBool('r_keep_on') ?? false,
       hideStatusBar: prefs.getBool('r_hide_bar') ?? false,
       tapTurnPage: prefs.getBool('r_tap_turn') ?? false,
+      volumeTurnPage: prefs.getBool('r_vol_turn') ?? false,
       autoMargin: prefs.getBool('r_auto_margin') ?? true,
       marginTop: prefs.getDouble('r_mt') ?? 56,
       marginBottom: prefs.getDouble('r_mb') ?? 70,
@@ -678,8 +800,10 @@ class ReaderSettings {
   final bool traditional;
   final bool simplified;
   final bool pagedMode;
+  final bool volumeTurnPage;
 
   const ReaderSettings({
+    this.volumeTurnPage = false,
     required this.fontSize,
     required this.lineHeight,
     required this.bgPreset,

@@ -1,3 +1,6 @@
+import '../services/app_motion.dart';
+import '../widgets/account_scope.dart';
+import '../widgets/scrollable_status.dart';
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
@@ -7,17 +10,27 @@ import '../services/avatar_cache.dart';
 import '../widgets/common.dart';
 import 'user_profile_page.dart';
 
-/// 关注与粉丝列表。当前仅提供只读浏览，不执行关注/取关操作。
-class FollowListPage extends StatefulWidget {
-  final int initialTab;
-
+/// 关注与粉丝列表，支持用户主页跳转和关注操作。
+class FollowListPage extends StatelessWidget {
   const FollowListPage({super.key, this.initialTab = 0});
-
+  final int initialTab;
   @override
-  State<FollowListPage> createState() => _FollowListPageState();
+  Widget build(BuildContext context) => AccountScope(
+        title: '关注与粉丝',
+        builder: (_) => _FollowListPageBody(initialTab: initialTab),
+      );
 }
 
-class _FollowListPageState extends State<FollowListPage>
+class _FollowListPageBody extends StatefulWidget {
+  final int initialTab;
+
+  const _FollowListPageBody({this.initialTab = 0});
+
+  @override
+  State<_FollowListPageBody> createState() => _FollowListPageState();
+}
+
+class _FollowListPageState extends State<_FollowListPageBody>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
   final _following = <LKFollowUser>[];
@@ -33,11 +46,16 @@ class _FollowListPageState extends State<FollowListPage>
   String? _followingError;
   String? _followersError;
   final Set<int> _followActionUids = <int>{};
+  final _session = SessionStamp();
+  final Map<int, bool> _followOverrides = {};
+  final Map<int, LKFollowUser> _changedUsers = {};
+  int _relationRevision = 0;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(
+    LKClient.followChanged.addListener(_onFollowChanged);
+    _tabs = MotionTabController(
         length: 2, initialIndex: widget.initialTab == 1 ? 1 : 0, vsync: this);
     _loadFollowing(reset: true);
     _loadFollowers(reset: true);
@@ -45,6 +63,7 @@ class _FollowListPageState extends State<FollowListPage>
 
   @override
   void dispose() {
+    LKClient.followChanged.removeListener(_onFollowChanged);
     _tabs.dispose();
     super.dispose();
   }
@@ -53,29 +72,46 @@ class _FollowListPageState extends State<FollowListPage>
     if (!LKClient.shared.session.isLoggedIn || _followingLoading) return;
     if (!reset && !_followingHasMore) return;
     final page = reset ? 1 : _followingPage + 1;
-    if (mounted) {
+    final revision = _relationRevision;
+    if (mounted && _session.isCurrent) {
       setState(() {
         _followingLoading = true;
-        if (reset) _followingError = null;
+        _followingError = null;
       });
     }
     try {
       final result = await LKApi.myFollowing(page);
-      if (!mounted) return;
+      if (!mounted || !_session.isCurrent) return;
       YomiruAvatarCache.precache(
           context, result.items.map((item) => item.avatar));
       setState(() {
         if (reset) _following.clear();
-        _appendUnique(_following, result.items);
+        _appendUnique(
+            _following,
+            result.items
+                .where((user) => _followOverrides[user.uid] != false)
+                .toList());
+        _appendUnique(
+            _following,
+            _changedUsers.values
+                .where((user) => _followOverrides[user.uid] == true)
+                .toList());
         _followingPage = result.page;
-        _followingTotal = result.total;
-        _followingHasMore = result.hasMore;
+        if (revision == _relationRevision) _followingTotal = result.total;
+        if (_followingTotal < _following.length) {
+          _followingTotal = _following.length;
+        }
+        _followingHasMore = result.hasMore && result.items.isNotEmpty;
         _followingError = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _followingError = _friendlyError(e));
+      if (mounted && _session.isCurrent) {
+        setState(() => _followingError = _friendlyError(e));
+      }
     } finally {
-      if (mounted) setState(() => _followingLoading = false);
+      if (mounted && _session.isCurrent) {
+        setState(() => _followingLoading = false);
+      }
     }
   }
 
@@ -83,29 +119,38 @@ class _FollowListPageState extends State<FollowListPage>
     if (!LKClient.shared.session.isLoggedIn || _followersLoading) return;
     if (!reset && !_followersHasMore) return;
     final page = reset ? 1 : _followersPage + 1;
-    if (mounted) {
+    if (mounted && _session.isCurrent) {
       setState(() {
         _followersLoading = true;
-        if (reset) _followersError = null;
+        _followersError = null;
       });
     }
     try {
       final result = await LKApi.myFollowers(page);
-      if (!mounted) return;
+      if (!mounted || !_session.isCurrent) return;
       YomiruAvatarCache.precache(
           context, result.items.map((item) => item.avatar));
       setState(() {
         if (reset) _followers.clear();
-        _appendUnique(_followers, result.items);
+        _appendUnique(
+            _followers,
+            result.items
+                .map((user) => user.copyWith(
+                    followed: _followOverrides[user.uid] ?? user.followed))
+                .toList());
         _followersPage = result.page;
         _followersTotal = result.total;
-        _followersHasMore = result.hasMore;
+        _followersHasMore = result.hasMore && result.items.isNotEmpty;
         _followersError = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _followersError = _friendlyError(e));
+      if (mounted && _session.isCurrent) {
+        setState(() => _followersError = _friendlyError(e));
+      }
     } finally {
-      if (mounted) setState(() => _followersLoading = false);
+      if (mounted && _session.isCurrent) {
+        setState(() => _followersLoading = false);
+      }
     }
   }
 
@@ -117,40 +162,90 @@ class _FollowListPageState extends State<FollowListPage>
   }
 
   Future<void> _refresh() async {
+    if (_followingLoading || _followersLoading) return;
+    // An explicit refresh may reflect changes made from another device.
+    _followOverrides.clear();
+    _changedUsers.clear();
+    _relationRevision++;
     await Future.wait([
       _loadFollowing(reset: true),
       _loadFollowers(reset: true),
     ]);
   }
 
+  void _onFollowChanged() {
+    final change = LKClient.followChanged.value;
+    if (!mounted ||
+        !_session.isCurrent ||
+        change == null ||
+        change.viewerUid != _session.uid ||
+        _followActionUids.contains(change.targetUid)) {
+      return;
+    }
+    final users = [..._following, ..._followers];
+    final index = users.indexWhere((user) => user.uid == change.targetUid);
+    if (index < 0) {
+      _refresh();
+      return;
+    }
+    final user = users[index];
+    final wasFollowed = _followOverrides[user.uid] ??
+        (_following.any((item) => item.uid == user.uid) || user.followed);
+    if (wasFollowed == change.followed) return;
+    setState(() {
+      _relationRevision++;
+      _followOverrides[user.uid] = change.followed;
+      _changedUsers[user.uid] = user.copyWith(followed: change.followed);
+      for (var i = 0; i < _followers.length; i++) {
+        if (_followers[i].uid == user.uid) {
+          _followers[i] = _followers[i].copyWith(followed: change.followed);
+        }
+      }
+      _following.removeWhere((item) => item.uid == user.uid);
+      if (change.followed) _following.insert(0, user.copyWith(followed: true));
+      _followingTotal =
+          (_followingTotal + (change.followed ? 1 : -1)).clamp(0, 1 << 31);
+    });
+  }
+
   Future<void> _toggleFollow(LKFollowUser user, bool following) async {
-    if (user.uid <= 0 || _followActionUids.contains(user.uid)) return;
+    if (!_session.isCurrent ||
+        user.uid <= 0 ||
+        _followActionUids.contains(user.uid)) {
+      return;
+    }
     setState(() => _followActionUids.add(user.uid));
     try {
       await LKApi.toggleFollow(user.uid, !following);
-      if (!mounted) return;
+      if (!mounted || !_session.isCurrent) return;
       setState(() {
+        _relationRevision++;
+        _followOverrides[user.uid] = !following;
+        _changedUsers[user.uid] = user.copyWith(followed: !following);
+        final fanIndex = _followers.indexWhere((item) => item.uid == user.uid);
+        if (fanIndex >= 0) {
+          _followers[fanIndex] =
+              _followers[fanIndex].copyWith(followed: !following);
+        }
         if (following) {
           _following.removeWhere((item) => item.uid == user.uid);
           if (_followingTotal > 0) _followingTotal--;
         } else {
-          final index = _followers.indexWhere((item) => item.uid == user.uid);
-          if (index >= 0) {
-            _followers[index] = _followers[index].copyWith(followed: true);
+          if (!_following.any((item) => item.uid == user.uid)) {
+            _following.insert(0, user.copyWith(followed: true));
           }
+          _followingTotal++;
         }
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(following ? '已取消关注' : '已关注')),
-      );
+      showFloatingPrompt(context, following ? '已取消关注' : '已关注');
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('操作失败：$e')),
-        );
+      if (mounted && _session.isCurrent) {
+        showFloatingPrompt(context, '操作失败：$e');
       }
     } finally {
-      if (mounted) setState(() => _followActionUids.remove(user.uid));
+      if (mounted && _session.isCurrent) {
+        setState(() => _followActionUids.remove(user.uid));
+      }
     }
   }
 
@@ -163,13 +258,13 @@ class _FollowListPageState extends State<FollowListPage>
   Widget build(BuildContext context) {
     if (!LKClient.shared.session.isLoggedIn) {
       return Scaffold(
-        appBar: AppBar(title: const Text('关注列表')),
-        body: const Center(child: Text('登录后才能查看关注列表')),
+        appBar: AppBar(title: const Text('关注与粉丝')),
+        body: const Center(child: Text('登录后才能查看关注与粉丝')),
       );
     }
     return Scaffold(
       appBar: AppBar(
-        title: const Text('关注列表'),
+        title: const Text('关注与粉丝'),
         actions: [
           IconButton(
             tooltip: '刷新',
@@ -185,9 +280,12 @@ class _FollowListPageState extends State<FollowListPage>
           ],
         ),
       ),
-      body: RefreshIndicator(
+      body: MotionRefreshIndicator(
         onRefresh: _refresh,
         child: TabBarView(
+          physics: AppMotion.isDisabled(context)
+              ? const NeverScrollableScrollPhysics()
+              : null,
           controller: _tabs,
           children: [
             _buildList(
@@ -224,10 +322,10 @@ class _FollowListPageState extends State<FollowListPage>
     required VoidCallback onLoadMore,
   }) {
     if (loading && items.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const ScrollableStatus(child: LkLoadingIndicator());
     }
     if (error != null && items.isEmpty) {
-      return Center(
+      return ScrollableStatus(
         child: FilledButton.tonal(
           onPressed: onRetry,
           child: Text(error),
@@ -235,24 +333,30 @@ class _FollowListPageState extends State<FollowListPage>
       );
     }
     if (items.isEmpty) {
-      return ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        children: const [
-          SizedBox(height: 180),
-          Center(child: Text('这里暂时没有用户')),
-        ],
-      );
+      return const ScrollableStatus(child: Text('这里暂时没有用户'));
     }
-    final showLoadMore = hasMore || loading;
+    final showLoadMore = hasMore || loading || error != null;
     return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        12,
+        16,
+        MediaQuery.paddingOf(context).bottom + 16,
+      ),
       physics: const AlwaysScrollableScrollPhysics(),
       itemCount: items.length + (showLoadMore ? 1 : 0),
-      separatorBuilder: (_, __) => const Divider(height: 1, indent: 76),
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         if (index == items.length) {
+          if (error != null) {
+            return Center(
+                child: TextButton(
+              onPressed: onLoadMore,
+              child: const Text('加载失败，点击重试'),
+            ));
+          }
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) onLoadMore();
+            if (mounted && _session.isCurrent && !loading) onLoadMore();
           });
           return const Padding(
             padding: EdgeInsets.all(16),
@@ -271,40 +375,65 @@ class _FollowListPageState extends State<FollowListPage>
     if (user.signature.isNotEmpty) subtitle.add(user.signature);
     final following = followingTab || user.followed;
     final busy = _followActionUids.contains(user.uid);
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: CircleAvatar(
-        radius: 24,
-        backgroundImage: user.avatar.isNotEmpty
-            ? YomiruAvatarCache.provider(user.avatar)
-            : null,
-        child: user.avatar.isEmpty ? const Icon(Icons.person_outline) : null,
-      ),
-      title: Text(
-        user.nickname.isEmpty ? '未知用户' : user.nickname,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        subtitle.isEmpty ? '暂无签名' : subtitle.join(' · '),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: user.uid <= 0
-          ? null
-          : OutlinedButton(
-              onPressed: busy ? null : () => _toggleFollow(user, following),
-              style: OutlinedButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Material(
+      color: theme.cardTheme.color ?? colors.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        tileColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        horizontalTitleGap: 12,
+        leading: CircleAvatar(
+          radius: 24,
+          backgroundImage: YomiruAvatarCache.providerOrNull(user.avatar),
+          child: YomiruAvatarCache.providerOrNull(user.avatar) == null
+              ? const Icon(Icons.person_outline)
+              : null,
+        ),
+        title: Text(
+          user.nickname.isEmpty ? '未知用户' : user.nickname,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style:
+              theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          subtitle.isEmpty ? '暂无签名' : subtitle.join(' · '),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colors.onSurfaceVariant,
+            height: 1.45,
+          ),
+        ),
+        trailing: user.uid <= 0
+            ? null
+            : FilledButton.tonal(
+                onPressed: busy ? null : () => _toggleFollow(user, following),
+                style: FilledButton.styleFrom(
+                  backgroundColor: following
+                      ? colors.surfaceContainerHighest
+                      : colors.secondaryContainer,
+                  foregroundColor: following
+                      ? colors.onSurfaceVariant
+                      : colors.onSecondaryContainer,
+                  minimumSize: const Size(76, 36),
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  shape: const StadiumBorder(),
+                ),
+                child: Text(busy
+                    ? '处理中'
+                    : following
+                        ? '已关注'
+                        : '关注'),
               ),
-              child: Text(busy
-                  ? '处理中'
-                  : following
-                      ? '取消关注'
-                      : '关注'),
-            ),
-      onTap: user.uid > 0 ? () => openUserProfile(context, user.uid) : null,
+        onTap: user.uid > 0 ? () => openUserProfile(context, user.uid) : null,
+      ),
     );
   }
 }

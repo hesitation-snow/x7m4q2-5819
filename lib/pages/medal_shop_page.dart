@@ -1,3 +1,5 @@
+import '../services/app_motion.dart';
+import '../widgets/account_scope.dart';
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
@@ -5,14 +7,30 @@ import '../api/lk_client.dart';
 import '../services/avatar_cache.dart';
 import '../widgets/common.dart';
 
-class MedalShopPage extends StatefulWidget {
+class MedalShopPage extends StatelessWidget {
   const MedalShopPage({super.key});
 
   @override
-  State<MedalShopPage> createState() => _MedalShopPageState();
+  Widget build(BuildContext context) => AccountScope(
+        title: '勋章商城',
+        builder: (_) => const _MedalShopPageBody(),
+      );
 }
 
-class _MedalShopPageState extends State<MedalShopPage> {
+class _MedalShopPageBody extends StatefulWidget {
+  const _MedalShopPageBody();
+
+  @override
+  State<_MedalShopPageBody> createState() => _MedalShopPageState();
+}
+
+class _MedalShopPageState extends State<_MedalShopPageBody>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
+  final _session = SessionStamp();
+  int _loadSerial = 0;
+  List<Map<String, dynamic>> _taskItems = [];
+  List<Map<String, dynamic>> _exchangeItems = [];
   static const Set<String> _taskKeys = {
     'task_medal_groups',
     'taskmedalgroups',
@@ -56,10 +74,19 @@ class _MedalShopPageState extends State<MedalShopPage> {
   @override
   void initState() {
     super.initState();
+    _tabs = MotionTabController(length: 2, vsync: this);
     _load();
   }
 
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
+    if (!_session.isCurrent) return;
+    final serial = ++_loadSerial;
     if (!LKClient.shared.session.isLoggedIn) {
       setState(() {
         _loading = false;
@@ -73,19 +100,21 @@ class _MedalShopPageState extends State<MedalShopPage> {
     });
     try {
       final data = await LKApi.medalCenter();
-      if (!mounted) return;
+      if (!mounted || !_session.isCurrent || serial != _loadSerial) return;
       setState(() {
         _data = data;
         _loading = false;
         final owned = _readOwnedMedals(data);
         _ownedMedalIds = owned.$1;
         _ownedMedalNames = owned.$2;
+        _taskItems = _itemsFor(_taskKeys);
+        _exchangeItems = _itemsFor(_exchangeKeys);
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _precacheMedalImages();
+        if (mounted && _session.isCurrent) _precacheMedalImages();
       });
     } catch (e) {
-      if (mounted) {
+      if (mounted && _session.isCurrent && serial == _loadSerial) {
         setState(() {
           _loading = false;
           _error = e.toString();
@@ -374,8 +403,8 @@ class _MedalShopPageState extends State<MedalShopPage> {
 
   void _precacheMedalImages() {
     final groups = [
-      ..._itemsFor(_taskKeys),
-      ..._itemsFor(_exchangeKeys),
+      ..._taskItems,
+      ..._exchangeItems,
     ];
     YomiruMedalCache.precache(
       context,
@@ -386,18 +415,18 @@ class _MedalShopPageState extends State<MedalShopPage> {
   Future<void> _claim(Map<String, dynamic> item) async {
     final id = _id(item, const ['task_id', 'taskId', 'id', 'medal_id']);
     final key = 'task:$id';
-    if (id <= 0 || _busy.contains(key)) return;
+    if (!_session.isCurrent || id <= 0 || _busy.contains(key)) return;
     setState(() => _busy.add(key));
     try {
       await LKApi.claimMedal(id);
-      if (mounted) {
+      if (mounted && _session.isCurrent) {
         showLkError(context, '领取成功');
         await _load();
       }
     } catch (e) {
-      if (mounted) showLkError(context, e);
+      if (mounted && _session.isCurrent) showLkError(context, e);
     } finally {
-      if (mounted) setState(() => _busy.remove(key));
+      if (mounted && _session.isCurrent) setState(() => _busy.remove(key));
     }
   }
 
@@ -413,12 +442,12 @@ class _MedalShopPageState extends State<MedalShopPage> {
         medalId > 0 ? medalId : requestId,
         goodsId: goodsId > 0 ? goodsId : null,
       );
-      if (mounted) {
+      if (mounted && _session.isCurrent) {
         showLkError(context, '兑换成功');
         await _load();
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && _session.isCurrent) {
         if (e is LKException && e.code >= 500) {
           showLkError(
             context,
@@ -430,7 +459,7 @@ class _MedalShopPageState extends State<MedalShopPage> {
         }
       }
     } finally {
-      if (mounted) setState(() => _busy.remove(key));
+      if (mounted && _session.isCurrent) setState(() => _busy.remove(key));
     }
   }
 
@@ -444,6 +473,7 @@ class _MedalShopPageState extends State<MedalShopPage> {
       'coin',
     ]);
     final confirmed = await showDialog<bool>(
+      animationStyle: AppMotion.style(context),
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('确认兑换勋章'),
@@ -463,52 +493,56 @@ class _MedalShopPageState extends State<MedalShopPage> {
         ],
       ),
     );
-    if (confirmed == true && mounted) await _exchange(item);
+    if (confirmed == true && mounted && _session.isCurrent) {
+      await _exchange(item);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final taskItems = _itemsFor(_taskKeys);
-    final exchangeItems = _itemsFor(_exchangeKeys);
+    final taskItems = _taskItems;
+    final exchangeItems = _exchangeItems;
     return Scaffold(
       appBar: AppBar(title: const Text('勋章商城')),
-      body: _loading
-          ? const LkLoadingIndicator()
-          : _error != null
+      body: _loading && _data == null
+          ? const Center(child: LkLoadingIndicator())
+          : _error != null && _data == null
               ? Center(
                   child: FilledButton.tonal(
                       onPressed: _load, child: Text(_error!)))
-              : DefaultTabController(
-                  length: 2,
-                  child: Column(
-                    children: [
-                      Material(
-                        color: Theme.of(context).scaffoldBackgroundColor,
-                        child: const TabBar(
-                          tabs: [
-                            Tab(text: '任务勋章'),
-                            Tab(text: '兑换勋章'),
-                          ],
-                        ),
+              : Column(
+                  children: [
+                    Material(
+                      color: Theme.of(context).scaffoldBackgroundColor,
+                      child: TabBar(
+                        controller: _tabs,
+                        tabs: const [
+                          Tab(text: '任务勋章'),
+                          Tab(text: '兑换勋章'),
+                        ],
                       ),
-                      Expanded(
-                        child: TabBarView(
-                          children: [
-                            _sectionView(
-                              taskItems,
-                              task: true,
-                              emptyText: '暂无任务勋章',
-                            ),
-                            _sectionView(
-                              exchangeItems,
-                              task: false,
-                              emptyText: '暂无可兑换勋章',
-                            ),
-                          ],
-                        ),
+                    ),
+                    Expanded(
+                      child: TabBarView(
+                        controller: _tabs,
+                        physics: AppMotion.isDisabled(context)
+                            ? const NeverScrollableScrollPhysics()
+                            : null,
+                        children: [
+                          _sectionView(
+                            taskItems,
+                            task: true,
+                            emptyText: '暂无任务勋章',
+                          ),
+                          _sectionView(
+                            exchangeItems,
+                            task: false,
+                            emptyText: '暂无可兑换勋章',
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
     );
   }
@@ -517,47 +551,47 @@ class _MedalShopPageState extends State<MedalShopPage> {
     List<Map<String, dynamic>> items, {
     required bool task,
     required String emptyText,
-  }) {
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-        children: [
-          _sectionTitle(
-            task ? '任务勋章' : '兑换勋章',
-            task ? '完成站内任务后领取' : '使用轻币兑换并佩戴展示',
-          ),
-          if (items.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 150),
-              child: Center(child: Text(emptyText)),
-            )
-          else
-            Card(
+  }) =>
+      MotionRefreshIndicator(
+        onRefresh: _load,
+        child: ListView.builder(
+          key: PageStorageKey('medal-shop-$task'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.fromLTRB(
+              12, 12, 12, 24 + MediaQuery.paddingOf(context).bottom),
+          itemCount: items.isEmpty ? 2 : items.length + 1,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(4, 2, 4, 12),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(task ? '完成站内任务后领取' : '使用轻币兑换并佩戴展示',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant)),
+                      if (_error != null)
+                        TextButton(
+                            onPressed: _load, child: const Text('刷新失败，点击重试')),
+                    ]),
+              );
+            }
+            if (items.isEmpty) {
+              return Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Center(child: Text(emptyText)));
+            }
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
               clipBehavior: Clip.antiAlias,
-              child: Column(
-                children:
-                    items.map((item) => _medalTile(item, task: task)).toList(),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _sectionTitle(String title, String subtitle) => Padding(
-        padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(title,
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(width: 8),
-            Text(subtitle,
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-          ],
+              child: _medalTile(items[index - 1], task: task),
+            );
+          },
         ),
       );
 
@@ -604,9 +638,10 @@ class _MedalShopPageState extends State<MedalShopPage> {
       leading: CircleAvatar(
         radius: 26,
         backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-        backgroundImage:
-            image.isNotEmpty ? YomiruMedalCache.provider(image) : null,
-        child: image.isEmpty ? const Icon(Icons.military_tech_outlined) : null,
+        backgroundImage: YomiruMedalCache.providerOrNull(image),
+        child: YomiruMedalCache.providerOrNull(image) == null
+            ? const Icon(Icons.military_tech_outlined)
+            : null,
       ),
       title: Text(name.isEmpty ? '未命名勋章' : name,
           maxLines: 2, overflow: TextOverflow.ellipsis),

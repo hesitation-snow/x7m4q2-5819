@@ -1,3 +1,4 @@
+import '../services/app_motion.dart';
 import 'package:flutter/material.dart';
 
 import '../services/anonymous_telemetry.dart';
@@ -70,7 +71,7 @@ class _FeedbackPageState extends State<FeedbackPage> {
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: MotionProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.send_outlined),
               label: Text(_sending ? '发送中…' : '发送反馈'),

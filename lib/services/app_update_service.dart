@@ -1,3 +1,4 @@
+import 'app_motion.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -7,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../api/lk_api.dart';
 import '../api/models.dart';
+import '../widgets/common.dart';
 
 class AppUpdateInfo {
   final PackageInfo package;
@@ -70,6 +72,7 @@ class YomiruUpdateService {
     final release = info.release;
     if (release == null || info.latestVersion.isEmpty) {
       await showDialog<void>(
+        animationStyle: AppMotion.style(context),
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('检查更新'),
@@ -92,6 +95,7 @@ class YomiruUpdateService {
     final visibleNotes =
         notes.length > 500 ? '${notes.substring(0, 500)}…' : notes;
     await showDialog<void>(
+      animationStyle: AppMotion.style(context),
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(info.hasNewVersion ? '发现新版本' : '已是最新版本'),
@@ -211,8 +215,6 @@ class YomiruUpdateService {
   }
 
   static void _showOpenError(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('无法打开浏览器，请稍后重试')),
-    );
+    showFloatingPrompt(context, '无法打开浏览器，请稍后重试');
   }
 }

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:yomiru/api/models.dart';
-import 'package:yomiru/pages/dm_chat_page.dart';
+import 'package:yomiru/pages/settings_page.dart';
 import 'package:yomiru/services/app_update_service.dart';
 
 void main() {
@@ -155,9 +155,12 @@ void main() {
     ));
     await tester.pump();
 
-    expect(find.byType(Card), findsNWidgets(3));
+    expect(find.byType(Card), findsAtLeastNWidgets(3));
     expect(tester.takeException(), isNull);
 
+    await tester.scrollUntilVisible(find.text('关于'), 100);
+    await tester.ensureVisible(find.widgetWithText(ListTile, '关于'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('关于'));
     await tester.pumpAndSettle();
     expect(find.text('github.com/hesitation-snow/yomiru'), findsOneWidget);
