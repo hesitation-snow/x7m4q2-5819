@@ -213,6 +213,7 @@ class _ReaderPageState extends State<ReaderPage>
   Timer? _positionPersistTimer;
   double _scrollLayoutWidth = 0;
   bool _scrollLayoutLockedBody = false;
+  double? _immersiveHeight;
 
   /// 正文文字区域的指针跟踪。
   /// SelectionArea 会优先处理文字手势，这里用 Listener 旁路记录短按，
@@ -1062,7 +1063,10 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _applyImmersive() {
-    _systemUi.apply(_hideBar);
+    // 开启“隐藏系统状态栏”时：
+    // 阅读状态（_chrome == false）隐藏系统状态栏；
+    // 唤起控制栏/设置菜单（_chrome == true）时显示系统状态栏，同时正文排版保持无状态栏全屏布局不变。
+    _systemUi.apply(_hideBar && !_chrome);
   }
 
   void _syncVolumeKeys() => _volumeKeys.sync();
@@ -1081,6 +1085,10 @@ class _ReaderPageState extends State<ReaderPage>
   Future<void> _turnByVolume(bool forward) async {
     if (_volumeTurnBusy || !_volumeKeys.isEligible()) return;
     _volumeTurnBusy = true;
+    if (_chrome) {
+      setState(() => _chrome = false);
+      _applyImmersive();
+    }
     try {
       if (_paged
           ? (forward ? _pageIndex >= _pages.length - 1 : _pageIndex <= 0)
@@ -2578,6 +2586,7 @@ class _ReaderPageState extends State<ReaderPage>
             _chrome &&
             !_restoringScrollAnchor) {
           setState(() => _chrome = false);
+          _applyImmersive();
         }
         return false;
       },
@@ -2707,6 +2716,10 @@ class _ReaderPageState extends State<ReaderPage>
                 ? const NeverScrollableScrollPhysics()
                 : const ClampingScrollPhysics(),
             onPageChanged: (i) {
+              if (_chrome) {
+                setState(() => _chrome = false);
+                _applyImmersive();
+              }
               if (_restoringPagedProgress) return;
               // 切入翻页模式时 PageView 可能异步回调一次目标页。该回调
               // 只代表恢复完成，不应把“页内原始锚点”降级成页首锚点。
@@ -3357,7 +3370,10 @@ class _ReaderPageState extends State<ReaderPage>
         return;
       }
     }
-    if (mounted) setState(() => _chrome = !_chrome);
+    if (mounted) {
+      setState(() => _chrome = !_chrome);
+      _applyImmersive();
+    }
   }
 
   @override
@@ -3411,6 +3427,15 @@ class _ReaderPageState extends State<ReaderPage>
                             : LayoutBuilder(builder: (ctx, cons) {
                                 final vw = cons.maxWidth;
                                 final vh = cons.maxHeight;
+                                if (!_chrome && _hideBar) {
+                                  _immersiveHeight = vh;
+                                }
+                                final effectiveVh = (_hideBar &&
+                                        _chrome &&
+                                        _immersiveHeight != null &&
+                                        _scrollLayoutWidth == vw)
+                                    ? _immersiveHeight!
+                                    : vh;
                                 // 翻页模式:内容/排版/尺寸变化时重建分页
                                 if (_paged) {
                                   final textScale =
@@ -3420,7 +3445,7 @@ class _ReaderPageState extends State<ReaderPage>
                                   final key = ReaderPaginationKey(
                                     content: _blocks,
                                     layout: '$_fontSize|$_lineHeight|$_mt|$_mb|'
-                                        '$_ml|$_mr|$_autoMargin|$vw|$vh|'
+                                        '$_ml|$_mr|$_autoMargin|$vw|$effectiveVh|'
                                         '$viewTopPadding|$viewBottomPadding|'
                                         '$textScale|$locale|$_locked|$_unlocked',
                                   );
@@ -3433,14 +3458,14 @@ class _ReaderPageState extends State<ReaderPage>
                                           _pagedKey == key) {
                                         _buildPages(
                                             vw,
-                                            vh -
+                                            effectiveVh -
                                                 viewTopPadding -
                                                 viewBottomPadding);
                                         setState(() {});
                                       }
                                     });
                                   }
-                                  return _pagedBody(vh, viewTopPadding,
+                                  return _pagedBody(effectiveVh, viewTopPadding,
                                       viewBottomPadding, lockedBody);
                                 }
                                 return _scrollBody(vw, viewTopPadding,
@@ -3505,7 +3530,7 @@ class _ReaderPageState extends State<ReaderPage>
                 AnimatedPositioned(
                   duration: AppMotion.duration(context, 200),
                   curve: Curves.easeOut,
-                  top: _chrome ? 0 : -90,
+                  top: _chrome ? 0 : -(padTop + 100),
                   left: 0,
                   right: 0,
                   child: RepaintBoundary(

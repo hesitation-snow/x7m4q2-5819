@@ -4,30 +4,15 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import android.view.KeyEvent
-import android.content.Intent
-import android.content.IntentFilter
-import android.os.BatteryManager
 
 class MainActivity : FlutterActivity() {
     private var readerChannel: MethodChannel? = null
-    private var batteryChannel: MethodChannel? = null
     private var volumePaging = false
     private var readerOwner = -1
     private val capturedKeys = mutableSetOf<Int>()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        batteryChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
-            "moe.yutro.yomiru/reader_battery").also { channel ->
-            channel.setMethodCallHandler { call, result ->
-                if (call.method == "level") {
-                    val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-                    val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-                    val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-                    result.success(if (level >= 0 && scale > 0) level * 100 / scale else null)
-                } else result.notImplemented()
-            }
-        }
         readerChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
             "moe.yutro.yomiru/reader_keys").also { channel ->
             channel.setMethodCallHandler { call, result ->
@@ -73,8 +58,6 @@ class MainActivity : FlutterActivity() {
         capturedKeys.clear()
         readerChannel?.setMethodCallHandler(null)
         readerChannel = null
-        batteryChannel?.setMethodCallHandler(null)
-        batteryChannel = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 }
