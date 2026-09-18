@@ -451,7 +451,7 @@ class BookCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark ? const Color(0xFF1E2025) : Colors.white;
+    final cardColor = Theme.of(context).cardTheme.color ?? scheme.surfaceContainerLow;
     final titleColor =
         isDark ? const Color(0xFFECEDF1) : const Color(0xFF263238);
     final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;

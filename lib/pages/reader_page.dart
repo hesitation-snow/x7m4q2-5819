@@ -34,6 +34,7 @@ import '../services/illustration_cache.dart';
 import '../services/app_motion.dart';
 import '../services/reader_volume_keys.dart';
 import '../services/reader_system_ui.dart';
+import '../widgets/reader_device_status.dart';
 
 /// 正文块:文本(可含链接区间)或插画
 class _BodyBlock {
@@ -3466,7 +3467,7 @@ class _ReaderPageState extends State<ReaderPage>
                 if (_indicators && !_chrome && !_loading)
                   Positioned(
                     bottom: 8,
-                    right: 16,
+                    right: 16 + MediaQuery.of(context).padding.right,
                     child: RepaintBoundary(
                       child: _paged
                           ? Text(
@@ -3484,6 +3485,20 @@ class _ReaderPageState extends State<ReaderPage>
                                     color: _textColor.withValues(alpha: 0.45)),
                               ),
                             ),
+                    ),
+                  ),
+                if (_indicators &&
+                    _hideBar &&
+                    !_chrome &&
+                    !_loading &&
+                    _loadError == null)
+                  Positioned(
+                    bottom: 8,
+                    left: 16 + MediaQuery.of(context).padding.left,
+                    child: RepaintBoundary(
+                      child: ReaderDeviceStatus(
+                        color: _textColor.withValues(alpha: 0.45),
+                      ),
                     ),
                   ),
                 // 顶栏

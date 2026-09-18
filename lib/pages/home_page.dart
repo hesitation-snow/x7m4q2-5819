@@ -147,18 +147,13 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final padTop = MediaQuery.of(context).padding.top;
+    final pageColor = Theme.of(context).scaffoldBackgroundColor;
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: isDark
-          ? const SystemUiOverlayStyle(
-              statusBarColor: Color(0xFF1B1C21),
-              statusBarIconBrightness: Brightness.light,
-              statusBarBrightness: Brightness.dark,
-            )
-          : const SystemUiOverlayStyle(
-              statusBarColor: Colors.white,
-              statusBarIconBrightness: Brightness.dark,
-              statusBarBrightness: Brightness.light,
-            ),
+      value: SystemUiOverlayStyle(
+        statusBarColor: pageColor,
+        statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+        statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+      ),
       child: Scaffold(
         body: Column(
           children: [
@@ -168,11 +163,7 @@ class _HomePageState extends State<HomePage> {
               height: padTop,
               width: double.infinity,
               child: ColoredBox(
-                color: _tab == 0
-                    ? (isDark ? const Color(0xFF1B1C21) : Colors.white)
-                    : (isDark
-                        ? const Color(0xFF121316)
-                        : const Color(0xFFF6F7FB)),
+                color: pageColor,
               ),
             ),
             ValueListenableBuilder<double>(
@@ -188,7 +179,7 @@ class _HomePageState extends State<HomePage> {
                       right: 0,
                       height: _barFlex,
                       child: ColoredBox(
-                        color: isDark ? const Color(0xFF1B1C21) : Colors.white,
+                        color: pageColor,
                         // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告
                         child: SingleChildScrollView(
                           physics: const NeverScrollableScrollPhysics(),
@@ -865,7 +856,7 @@ class _HomeRecommendCard extends StatelessWidget {
     return Padding(
       padding: padding,
       child: Material(
-        color: isDark ? const Color(0xFF1E2025) : Colors.white,
+        color: Theme.of(context).cardTheme.color,
         borderRadius: BorderRadius.circular(14),
         clipBehavior: Clip.antiAlias,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1124,7 +1115,7 @@ class _SectionTabState extends State<SectionTab> {
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Material(
-                color: isDark ? const Color(0xFF1E2025) : Colors.white,
+                color: Theme.of(context).cardTheme.color,
                 borderRadius: BorderRadius.circular(14),
                 clipBehavior: Clip.antiAlias,
                 child: Column(children: [
@@ -1292,9 +1283,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: Material(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? const Color(0xFF1E2025)
-                    : Colors.white,
+                color: Theme.of(context).cardTheme.color,
                 borderRadius: BorderRadius.circular(14),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(14),

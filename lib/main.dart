@@ -86,6 +86,7 @@ class LKApp extends StatelessWidget {
       ),
       cardTheme: CardThemeData(
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         margin: EdgeInsets.zero,
         color: isDark ? const Color(0xFF1E2025) : Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -230,15 +231,15 @@ class _SystemUIBridgeState extends State<_SystemUIBridge>
     _updateOrientations();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     SystemChrome.setSystemUIOverlayStyle(isDark
-        ? const SystemUiOverlayStyle(
-            statusBarColor: Color(0xFF1B1C21),
+        ? SystemUiOverlayStyle(
+            statusBarColor: Theme.of(context).scaffoldBackgroundColor,
             statusBarIconBrightness: Brightness.light,
             statusBarBrightness: Brightness.dark,
-            systemNavigationBarColor: Color(0xFF1B1C21),
+            systemNavigationBarColor: const Color(0xFF1B1C21),
             systemNavigationBarIconBrightness: Brightness.light,
           )
-        : const SystemUiOverlayStyle(
-            statusBarColor: Colors.white,
+        : SystemUiOverlayStyle(
+            statusBarColor: Theme.of(context).scaffoldBackgroundColor,
             statusBarIconBrightness: Brightness.dark,
             statusBarBrightness: Brightness.light,
             systemNavigationBarColor: Colors.white,
