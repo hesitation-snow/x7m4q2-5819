@@ -39,6 +39,9 @@ class LKStore {
   /// 隐藏勇者书籍模式(ValueNotifier 让列表和书架即时响应)
   static final ValueNotifier<bool> hideBraveBooks = ValueNotifier(true);
 
+  /// 书籍网格列数偏好（0 表示“自动”，2/3/4/5 表示每行固定本数）
+  static final ValueNotifier<int> gridColumnCount = ValueNotifier(0);
+
   /// 已确认需勇者权限的小说 ID 缓存（内置预置 14162 标杆书籍）
   static final Set<int> _braveBookIds = {14162};
 
@@ -124,6 +127,7 @@ class LKStore {
     }
     nsfwBlurCover.value = coverBlurMode.value != CoverBlurMode.none;
     hideBraveBooks.value = p.getBool('hide_brave_books') ?? true;
+    gridColumnCount.value = p.getInt('grid_column_count') ?? 0;
     setBraveBookChecker(isBraveBook);
     final storedBraveIds = p.getStringList('known_brave_book_ids');
     if (storedBraveIds != null) {
@@ -190,6 +194,14 @@ class LKStore {
     hideBraveBooks.value = enable;
     final p = await SharedPreferences.getInstance();
     await p.setBool('hide_brave_books', enable);
+  }
+
+  static Future<void> setGridColumnCount(int count) async {
+    final sanitized = count.clamp(0, 6);
+    if (gridColumnCount.value == sanitized) return;
+    gridColumnCount.value = sanitized;
+    final p = await SharedPreferences.getInstance();
+    await p.setInt('grid_column_count', sanitized);
   }
 
   static Future<void> clear() async {
@@ -758,6 +770,11 @@ class ReaderPrefs {
       (await _p()).getBool('feed_list') ?? false;
   static Future<void> setFeedListMode(bool v) async =>
       (await _p()).setBool('feed_list', v);
+
+  static Future<int> gridColumnCount() async =>
+      (await _p()).getInt('grid_column_count') ?? 0;
+  static Future<void> setGridColumnCount(int v) async =>
+      LKStore.setGridColumnCount(v);
 
   /// 章节阅读位置(0~1 进度),用于重新打开时自动跳转到上次阅读处
   static Future<double> readPosFrac(int chapterId) async =>

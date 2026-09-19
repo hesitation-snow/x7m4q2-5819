@@ -274,20 +274,28 @@ class _HomePageState extends State<HomePage> {
                                       ),
                                     ),
                                     const SizedBox(width: 2),
-                                    // 首页排版切换(网格/单列)
-                                    IconButton(
-                                      tooltip: _listMode ? '切换为网格' : '切换为列表',
-                                      visualDensity: VisualDensity.compact,
-                                      icon: Icon(
-                                        _listMode
-                                            ? Icons.grid_view_rounded
-                                            : Icons.view_agenda_outlined,
-                                        size: 21,
+                                    // 首页排版切换(网格/单列，长按可快速选择网格列数)
+                                    GestureDetector(
+                                      onLongPress: () =>
+                                          showGridColumnsSheet(context),
+                                      child: IconButton(
+                                        tooltip: _listMode
+                                            ? '切换为网格（长按设置列数）'
+                                            : '切换为列表（长按设置列数）',
+                                        visualDensity: VisualDensity.compact,
+                                        icon: Icon(
+                                          _listMode
+                                              ? Icons.grid_view_rounded
+                                              : Icons.view_agenda_outlined,
+                                          size: 21,
+                                        ),
+                                        onPressed: () {
+                                          setState(
+                                              () => _listMode = !_listMode);
+                                          ReaderPrefs.setFeedListMode(
+                                              _listMode);
+                                        },
                                       ),
-                                      onPressed: () {
-                                        setState(() => _listMode = !_listMode);
-                                        ReaderPrefs.setFeedListMode(_listMode);
-                                      },
                                     ),
                                   ],
                                 ),
@@ -448,6 +456,11 @@ class _FeedTabState extends State<FeedTab> {
   String? _error;
   int _requestSerial = 0;
 
+  int _lastGridColumnCount = LKStore.gridColumnCount.value;
+  int _anchorBookIndex = 0;
+  double _anchorFraction = 0.0;
+  final ScrollController _gridScrollController = ScrollController();
+
   bool get _listMode => widget.listMode;
   bool get _showRecommend =>
       widget.channelCode == 'hot' ||
@@ -459,6 +472,7 @@ class _FeedTabState extends State<FeedTab> {
     super.initState();
     LKClient.sessionRev.addListener(_onSessionChanged);
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
+    LKStore.gridColumnCount.addListener(_onGridColumnsChanged);
     if (_showRecommend) _loadRecommend();
     unawaited(_startLoad());
   }
@@ -467,11 +481,83 @@ class _FeedTabState extends State<FeedTab> {
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionChanged);
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    LKStore.gridColumnCount.removeListener(_onGridColumnsChanged);
+    _gridScrollController.dispose();
     super.dispose();
   }
 
   void _onHideBraveRev() {
     if (mounted) setState(() {});
+  }
+
+  void _updateGridAnchor({
+    required List<LKBook> visibleItems,
+    required bool showRecommend,
+  }) {
+    if (!_gridScrollController.hasClients || visibleItems.isEmpty) return;
+    final offset = _gridScrollController.offset;
+    final headerH = showRecommend ? 260.0 : 0.0;
+    const topPad = 6.0;
+    if (offset <= headerH) {
+      _anchorBookIndex = 0;
+      _anchorFraction = 0.0;
+      return;
+    }
+    final gridOffset = offset - headerH - topPad;
+    final width = MediaQuery.sizeOf(context).width - 24;
+    final metrics = BookGridDelegate.computeMetrics(
+      usableWidth: width,
+      columnCount: _lastGridColumnCount,
+    );
+    if (metrics.rowStride > 0 && metrics.count > 0) {
+      final row = (gridOffset / metrics.rowStride).floor();
+      _anchorBookIndex =
+          (row * metrics.count).clamp(0, visibleItems.length - 1);
+      _anchorFraction = ((gridOffset % metrics.rowStride) / metrics.rowStride)
+          .clamp(0.0, 1.0);
+    }
+  }
+
+  void _onGridColumnsChanged() {
+    final newCount = LKStore.gridColumnCount.value;
+    if (newCount == _lastGridColumnCount) return;
+    if (!mounted) return;
+
+    final hideBrave = LKStore.hideBraveBooks.value;
+    final visibleItems =
+        hideBrave ? _items.where((b) => !b.isBrave).toList() : _items;
+    final visibleRecommend = hideBrave
+        ? _recommendBooks.where((b) => !b.isBrave).toList()
+        : _recommendBooks;
+    final showRecommend = _showRecommend && visibleRecommend.isNotEmpty;
+
+    _updateGridAnchor(
+        visibleItems: visibleItems, showRecommend: showRecommend);
+    _lastGridColumnCount = newCount;
+    setState(() {});
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_gridScrollController.hasClients ||
+          visibleItems.isEmpty) {
+        return;
+      }
+      final headerH = showRecommend ? 260.0 : 0.0;
+      const topPad = 6.0;
+      final width = MediaQuery.sizeOf(context).width - 24;
+      final newMetrics = BookGridDelegate.computeMetrics(
+        usableWidth: width,
+        columnCount: newCount,
+      );
+      if (newMetrics.rowStride > 0 && newMetrics.count > 0) {
+        final newRow = _anchorBookIndex ~/ newMetrics.count;
+        final newGridOffset = newRow * newMetrics.rowStride +
+            _anchorFraction * newMetrics.rowStride;
+        final targetOffset = (headerH + topPad + newGridOffset)
+            .clamp(0.0, _gridScrollController.position.maxScrollExtent);
+        _gridScrollController.jumpTo(targetOffset);
+      }
+    });
   }
 
   String _feedCacheKey({
@@ -748,39 +834,49 @@ class _FeedTabState extends State<FeedTab> {
       },
     );
 
-    final gridView = CustomScrollView(
-      scrollCacheExtent: const ScrollCacheExtent.viewport(1.0),
-      physics: const AlwaysScrollableScrollPhysics(),
-      slivers: [
-        if (showRecommend)
-          SliverToBoxAdapter(
-              child: _HomeRecommendCard(books: visibleRecommend)),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-          sliver: SliverGrid(
-            gridDelegate: bookGridDelegate(),
-            delegate: SliverChildBuilderDelegate(
-              (_, i) {
-                if (i >= visibleItems.length) {
-                  // 触底加载更多(延迟到帧后,避免 build 期间 setState)
-                  return _loadMoreFooter();
-                }
-                final book = visibleItems[i];
-                return BookGridCard(
-                  book: book,
-                  rank: _rankOf(i),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => BookDetailPage(bookId: book.bookId)),
-                  ),
-                );
-              },
-              childCount: visibleItems.length + (_hasMore ? 1 : 0),
+    final gridView = NotificationListener<ScrollNotification>(
+      onNotification: (n) {
+        if (n is ScrollUpdateNotification) {
+          _updateGridAnchor(
+              visibleItems: visibleItems, showRecommend: showRecommend);
+        }
+        return false;
+      },
+      child: CustomScrollView(
+        controller: _gridScrollController,
+        scrollCacheExtent: const ScrollCacheExtent.viewport(1.0),
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          if (showRecommend)
+            SliverToBoxAdapter(
+                child: _HomeRecommendCard(books: visibleRecommend)),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+            sliver: SliverGrid(
+              gridDelegate: bookGridDelegate(),
+              delegate: SliverChildBuilderDelegate(
+                (_, i) {
+                  if (i >= visibleItems.length) {
+                    // 触底加载更多(延迟到帧后,避免 build 期间 setState)
+                    return _loadMoreFooter();
+                  }
+                  final book = visibleItems[i];
+                  return BookGridCard(
+                    book: book,
+                    rank: _rankOf(i),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => BookDetailPage(bookId: book.bookId)),
+                    ),
+                  );
+                },
+                childCount: visibleItems.length + (_hasMore ? 1 : 0),
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
 
     return MotionRefreshIndicator(

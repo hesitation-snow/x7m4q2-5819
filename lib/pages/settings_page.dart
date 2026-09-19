@@ -297,6 +297,20 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 20),
           _sectionTitle(context, '浏览'),
           _settingsGroup(context, [
+            ValueListenableBuilder<int>(
+              valueListenable: LKStore.gridColumnCount,
+              builder: (context, count, _) {
+                final label =
+                    count == 0 ? '自动（根据屏幕自适应）' : '每行 $count 本';
+                return ListTile(
+                  leading: _settingsIcon(context, Icons.grid_view_rounded),
+                  title: const Text('网格列数'),
+                  subtitle: Text('当前：$label'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => showGridColumnsSheet(context),
+                );
+              },
+            ),
             ValueListenableBuilder<CoverBlurMode>(
               valueListenable: LKStore.coverBlurMode,
               builder: (context, mode, _) {

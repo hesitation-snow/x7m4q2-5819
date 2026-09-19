@@ -47,6 +47,11 @@ class _ShelfPageState extends State<ShelfPage> {
   final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
   static const double _topBarFlex = 56.0;
 
+  int _lastGridColumnCount = LKStore.gridColumnCount.value;
+  int _anchorBookIndex = 0;
+  double _anchorFraction = 0.0;
+  final ScrollController _gridScrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -54,6 +59,7 @@ class _ShelfPageState extends State<ShelfPage> {
     LKClient.sessionRev.addListener(_onSessionRev);
     LKStore.localShelfRev.addListener(_onLocalShelfRev);
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
+    LKStore.gridColumnCount.addListener(_onGridColumnsChanged);
     _loadListMode();
     unawaited(_startLoad());
   }
@@ -63,12 +69,72 @@ class _ShelfPageState extends State<ShelfPage> {
     LKClient.sessionRev.removeListener(_onSessionRev);
     LKStore.localShelfRev.removeListener(_onLocalShelfRev);
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    LKStore.gridColumnCount.removeListener(_onGridColumnsChanged);
+    _gridScrollController.dispose();
     _topBarFrac.dispose();
     super.dispose();
   }
 
   void _onHideBraveRev() {
     if (mounted) setState(() {});
+  }
+
+  void _updateGridAnchor() {
+    final visibleItems = _visibleItems;
+    if (!_gridScrollController.hasClients || visibleItems.isEmpty) return;
+    final offset = _gridScrollController.offset;
+    const topPad = 8.0;
+    if (offset <= topPad) {
+      _anchorBookIndex = 0;
+      _anchorFraction = 0.0;
+      return;
+    }
+    final gridOffset = offset - topPad;
+    final width = MediaQuery.sizeOf(context).width - 24;
+    final metrics = BookGridDelegate.computeMetrics(
+      usableWidth: width,
+      columnCount: _lastGridColumnCount,
+    );
+    if (metrics.rowStride > 0 && metrics.count > 0) {
+      final row = (gridOffset / metrics.rowStride).floor();
+      _anchorBookIndex =
+          (row * metrics.count).clamp(0, visibleItems.length - 1);
+      _anchorFraction = ((gridOffset % metrics.rowStride) / metrics.rowStride)
+          .clamp(0.0, 1.0);
+    }
+  }
+
+  void _onGridColumnsChanged() {
+    final newCount = LKStore.gridColumnCount.value;
+    if (newCount == _lastGridColumnCount) return;
+    if (!mounted) return;
+
+    final visibleItems = _visibleItems;
+    _updateGridAnchor();
+    _lastGridColumnCount = newCount;
+    setState(() {});
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_gridScrollController.hasClients ||
+          visibleItems.isEmpty) {
+        return;
+      }
+      const topPad = 8.0;
+      final width = MediaQuery.sizeOf(context).width - 24;
+      final newMetrics = BookGridDelegate.computeMetrics(
+        usableWidth: width,
+        columnCount: newCount,
+      );
+      if (newMetrics.rowStride > 0 && newMetrics.count > 0) {
+        final newRow = _anchorBookIndex ~/ newMetrics.count;
+        final newGridOffset = newRow * newMetrics.rowStride +
+            _anchorFraction * newMetrics.rowStride;
+        final targetOffset = (topPad + newGridOffset)
+            .clamp(0.0, _gridScrollController.position.maxScrollExtent);
+        _gridScrollController.jumpTo(targetOffset);
+      }
+    });
   }
 
   void _onSessionRev() {
@@ -113,18 +179,20 @@ class _ShelfPageState extends State<ShelfPage> {
     if (!widget.embedded || notification.metrics.axis != Axis.vertical) {
       return false;
     }
-    if (notification is ScrollUpdateNotification &&
-        notification.dragDetails != null) {
-      final delta = notification.scrollDelta ?? 0;
-      if (delta.abs() < 0.5) return false;
-      final current = _topBarFrac.value;
-      final next = (current - delta / _topBarFlex).clamp(0.0, 1.0);
-      final diff = next - current;
-      if (diff == 0 || !mounted) return false;
-      _topBarFrac.value = next;
-      Scrollable.of(notification.context!)
-          .position
-          .correctBy(diff * _topBarFlex);
+    if (notification is ScrollUpdateNotification) {
+      if (!_listMode) _updateGridAnchor();
+      if (notification.dragDetails != null) {
+        final delta = notification.scrollDelta ?? 0;
+        if (delta.abs() < 0.5) return false;
+        final current = _topBarFrac.value;
+        final next = (current - delta / _topBarFlex).clamp(0.0, 1.0);
+        final diff = next - current;
+        if (diff == 0 || !mounted) return false;
+        _topBarFrac.value = next;
+        Scrollable.of(notification.context!)
+            .position
+            .correctBy(diff * _topBarFlex);
+      }
     } else if (notification is OverscrollNotification) {
       final current = _topBarFrac.value;
       final next =
@@ -569,6 +637,7 @@ class _ShelfPageState extends State<ShelfPage> {
                             },
                           )
                         : GridView.builder(
+                            controller: _gridScrollController,
                             scrollCacheExtent:
                                 const ScrollCacheExtent.viewport(1.0),
                             physics: const AlwaysScrollableScrollPhysics(),
@@ -600,20 +669,33 @@ class _ShelfPageState extends State<ShelfPage> {
           actions: [
             _shelfSourceButton(),
             _shelfFilterButton(),
-            IconButton(
-              tooltip: _listMode ? '切换为网格' : '切换为列表',
-              icon: Icon(_listMode
-                  ? Icons.grid_view_rounded
-                  : Icons.view_agenda_outlined),
-              onPressed: () {
-                final value = !_listMode;
-                setState(() => _listMode = value);
-                ReaderPrefs.setFeedListMode(value);
-              },
+            GestureDetector(
+              onLongPress: () => showGridColumnsSheet(context),
+              child: IconButton(
+                tooltip: _listMode
+                    ? '切换为网格（长按设置列数）'
+                    : '切换为列表（长按设置列数）',
+                icon: Icon(_listMode
+                    ? Icons.grid_view_rounded
+                    : Icons.view_agenda_outlined),
+                onPressed: () {
+                  final value = !_listMode;
+                  setState(() => _listMode = value);
+                  ReaderPrefs.setFeedListMode(value);
+                },
+              ),
             ),
           ],
         ),
-        body: body,
+        body: NotificationListener<ScrollNotification>(
+          onNotification: (n) {
+            if (n is ScrollUpdateNotification && !_listMode) {
+              _updateGridAnchor();
+            }
+            return false;
+          },
+          child: body,
+        ),
       );
     }
     final embeddedBody = NotificationListener<ScrollNotification>(
@@ -659,17 +741,22 @@ class _ShelfPageState extends State<ShelfPage> {
                             const Spacer(),
                             _shelfSourceButton(),
                             _shelfFilterButton(),
-                            IconButton(
-                              tooltip: _listMode ? '切换为网格' : '切换为列表',
-                              visualDensity: VisualDensity.compact,
-                              icon: Icon(_listMode
-                                  ? Icons.grid_view_rounded
-                                  : Icons.view_agenda_outlined),
-                              onPressed: () {
-                                final value = !_listMode;
-                                setState(() => _listMode = value);
-                                ReaderPrefs.setFeedListMode(value);
-                              },
+                            GestureDetector(
+                              onLongPress: () => showGridColumnsSheet(context),
+                              child: IconButton(
+                                tooltip: _listMode
+                                    ? '切换为网格（长按设置列数）'
+                                    : '切换为列表（长按设置列数）',
+                                visualDensity: VisualDensity.compact,
+                                icon: Icon(_listMode
+                                    ? Icons.grid_view_rounded
+                                    : Icons.view_agenda_outlined),
+                                onPressed: () {
+                                  final value = !_listMode;
+                                  setState(() => _listMode = value);
+                                  ReaderPrefs.setFeedListMode(value);
+                                },
+                              ),
                             ),
                           ],
                         ),

@@ -1,8 +1,10 @@
-import '../services/app_motion.dart';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import '../services/app_motion.dart';
 
 import '../api/models.dart';
 import '../api/store.dart';
@@ -244,6 +246,7 @@ class CoverImage extends StatefulWidget {
   final BoxFit fit;
   final bool isBrave;
   final bool showPeekButton;
+  final bool compactPeek;
   const CoverImage({
     super.key,
     required this.url,
@@ -253,6 +256,7 @@ class CoverImage extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.isBrave = false,
     this.showPeekButton = true,
+    this.compactPeek = false,
   });
 
   @override
@@ -400,13 +404,13 @@ class _CoverImageState extends State<CoverImage> {
                     image,
                     if (isBlurTarget && canShowPeek)
                       Positioned(
-                        top: 5,
-                        right: 5,
+                        top: widget.compactPeek ? 3.5 : 5,
+                        right: widget.compactPeek ? 3.5 : 5,
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onTap: () => setState(() => _revealed = !_revealed),
                           child: Container(
-                            padding: const EdgeInsets.all(4.5),
+                            padding: EdgeInsets.all(widget.compactPeek ? 3 : 4.5),
                             decoration: BoxDecoration(
                               color: Colors.black.withValues(alpha: 0.55),
                               shape: BoxShape.circle,
@@ -423,7 +427,7 @@ class _CoverImageState extends State<CoverImage> {
                                   ? Icons.visibility_rounded
                                   : Icons.visibility_off_rounded,
                               color: Colors.white,
-                              size: 13,
+                              size: widget.compactPeek ? 10.5 : 13,
                             ),
                           ),
                         ),
@@ -702,24 +706,27 @@ class BookCard extends StatelessWidget {
       n >= 10000 ? '${(n / 10000).toStringAsFixed(1)}万字' : '$n字';
 }
 
-Widget _braveCornerBadge(ColorScheme scheme) {
+Widget _braveCornerBadge(ColorScheme scheme, {bool compact = false}) {
   return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+    padding: EdgeInsets.symmetric(
+      horizontal: compact ? 3.5 : 5,
+      vertical: compact ? 1.5 : 2,
+    ),
     decoration: BoxDecoration(
       color: const Color(0xFFE53935).withValues(alpha: 0.88),
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(compact ? 3 : 4),
       boxShadow: [
         BoxShadow(
           color: Colors.black.withValues(alpha: 0.3),
-          blurRadius: 4,
+          blurRadius: compact ? 2 : 4,
           offset: const Offset(0, 1),
         ),
       ],
     ),
-    child: const Text(
+    child: Text(
       '勇者',
       style: TextStyle(
-        fontSize: 9.5,
+        fontSize: compact ? 8.5 : 9.5,
         fontWeight: FontWeight.bold,
         color: Colors.white,
       ),
@@ -731,17 +738,257 @@ Widget _braveCornerBadge(ColorScheme scheme) {
 List<String> shortTags(List<String> tags) =>
     tags.where((t) => t.length <= 12).toList();
 
-/// 书籍网格使用自适应列数,避免平板/桌面设备上两列卡片被横向拉得过大。
-/// 手机通常保持两列,更宽的屏幕会增加列数而不是放大封面。
-SliverGridDelegate bookGridDelegate() =>
-    const SliverGridDelegateWithMaxCrossAxisExtent(
-      maxCrossAxisExtent: 220,
-      crossAxisSpacing: 10,
-      mainAxisSpacing: 12,
-      childAspectRatio: 0.56,
+/// 书籍网格排版代理：
+/// 1. 支持指定固定列数（2/3/4/5）或自动自适应（<= 0 时按 maxCrossAxisExtent: 220 自动计算）；
+/// 2. 精确锁定封面为 3:4 比例，卡片总高度 = 封面高度 + 自适应文字区高度；
+/// 3. 文字区高度随卡片宽度阶梯自适应，彻底避免封面变形与溢出。
+class BookGridDelegate extends SliverGridDelegate {
+  final int columnCount;
+  final double crossAxisSpacing;
+  final double mainAxisSpacing;
+  final double maxCrossAxisExtent;
+
+  const BookGridDelegate({
+    this.columnCount = 0,
+    this.crossAxisSpacing = 10,
+    this.mainAxisSpacing = 12,
+    this.maxCrossAxisExtent = 220,
+  });
+
+  /// 根据单元格宽度计算文字信息区的高度（与 BookGridCard 严格保持一致）
+  static double calculateTextHeight(double cellWidth) {
+    if (cellWidth < 105) {
+      // 密集模式（如手机 4~5 列）：2 行书名（11pt，行高 1.25，高约 27.5）+ 顶部间距 4 + 底部微量余量 = 36.0
+      return 36.0;
+    } else if (cellWidth < 150) {
+      // 紧凑模式（如手机 3 列）：2 行书名（12pt，高约 30）+ 间距 5 + 单行字数（高约 11）+ 间距 2 = 48.0
+      return 48.0;
+    } else {
+      // 标准模式（如常规 2 列）：2 行书名（13.5pt，高约 34）+ 间距 7 + 标签/字数行（高约 14）+ 间距 3 = 58.0
+      return 58.0;
+    }
+  }
+
+  /// 辅助计算：给定总可用宽度，计算列数、单元格宽、高以及总行步长（供滚动锚定精准计算）
+  static ({int count, double cellWidth, double cellHeight, double rowStride})
+      computeMetrics({
+    required double usableWidth,
+    int columnCount = 0,
+    double crossAxisSpacing = 10,
+    double mainAxisSpacing = 12,
+    double maxCrossAxisExtent = 220,
+  }) {
+    final int count = columnCount > 0
+        ? columnCount
+        : math.max(2, (usableWidth / maxCrossAxisExtent).ceil());
+    final double totalCrossSpacing = crossAxisSpacing * (count - 1);
+    final double cellWidth =
+        math.max(0.0, (usableWidth - totalCrossSpacing) / count);
+    final double coverHeight = cellWidth * (4.0 / 3.0);
+    final double textHeight = calculateTextHeight(cellWidth);
+    final double cellHeight = coverHeight + textHeight;
+    final double rowStride = cellHeight + mainAxisSpacing;
+    return (
+      count: count,
+      cellWidth: cellWidth,
+      cellHeight: cellHeight,
+      rowStride: rowStride,
+    );
+  }
+
+  @override
+  SliverGridLayout getLayout(SliverConstraints constraints) {
+    final double usableCrossAxisExtent =
+        math.max(0.0, constraints.crossAxisExtent);
+    final metrics = computeMetrics(
+      usableWidth: usableCrossAxisExtent,
+      columnCount: columnCount,
+      crossAxisSpacing: crossAxisSpacing,
+      mainAxisSpacing: mainAxisSpacing,
+      maxCrossAxisExtent: maxCrossAxisExtent,
     );
 
-/// 视频网站风格:大封面竖排卡(双列网格用)
+    return SliverGridRegularTileLayout(
+      crossAxisCount: metrics.count,
+      mainAxisStride: metrics.rowStride,
+      crossAxisStride: metrics.cellWidth + crossAxisSpacing,
+      childMainAxisExtent: metrics.cellHeight,
+      childCrossAxisExtent: metrics.cellWidth,
+      reverseCrossAxis: axisDirectionIsReversed(constraints.crossAxisDirection),
+    );
+  }
+
+  @override
+  bool shouldRelayout(BookGridDelegate oldDelegate) {
+    return oldDelegate.columnCount != columnCount ||
+        oldDelegate.crossAxisSpacing != crossAxisSpacing ||
+        oldDelegate.mainAxisSpacing != mainAxisSpacing ||
+        oldDelegate.maxCrossAxisExtent != maxCrossAxisExtent;
+  }
+}
+
+/// 书籍网格使用自适应/用户指定列数。
+/// 封面比例严格保持 3:4，文字与角标自适应不同列宽。
+SliverGridDelegate bookGridDelegate({int? columnCount}) => BookGridDelegate(
+      columnCount: columnCount ?? LKStore.gridColumnCount.value,
+      crossAxisSpacing: 10,
+      mainAxisSpacing: 12,
+    );
+
+/// 弹出网格列数选择面板
+Future<void> showGridColumnsSheet(BuildContext context) async {
+  final current = LKStore.gridColumnCount.value;
+  final options = [
+    (0, '自动', '根据屏幕宽度自适应列数（手机通常 2 列）'),
+    (2, '2 列', '经典双列大图海报，展示最全信息'),
+    (3, '3 列', '紧凑排版，兼顾封面与浏览效率'),
+    (4, '4 列', '高密度速览，一屏纵览更多作品'),
+    (5, '5 列', '极密浏览，适合大屏或快速检索'),
+  ];
+
+  await showModalBottomSheet<void>(
+    sheetAnimationStyle: AppMotion.style(context),
+    context: context,
+    backgroundColor: Colors.transparent,
+    isScrollControlled: true,
+    showDragHandle: false,
+    builder: (sheetContext) {
+      final scheme = Theme.of(sheetContext).colorScheme;
+      return Container(
+        decoration: BoxDecoration(
+          color: Theme.of(sheetContext).scaffoldBackgroundColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          16 + MediaQuery.of(sheetContext).padding.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: scheme.outlineVariant.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                children: [
+                  Icon(Icons.grid_view_rounded,
+                      size: 20, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    '网格列数（每行几本）',
+                    style:
+                        Theme.of(sheetContext).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...options.map((opt) {
+              final (count, title, subtitle) = opt;
+              final selected = current == count;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Material(
+                  color: selected
+                      ? scheme.primaryContainer.withValues(alpha: 0.35)
+                      : scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(14),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      LKStore.setGridColumnCount(count);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      title,
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: selected
+                                            ? FontWeight.bold
+                                            : FontWeight.w500,
+                                        color: selected
+                                            ? scheme.primary
+                                            : scheme.onSurface,
+                                      ),
+                                    ),
+                                    if (count == 0) ...[
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 5, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: scheme.primary
+                                              .withValues(alpha: 0.12),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          '默认',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            color: scheme.primary,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  subtitle,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (selected)
+                            Icon(Icons.check_circle_rounded,
+                                color: scheme.primary, size: 20),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// 书籍网格卡片（自适应多列密度排版）
 class BookGridCard extends StatelessWidget {
   final LKBook book;
   final VoidCallback onTap;
@@ -754,144 +1001,224 @@ class BookGridCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
     final status = bookStatusLabel(book);
-    return RepaintBoundary(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 大封面(3:4)
-            Expanded(
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: CoverImage(
-                        key: ValueKey(book.bookId),
-                        url: book.coverUrl,
-                        width: double.infinity,
-                        height: double.infinity,
-                        radius: 12,
-                        isBrave: book.isBrave),
-                  ),
-                  if (rank != null)
-                    Positioned(
-                      top: 6,
-                      left: 6,
-                      child: Container(
-                        width: 26,
-                        height: 26,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: rank! <= 3
-                              ? (rank == 1
-                                  ? const Color(0xFFF57F17)
-                                  : rank == 2
-                                      ? const Color(0xFF78909C)
-                                      : const Color(0xFFBF6B4A))
-                              : Colors.black54,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.25),
-                                blurRadius: 4),
-                          ],
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = constraints.maxWidth;
+        // 三档密度响应：
+        // isDense (< 105): 4~5 列极密模式
+        // isCompact (105~149): 3 列紧凑模式
+        // isStandard (>= 150): 2 列标准海报模式
+        final isDense = cardWidth < 105;
+        final isCompact = cardWidth >= 105 && cardWidth < 150;
+
+        final isBlurActive = LKStore.coverBlurMode.value == CoverBlurMode.all ||
+            (LKStore.coverBlurMode.value == CoverBlurMode.brave && book.isBrave);
+
+        return RepaintBoundary(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(isDense ? 8 : 12),
+            onTap: onTap,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 封面严格锁定 3:4 比例，杜绝文字挤压变形
+                AspectRatio(
+                  aspectRatio: 3 / 4,
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: CoverImage(
+                          key: ValueKey(book.bookId),
+                          url: book.coverUrl,
+                          width: double.infinity,
+                          height: double.infinity,
+                          radius: isDense ? 8 : 12,
+                          isBrave: book.isBrave,
+                          compactPeek: isDense,
                         ),
-                        child: Text('$rank',
-                            style: const TextStyle(
+                      ),
+                      // 1. 排名角标（左上角）
+                      if (rank != null)
+                        Positioned(
+                          top: isDense ? 4 : 6,
+                          left: isDense ? 4 : 6,
+                          child: Container(
+                            width: isDense ? 20 : (isCompact ? 22 : 26),
+                            height: isDense ? 20 : (isCompact ? 22 : 26),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: rank! <= 3
+                                  ? (rank == 1
+                                      ? const Color(0xFFF57F17)
+                                      : rank == 2
+                                          ? const Color(0xFF78909C)
+                                          : const Color(0xFFBF6B4A))
+                                  : Colors.black54,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.25),
+                                  blurRadius: isDense ? 2 : 4,
+                                ),
+                              ],
+                            ),
+                            child: Text(
+                              '$rank',
+                              style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 13)),
-                      ),
-                    ),
-                  if (book.isBrave)
-                    Positioned(
-                      top: 6,
-                      left: rank != null ? 36 : 6,
-                      child: _braveCornerBadge(scheme),
-                    ),
-                  if (book.unreadChapterCount > 0)
-                    Positioned(
-                      top: 6,
-                      right:
-                          (LKStore.coverBlurMode.value == CoverBlurMode.all ||
-                                  (LKStore.coverBlurMode.value ==
-                                          CoverBlurMode.brave &&
-                                      book.isBrave))
-                              ? 34
-                              : 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 3),
-                        decoration: BoxDecoration(
-                          color:
-                              scheme.primaryContainer.withValues(alpha: 0.94),
-                          borderRadius: BorderRadius.circular(7),
+                                fontSize: isDense ? 10 : (isCompact ? 11 : 13),
+                              ),
+                            ),
+                          ),
                         ),
-                        child: Text(
-                          '${book.unreadChapterCount} 章更新',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: scheme.onPrimaryContainer,
+                      // 2. 勇者标记（左上角，位于排名右侧或贴左）
+                      if (book.isBrave)
+                        Positioned(
+                          top: isDense ? 4 : 6,
+                          left: rank != null
+                              ? (isDense ? 26 : (isCompact ? 30 : 36))
+                              : (isDense ? 4 : 6),
+                          child: _braveCornerBadge(scheme, compact: isDense),
+                        ),
+                      // 3. 更新章数角标：
+                      // 小封面（isDense/isCompact）或右上角有高斯模糊睁眼按钮时，置于左下角，彻底避免与左上角和右上角撞车挤压；
+                      // 仅在宽敞的标准封面且无模糊按钮遮挡时置于右上角。
+                      if (book.unreadChapterCount > 0)
+                        (isDense || isCompact || isBlurActive)
+                            ? Positioned(
+                                bottom: isDense ? 4 : 6,
+                                left: isDense ? 4 : 6,
+                                child: Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: isDense ? 4 : 6,
+                                    vertical: isDense ? 1.5 : 2.5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: scheme.primaryContainer
+                                        .withValues(alpha: 0.94),
+                                    borderRadius: BorderRadius.circular(
+                                        isDense ? 5 : 7),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black
+                                            .withValues(alpha: 0.25),
+                                        blurRadius: 2,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Text(
+                                    isDense
+                                        ? '+${book.unreadChapterCount}'
+                                        : '${book.unreadChapterCount} 章更新',
+                                    style: TextStyle(
+                                      fontSize: isDense ? 8.5 : 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: scheme.onPrimaryContainer,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : Positioned(
+                                top: 6,
+                                right: 6,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: scheme.primaryContainer
+                                        .withValues(alpha: 0.94),
+                                    borderRadius: BorderRadius.circular(7),
+                                  ),
+                                  child: Text(
+                                    '${book.unreadChapterCount} 章更新',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: scheme.onPrimaryContainer,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                      // 4. 连载/完结状态角标（右下角）
+                      Positioned(
+                        bottom: isDense ? 4 : 6,
+                        right: isDense ? 4 : 6,
+                        child: Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isDense ? 4 : 6,
+                            vertical: isDense ? 1.5 : 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            borderRadius:
+                                BorderRadius.circular(isDense ? 4 : 6),
+                          ),
+                          child: Text(
+                            isDense
+                                ? (status.contains('完结') ? '完结' : '连载')
+                                : status,
+                            style: TextStyle(
+                              fontSize: isDense ? 8.5 : 10,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  // 状态角标
-                  Positioned(
-                    bottom: 6,
-                    right: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(status,
-                          style: const TextStyle(
-                              fontSize: 10, color: Colors.white)),
-                    ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: isDense ? 4 : (isCompact ? 5 : 7)),
+                // 书名：保持可读，不随列数无限缩小，固定最多两行
+                Text(
+                  book.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: isDense ? 11.0 : (isCompact ? 12.0 : 13.5),
+                    fontWeight: FontWeight.w600,
+                    height: 1.25,
+                    color: isDark
+                        ? const Color(0xFFECEDF1)
+                        : const Color(0xFF263238),
+                  ),
+                ),
+                // 次要信息行：密集模式隐藏，紧凑模式显示精简字数，标准模式显示完整标签与字数
+                if (!isDense) ...[
+                  SizedBox(height: isCompact ? 2 : 3),
+                  Row(
+                    children: [
+                      if (!isCompact && book.tags.isNotEmpty)
+                        Expanded(
+                          child: Text(
+                            shortTags(book.tags).join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: scheme.primary,
+                            ),
+                          ),
+                        ),
+                      if (book.wordCount > 0)
+                        Text(
+                          book.wordCount >= 10000
+                              ? '${(book.wordCount / 10000).toStringAsFixed(1)}万字'
+                              : '${book.wordCount}字',
+                          style: TextStyle(
+                            fontSize: isCompact ? 10.0 : 10.5,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                    ],
                   ),
                 ],
-              ),
+              ],
             ),
-            const SizedBox(height: 7),
-            Text(
-              book.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w600,
-                  height: 1.25,
-                  color: isDark
-                      ? const Color(0xFFECEDF1)
-                      : const Color(0xFF263238)),
-            ),
-            const SizedBox(height: 3),
-            Row(children: [
-              if (book.tags.isNotEmpty)
-                Expanded(
-                  child: Text(
-                    shortTags(book.tags).join(' · '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 10.5, color: scheme.primary),
-                  ),
-                ),
-              if (book.wordCount > 0)
-                Text(
-                  book.wordCount >= 10000
-                      ? '${(book.wordCount / 10000).toStringAsFixed(1)}万字'
-                      : '${book.wordCount}字',
-                  style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
-                ),
-            ]),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
