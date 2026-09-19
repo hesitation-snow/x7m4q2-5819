@@ -65,6 +65,14 @@ void main() {
       expect(BookGridDelegate.calculateTextHeight(140.0), 48.0);
       expect(BookGridDelegate.calculateTextHeight(150.0), 58.0);
       expect(BookGridDelegate.calculateTextHeight(200.0), 58.0);
+
+      // 书架模式紧凑测算：无次要信息行，极大收敛行间空隙
+      expect(BookGridDelegate.calculateTextHeight(75.0, isShelf: true), 31.0);
+      expect(BookGridDelegate.calculateTextHeight(104.9, isShelf: true), 31.0);
+      expect(BookGridDelegate.calculateTextHeight(105.0, isShelf: true), 35.0);
+      expect(BookGridDelegate.calculateTextHeight(140.0, isShelf: true), 35.0);
+      expect(BookGridDelegate.calculateTextHeight(150.0, isShelf: true), 38.0);
+      expect(BookGridDelegate.calculateTextHeight(200.0, isShelf: true), 38.0);
     });
 
     test('getLayout produces SliverGridRegularTileLayout with correct strides', () {
@@ -213,6 +221,31 @@ void main() {
 
       expect(find.text('152.0万字'), findsOneWidget);
       expect(find.textContaining('异世界'), findsNothing);
+    });
+
+    testWidgets('renders shelf layout without secondary tags or word count', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 180,
+                height: 280,
+                child: BookGridCard(
+                  book: sampleBook,
+                  isShelf: true,
+                  onTap: () {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('关于我转生成为史莱姆的那档事'), findsOneWidget);
+      expect(find.textContaining('异世界'), findsNothing);
+      expect(find.text('152.0万字'), findsNothing);
+      expect(find.text('5 章更新'), findsOneWidget);
     });
   });
 

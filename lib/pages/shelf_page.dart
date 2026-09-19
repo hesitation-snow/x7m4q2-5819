@@ -94,6 +94,8 @@ class _ShelfPageState extends State<ShelfPage> {
     final metrics = BookGridDelegate.computeMetrics(
       usableWidth: width,
       columnCount: _lastGridColumnCount,
+      isShelf: true,
+      mainAxisSpacing: 8,
     );
     if (metrics.rowStride > 0 && metrics.count > 0) {
       final row = (gridOffset / metrics.rowStride).floor();
@@ -125,6 +127,8 @@ class _ShelfPageState extends State<ShelfPage> {
       final newMetrics = BookGridDelegate.computeMetrics(
         usableWidth: width,
         columnCount: newCount,
+        isShelf: true,
+        mainAxisSpacing: 8,
       );
       if (newMetrics.rowStride > 0 && newMetrics.count > 0) {
         final newRow = _anchorBookIndex ~/ newMetrics.count;
@@ -643,7 +647,7 @@ class _ShelfPageState extends State<ShelfPage> {
                             physics: const AlwaysScrollableScrollPhysics(),
                             padding: EdgeInsets.fromLTRB(12, 8, 12,
                                 12 + MediaQuery.of(context).padding.bottom),
-                            gridDelegate: bookGridDelegate(),
+                            gridDelegate: bookGridDelegate(isShelf: true),
                             itemCount: visibleItems.length + (_hasMore ? 1 : 0),
                             itemBuilder: (_, i) {
                               if (i >= visibleItems.length) {
@@ -652,6 +656,7 @@ class _ShelfPageState extends State<ShelfPage> {
                               final b = visibleItems[i];
                               return BookGridCard(
                                 book: b,
+                                isShelf: true,
                                 onTap: () => Navigator.push(
                                   context,
                                   MaterialPageRoute(

@@ -747,16 +747,28 @@ class BookGridDelegate extends SliverGridDelegate {
   final double crossAxisSpacing;
   final double mainAxisSpacing;
   final double maxCrossAxisExtent;
+  final bool isShelf;
 
   const BookGridDelegate({
     this.columnCount = 0,
     this.crossAxisSpacing = 10,
     this.mainAxisSpacing = 12,
     this.maxCrossAxisExtent = 220,
+    this.isShelf = false,
   });
 
   /// 根据单元格宽度计算文字信息区的高度（与 BookGridCard 严格保持一致）
-  static double calculateTextHeight(double cellWidth) {
+  static double calculateTextHeight(double cellWidth, {bool isShelf = false}) {
+    if (isShelf) {
+      // 书架模式：仅展示书名（最多 2 行），无次要标签行，行高与留白更紧凑精干，极大减小行间空隙
+      if (cellWidth < 105) {
+        return 31.0;
+      } else if (cellWidth < 150) {
+        return 35.0;
+      } else {
+        return 38.0;
+      }
+    }
     if (cellWidth < 105) {
       // 密集模式（如手机 4~5 列）：2 行书名（11pt，行高 1.25，高约 27.5）+ 顶部间距 4 + 底部微量余量 = 36.0
       return 36.0;
@@ -775,8 +787,9 @@ class BookGridDelegate extends SliverGridDelegate {
     required double usableWidth,
     int columnCount = 0,
     double crossAxisSpacing = 10,
-    double mainAxisSpacing = 12,
+    double? mainAxisSpacing,
     double maxCrossAxisExtent = 220,
+    bool isShelf = false,
   }) {
     final int count = columnCount > 0
         ? columnCount
@@ -785,9 +798,11 @@ class BookGridDelegate extends SliverGridDelegate {
     final double cellWidth =
         math.max(0.0, (usableWidth - totalCrossSpacing) / count);
     final double coverHeight = cellWidth * (4.0 / 3.0);
-    final double textHeight = calculateTextHeight(cellWidth);
+    final double textHeight = calculateTextHeight(cellWidth, isShelf: isShelf);
     final double cellHeight = coverHeight + textHeight;
-    final double rowStride = cellHeight + mainAxisSpacing;
+    final double effectiveMainAxisSpacing =
+        mainAxisSpacing ?? (isShelf ? 8.0 : 12.0);
+    final double rowStride = cellHeight + effectiveMainAxisSpacing;
     return (
       count: count,
       cellWidth: cellWidth,
@@ -806,6 +821,7 @@ class BookGridDelegate extends SliverGridDelegate {
       crossAxisSpacing: crossAxisSpacing,
       mainAxisSpacing: mainAxisSpacing,
       maxCrossAxisExtent: maxCrossAxisExtent,
+      isShelf: isShelf,
     );
 
     return SliverGridRegularTileLayout(
@@ -823,16 +839,24 @@ class BookGridDelegate extends SliverGridDelegate {
     return oldDelegate.columnCount != columnCount ||
         oldDelegate.crossAxisSpacing != crossAxisSpacing ||
         oldDelegate.mainAxisSpacing != mainAxisSpacing ||
-        oldDelegate.maxCrossAxisExtent != maxCrossAxisExtent;
+        oldDelegate.maxCrossAxisExtent != maxCrossAxisExtent ||
+        oldDelegate.isShelf != isShelf;
   }
 }
 
 /// 书籍网格使用自适应/用户指定列数。
 /// 封面比例严格保持 3:4，文字与角标自适应不同列宽。
-SliverGridDelegate bookGridDelegate({int? columnCount}) => BookGridDelegate(
+SliverGridDelegate bookGridDelegate({
+  int? columnCount,
+  double crossAxisSpacing = 10,
+  double? mainAxisSpacing,
+  bool isShelf = false,
+}) =>
+    BookGridDelegate(
       columnCount: columnCount ?? LKStore.gridColumnCount.value,
-      crossAxisSpacing: 10,
-      mainAxisSpacing: 12,
+      crossAxisSpacing: crossAxisSpacing,
+      mainAxisSpacing: mainAxisSpacing ?? (isShelf ? 8.0 : 12.0),
+      isShelf: isShelf,
     );
 
 /// 弹出网格列数选择面板
@@ -993,8 +1017,14 @@ class BookGridCard extends StatelessWidget {
   final LKBook book;
   final VoidCallback onTap;
   final int? rank;
-  const BookGridCard(
-      {super.key, required this.book, required this.onTap, this.rank});
+  final bool isShelf;
+  const BookGridCard({
+    super.key,
+    required this.book,
+    required this.onTap,
+    this.rank,
+    this.isShelf = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1059,7 +1089,7 @@ class BookGridCard extends StatelessWidget {
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withValues(alpha: 0.25),
-                                  blurRadius: isDense ? 2 : 4,
+                                  blurRadius: 4,
                                 ),
                               ],
                             ),
@@ -1073,7 +1103,7 @@ class BookGridCard extends StatelessWidget {
                             ),
                           ),
                         ),
-                      // 2. 勇者标记（左上角，位于排名右侧或贴左）
+                      // 2. 勇者角标（左上角，若有排名则排在排名右侧）
                       if (book.isBrave)
                         Positioned(
                           top: isDense ? 4 : 6,
@@ -1169,23 +1199,29 @@ class BookGridCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                SizedBox(height: isDense ? 4 : (isCompact ? 5 : 7)),
+                SizedBox(
+                  height: isShelf
+                      ? (isDense ? 3 : 4)
+                      : (isDense ? 4 : (isCompact ? 5 : 7)),
+                ),
                 // 书名：保持可读，不随列数无限缩小，固定最多两行
                 Text(
                   book.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: isDense ? 11.0 : (isCompact ? 12.0 : 13.5),
+                    fontSize: isDense
+                        ? 11.0
+                        : (isCompact ? 12.0 : (isShelf ? 13.0 : 13.5)),
                     fontWeight: FontWeight.w600,
-                    height: 1.25,
+                    height: isShelf ? 1.22 : 1.25,
                     color: isDark
                         ? const Color(0xFFECEDF1)
                         : const Color(0xFF263238),
                   ),
                 ),
-                // 次要信息行：密集模式隐藏，紧凑模式显示精简字数，标准模式显示完整标签与字数
-                if (!isDense) ...[
+                // 次要信息行：密集模式及书架模式隐藏，紧凑模式显示精简字数，标准模式显示完整标签与字数
+                if (!isDense && !isShelf) ...[
                   SizedBox(height: isCompact ? 2 : 3),
                   Row(
                     children: [
