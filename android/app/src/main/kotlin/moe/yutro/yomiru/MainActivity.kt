@@ -4,12 +4,20 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import android.view.KeyEvent
+import android.content.Intent
+import android.app.Activity
+import java.io.File
 
 class MainActivity : FlutterActivity() {
     private var readerChannel: MethodChannel? = null
+    private var epubChannel: MethodChannel? = null
     private var volumePaging = false
     private var readerOwner = -1
     private val capturedKeys = mutableSetOf<Int>()
+
+    private var pendingSaveResult: MethodChannel.Result? = null
+    private var pendingSourceFilePath: String? = null
+    private val REQUEST_CODE_SAVE_EPUB = 10091
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -26,6 +34,63 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(null)
                 } else result.notImplemented()
+            }
+        }
+
+        epubChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
+            "moe.yutro.yomiru/epub_export").also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                if (call.method == "saveDocument") {
+                    val filePath = call.argument<String>("filePath")
+                    val fileName = call.argument<String>("fileName") ?: "book.epub"
+                    if (filePath == null || !File(filePath).exists()) {
+                        result.error("FILE_NOT_FOUND", "Source EPUB file does not exist", null)
+                        return@setMethodCallHandler
+                    }
+                    pendingSaveResult = result
+                    pendingSourceFilePath = filePath
+
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/epub+zip"
+                        putExtra(Intent.EXTRA_TITLE, fileName)
+                    }
+                    try {
+                        startActivityForResult(intent, REQUEST_CODE_SAVE_EPUB)
+                    } catch (e: Exception) {
+                        pendingSaveResult = null
+                        pendingSourceFilePath = null
+                        result.error("ACTIVITY_NOT_FOUND", e.message, null)
+                    }
+                } else {
+                    result.notImplemented()
+                }
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_SAVE_EPUB) {
+            val result = pendingSaveResult
+            val sourcePath = pendingSourceFilePath
+            pendingSaveResult = null
+            pendingSourceFilePath = null
+
+            if (resultCode == Activity.RESULT_OK && data?.data != null && sourcePath != null) {
+                try {
+                    val destUri = data.data!!
+                    contentResolver.openOutputStream(destUri)?.use { out ->
+                        File(sourcePath).inputStream().use { input ->
+                            input.copyTo(out)
+                        }
+                    }
+                    result?.success(true)
+                } catch (e: Exception) {
+                    result?.error("SAVE_FAILED", e.message, null)
+                }
+            } else {
+                result?.success(false)
             }
         }
     }
@@ -58,6 +123,10 @@ class MainActivity : FlutterActivity() {
         capturedKeys.clear()
         readerChannel?.setMethodCallHandler(null)
         readerChannel = null
+        epubChannel?.setMethodCallHandler(null)
+        epubChannel = null
+        pendingSaveResult = null
+        pendingSourceFilePath = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 }

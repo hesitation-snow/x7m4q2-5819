@@ -10,6 +10,7 @@ import '../services/app_cache.dart';
 import '../services/app_update_service.dart';
 import '../widgets/common.dart';
 import 'feedback_page.dart';
+import 'experimental_settings_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -391,6 +392,24 @@ class _SettingsPageState extends State<SettingsPage> {
                 if (sent == true && context.mounted) {
                   showLkError(context, '反馈已发送，谢谢你的反馈');
                 }
+              },
+            ),
+            ListTile(
+              leading: _settingsIcon(context, Icons.science_outlined),
+              title: const Text('实验性功能'),
+              subtitle: ValueListenableBuilder<bool>(
+                valueListenable: LKStore.epubDownloadEnabled,
+                builder: (context, enabled, _) =>
+                    Text(enabled ? 'EPUB 下载已开启' : '关闭'),
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ExperimentalSettingsPage(),
+                  ),
+                );
               },
             ),
           ]),

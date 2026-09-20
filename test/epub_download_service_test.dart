@@ -1,0 +1,149 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:yomiru/api/models.dart';
+import 'package:yomiru/services/epub/epub_download_service.dart';
+import 'package:yomiru/services/epub/epub_models.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('EpubDownloadService Logic & Concurrency Tests', () {
+    test('EpubChapterItem models serialization and deserialization', () {
+      const item = EpubChapterItem(
+        chapterId: 888,
+        chapterNo: 1,
+        title: '测试章节',
+        volumeId: 10,
+        volumeTitle: '第 1 卷',
+        locked: true,
+        unlocked: false,
+        braveRequired: true,
+      );
+
+      final json = item.toJson();
+      final revived = EpubChapterItem.fromJson(json);
+
+      expect(revived.chapterId, equals(888));
+      expect(revived.chapterNo, equals(1));
+      expect(revived.title, equals('测试章节'));
+      expect(revived.volumeId, equals(10));
+      expect(revived.volumeTitle, equals('第 1 卷'));
+      expect(revived.locked, isTrue);
+      expect(revived.unlocked, isFalse);
+      expect(revived.braveRequired, isTrue);
+    });
+
+    test('EpubDownloadTask tracks progress, counts and terminal states', () {
+      const task = EpubDownloadTask(
+        bookId: 1001,
+        bookTitle: '测试书',
+        authorName: '测试作者',
+        ownerUid: 999,
+        chapters: [
+          EpubChapterItem(chapterId: 1, chapterNo: 1, title: '第1章', volumeId: 1, volumeTitle: '卷1'),
+          EpubChapterItem(chapterId: 2, chapterNo: 2, title: '第2章', volumeId: 1, volumeTitle: '卷1'),
+          EpubChapterItem(chapterId: 3, chapterNo: 3, title: '第3章', volumeId: 1, volumeTitle: '卷1'),
+          EpubChapterItem(chapterId: 4, chapterNo: 4, title: '第4章', volumeId: 1, volumeTitle: '卷1'),
+        ],
+        completedChapterIds: {1, 2},
+        failedChapters: {3: '无权限访问'},
+      );
+
+      expect(task.totalChapters, equals(4));
+      expect(task.completedCount, equals(2));
+      expect(task.failedCount, equals(1));
+      expect(task.downloadProgress, equals(0.5));
+      expect(task.isTerminal, isFalse);
+    });
+
+    test('Concurrency limiter enforces maximum concurrent executions of 2', () async {
+      var running = 0;
+      var peakRunning = 0;
+      var allowJobsToFinish = false;
+
+      final limiter = ConcurrencyLimiter(2);
+
+      Future<void> mockNetworkJob() async {
+        running++;
+        if (running > peakRunning) {
+          peakRunning = running;
+        }
+        while (!allowJobsToFinish) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        running--;
+      }
+
+      final activeJobs = List.generate(6, (_) => limiter.run(mockNetworkJob));
+
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(running, equals(2));
+      expect(peakRunning, equals(2));
+      expect(limiter.currentRunning, equals(2));
+
+      allowJobsToFinish = true;
+      await Future.wait(activeJobs);
+      expect(peakRunning, equals(2));
+      expect(running, equals(0));
+      expect(limiter.currentRunning, equals(0));
+    });
+
+    test('Catalog deduplication and ordering maintains official reading order', () {
+      // 模拟两页返回中存在重复章节以及不同卷的情况
+      final page1 = [
+        LKChapter(chapterId: 10, chapterNo: 1, title: '第1章'),
+        LKChapter(chapterId: 11, chapterNo: 2, title: '第2章'),
+        LKChapter(chapterId: 12, chapterNo: 3, title: '第3章'),
+      ];
+      final page2 = [
+        LKChapter(chapterId: 12, chapterNo: 3, title: '第3章(重复)'),
+        LKChapter(chapterId: 13, chapterNo: 4, title: '第4章'),
+      ];
+
+      final collected = <EpubChapterItem>[];
+      final seenIds = <int>{};
+
+      for (final ch in [...page1, ...page2]) {
+        if (ch.chapterId > 0 && seenIds.add(ch.chapterId)) {
+          collected.add(EpubChapterItem(
+            chapterId: ch.chapterId,
+            chapterNo: ch.chapterNo,
+            title: ch.title,
+            volumeId: 1,
+            volumeTitle: '第 1 卷',
+          ));
+        }
+      }
+
+      expect(collected.length, equals(4));
+      expect(collected.map((c) => c.chapterId).toList(), equals([10, 11, 12, 13]));
+      expect(collected[2].title, equals('第3章')); // 保留首次出现的正规项
+    });
+
+    test('Unauthorized chapters are recorded in failure list without crashing task', () {
+      const task = EpubDownloadTask(
+        bookId: 101,
+        bookTitle: '勇者小说',
+        authorName: '测试作者',
+        ownerUid: 123,
+        chapters: [
+          EpubChapterItem(chapterId: 1, chapterNo: 1, title: '公开试读章', volumeId: 1, volumeTitle: '卷1'),
+          EpubChapterItem(chapterId: 2, chapterNo: 2, title: '勇者专享章', volumeId: 1, volumeTitle: '卷1', braveRequired: true),
+        ],
+      );
+
+      final completed = <int>{1};
+      final failed = <int, String>{
+        2: '无权限或需要勇者等级',
+      };
+
+      final updated = task.copyWith(
+        completedChapterIds: completed,
+        failedChapters: failed,
+      );
+
+      expect(updated.completedCount, equals(1));
+      expect(updated.failedCount, equals(1));
+      expect(updated.failedChapters[2], contains('无权限'));
+    });
+  });
+}

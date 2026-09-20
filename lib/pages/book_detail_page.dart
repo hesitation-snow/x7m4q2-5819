@@ -16,6 +16,7 @@ import 'reader_page.dart';
 import 'comments_page.dart';
 import 'search_page.dart';
 import 'user_profile_page.dart';
+import 'epub_maker_page.dart';
 
 int _bookDetailInt(dynamic value) {
   if (value is num) return value.toInt();
@@ -662,6 +663,20 @@ class _BookDetailPageState extends State<BookDetailPage> {
     );
   }
 
+  void _openEpubMaker() {
+    final b = _book;
+    if (b == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EpubMakerPage(
+          book: b,
+          initialVolumes: _volumes,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = _book;
@@ -693,6 +708,37 @@ class _BookDetailPageState extends State<BookDetailPage> {
                           child: Text(b.title,
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                         ),
+                        actions: [
+                          ValueListenableBuilder<bool>(
+                            valueListenable: LKStore.epubDownloadEnabled,
+                            builder: (context, enabled, _) {
+                              if (!enabled) return const SizedBox.shrink();
+                              return PopupMenuButton<String>(
+                                tooltip: '更多操作',
+                                onSelected: (value) {
+                                  if (value == 'epub') {
+                                    _openEpubMaker();
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  const PopupMenuItem(
+                                    value: 'epub',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.download_for_offline_outlined,
+                                          size: 20,
+                                        ),
+                                        SizedBox(width: 8),
+                                        Text('制作 EPUB'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ],
                       ),
                       SliverToBoxAdapter(
                         child: Padding(
