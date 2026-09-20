@@ -17,6 +17,8 @@ import 'comments_page.dart';
 import 'search_page.dart';
 import 'user_profile_page.dart';
 import 'epub_maker_page.dart';
+import 'media_viewer_page.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
 int _bookDetailInt(dynamic value) {
   if (value is num) return value.toInt();
@@ -762,12 +764,30 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            CoverImage(
-                                                url: b.coverUrl,
-                                                width: 112,
-                                                height: 152,
-                                                radius: 10,
-                                                isBrave: b.isBrave),
+                                            InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                              onTap: b.coverUrl.trim().isNotEmpty
+                                                  ? () => Navigator.push(
+                                                        context,
+                                                        MaterialPageRoute(
+                                                          builder: (_) =>
+                                                              MediaViewerPage(
+                                                            url: b.coverUrl
+                                                                .trim(),
+                                                            cacheManager:
+                                                                DefaultCacheManager(),
+                                                          ),
+                                                        ),
+                                                      )
+                                                  : null,
+                                              child: CoverImage(
+                                                  url: b.coverUrl,
+                                                  width: 112,
+                                                  height: 152,
+                                                  radius: 10,
+                                                  isBrave: b.isBrave),
+                                            ),
                                             const SizedBox(width: 16),
                                             Expanded(
                                               child: Column(

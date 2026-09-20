@@ -44,6 +44,60 @@ class ConcurrencyLimiter {
   }
 }
 
+/// 用于平滑计算与格式化实时下载网速的测速器
+class _SpeedTracker {
+  int _bytesInWindow = 0;
+  DateTime _windowStartTime = DateTime.now();
+  DateTime _lastByteTime = DateTime.now();
+  double _smoothSpeed = 0.0;
+
+  void addBytes(int bytes) {
+    if (bytes <= 0) return;
+    _bytesInWindow += bytes;
+    final now = DateTime.now();
+    _lastByteTime = now;
+    final elapsedMs = now.difference(_windowStartTime).inMilliseconds;
+    if (elapsedMs >= 400) {
+      final currentInstantSpeed = (_bytesInWindow * 1000.0) / elapsedMs;
+      if (_smoothSpeed == 0.0) {
+        _smoothSpeed = currentInstantSpeed;
+      } else {
+        _smoothSpeed = _smoothSpeed * 0.6 + currentInstantSpeed * 0.4;
+      }
+      _bytesInWindow = 0;
+      _windowStartTime = now;
+    }
+  }
+
+  void reset() {
+    _bytesInWindow = 0;
+    _windowStartTime = DateTime.now();
+    _lastByteTime = DateTime.now();
+    _smoothSpeed = 0.0;
+  }
+
+  double get speedBytesPerSec {
+    final now = DateTime.now();
+    if (now.difference(_lastByteTime).inMilliseconds > 2500) {
+      _smoothSpeed = 0.0;
+      _bytesInWindow = 0;
+    }
+    return _smoothSpeed;
+  }
+
+  String get speedText {
+    final speed = speedBytesPerSec;
+    if (speed <= 0) return '';
+    if (speed < 1024) {
+      return '${speed.toStringAsFixed(0)} B/s';
+    } else if (speed < 1024 * 1024) {
+      return '${(speed / 1024).toStringAsFixed(1)} KB/s';
+    } else {
+      return '${(speed / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+    }
+  }
+}
+
 /// 独立的 EPUB 后台下载与制作调度服务
 ///
 /// 特性：
@@ -64,6 +118,9 @@ class EpubDownloadService {
 
   /// 网络请求并发限制器：最多 2 个网络并发
   final ConcurrencyLimiter _networkSemaphore = ConcurrencyLimiter(2);
+
+  final _SpeedTracker _speedTracker = _SpeedTracker();
+  int _downloadedIllustrationsCount = 0;
 
   int _boundUid = 0;
   bool _isPausedFlag = false;
@@ -137,9 +194,13 @@ class EpubDownloadService {
     if (task == null || !task.isRunning) return;
 
     _isPausedFlag = true;
+    _speedTracker.reset();
     currentTask.value = task.copyWith(
       phase: EpubTaskPhase.paused,
       statusMessage: '制作已暂停',
+      speedText: '',
+      currentIllustrationIndex: 0,
+      currentIllustrationTotal: 0,
     );
     await _saveTaskCheckpoint(currentTask.value!);
   }
@@ -151,6 +212,7 @@ class EpubDownloadService {
 
     _isPausedFlag = false;
     _isCanceledFlag = false;
+    _speedTracker.reset();
     _boundUid = LKClient.shared.session.uid;
 
     if (task.completedCount < task.totalChapters) {
@@ -180,10 +242,14 @@ class EpubDownloadService {
 
     _isCanceledFlag = true;
     _isPausedFlag = false;
+    _speedTracker.reset();
 
     currentTask.value = task.copyWith(
       phase: EpubTaskPhase.canceled,
       statusMessage: '任务已取消',
+      speedText: '',
+      currentIllustrationIndex: 0,
+      currentIllustrationTotal: 0,
     );
 
     await _deleteTaskDirectory(task.bookId);
@@ -339,6 +405,66 @@ class EpubDownloadService {
     return allCollectedChapters;
   }
 
+  /// 带流式分块测速与 25s 超时的图片下载，完成后同步缓存到 YomiruIllustrationCache
+  Future<bool> _downloadImageToDisk(
+    String url,
+    File destFile, {
+    void Function(int chunkBytes)? onBytes,
+  }) async {
+    final client = http.Client();
+    IOSink? sink;
+    try {
+      final request = http.Request('GET', Uri.parse(url));
+      request.headers['User-Agent'] =
+          'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 LKFlutter';
+      final response = await _networkSemaphore.run(
+        () => client.send(request).timeout(const Duration(seconds: 25)),
+      );
+      if (response.statusCode != 200) return false;
+
+      final activeSink = destFile.openWrite();
+      sink = activeSink;
+      final bytes = <int>[];
+      await for (final chunk
+          in response.stream.timeout(const Duration(seconds: 25))) {
+        if (_isCanceledFlag || _isPausedFlag) {
+          await activeSink.close();
+          sink = null;
+          if (await destFile.exists()) await destFile.delete();
+          return false;
+        }
+        activeSink.add(chunk);
+        bytes.addAll(chunk);
+        onBytes?.call(chunk.length);
+      }
+      await activeSink.flush();
+      await activeSink.close();
+      sink = null;
+
+      if (bytes.isNotEmpty) {
+        try {
+          await YomiruIllustrationCache.manager
+              .putFile(url, Uint8List.fromList(bytes));
+        } catch (_) {}
+        return true;
+      }
+      return false;
+    } catch (_) {
+      try {
+        await sink?.close();
+      } catch (_) {}
+      sink = null;
+      if (await destFile.exists()) {
+        try {
+          await destFile.delete();
+        } catch (_) {}
+      }
+      return false;
+    } finally {
+      client.close();
+    }
+  }
+
   /// 下载封面
   Future<void> _downloadCover(EpubDownloadTask task, Directory taskDir) async {
     if (task.coverUrl.trim().isEmpty) return;
@@ -346,10 +472,9 @@ class EpubDownloadService {
       final coverFile = File('${taskDir.path}/cover.jpg');
       if (await coverFile.exists()) return;
 
-      final res = await _networkSemaphore.run(() => http.get(Uri.parse(task.coverUrl)));
-      if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
-        await coverFile.writeAsBytes(res.bodyBytes);
-      }
+      await _downloadImageToDisk(task.coverUrl, coverFile, onBytes: (chunk) {
+        _speedTracker.addBytes(chunk);
+      });
     } catch (_) {
       // 封面下载失败不阻断全书制作
     }
@@ -360,10 +485,15 @@ class EpubDownloadService {
     final taskDir = await _getTaskDirectory(task.bookId);
     final completed = Set<int>.from(task.completedChapterIds);
     final failed = Map<int, String>.from(task.failedChapters);
+    final imagesDir = Directory('${taskDir.path}/images');
+    _downloadedIllustrationsCount = imagesDir.existsSync()
+        ? imagesDir.listSync().whereType<File>().length
+        : 0;
 
     for (final ch in task.chapters) {
       if (_isCanceledFlag) return;
       if (_isPausedFlag) {
+        _speedTracker.reset();
         await _saveTaskCheckpoint(currentTask.value!);
         return;
       }
@@ -374,9 +504,14 @@ class EpubDownloadService {
       // 如果已在失败列表中且未处于重试流程，跳过
       if (failed.containsKey(ch.chapterId)) continue;
 
+      final curSpeed = _speedTracker.speedText;
       currentTask.value = currentTask.value?.copyWith(
         currentChapterTitle: ch.title,
-        statusMessage: '正在下载: ${ch.title}',
+        statusMessage: curSpeed.isNotEmpty
+            ? '正在下载: ${ch.title} · $curSpeed'
+            : '正在下载: ${ch.title}',
+        speedText: curSpeed,
+        illustrationDownloadedCount: _downloadedIllustrationsCount,
       );
 
       try {
@@ -395,9 +530,17 @@ class EpubDownloadService {
             );
           } catch (_) {
             detail = await _fetchChapterWithRetry(task.bookId, ch.chapterId);
+            _speedTracker.addBytes(utf8.encode(detail.bodyText).length +
+                (detail.bodyHtml != null
+                    ? utf8.encode(detail.bodyHtml!).length
+                    : 0));
           }
         } else {
           detail = await _fetchChapterWithRetry(task.bookId, ch.chapterId);
+          _speedTracker.addBytes(utf8.encode(detail.bodyText).length +
+              (detail.bodyHtml != null
+                  ? utf8.encode(detail.bodyHtml!).length
+                  : 0));
         }
 
         // 若需要下载插画，但已存章节没有 bodyHtml，则重新向服务端请求带 HTML 的最新数据
@@ -406,6 +549,10 @@ class EpubDownloadService {
           try {
             final refreshed =
                 await _fetchChapterWithRetry(task.bookId, ch.chapterId);
+            _speedTracker.addBytes(utf8.encode(refreshed.bodyText).length +
+                (refreshed.bodyHtml != null
+                    ? utf8.encode(refreshed.bodyHtml!).length
+                    : 0));
             if (refreshed.bodyHtml != null &&
                 refreshed.bodyHtml!.isNotEmpty) {
               detail = refreshed;
@@ -435,6 +582,8 @@ class EpubDownloadService {
         currentTask.value = currentTask.value?.copyWith(
           completedChapterIds: completed,
           failedChapters: failed,
+          illustrationDownloadedCount: _downloadedIllustrationsCount,
+          speedText: _speedTracker.speedText,
         );
       } catch (e) {
         if (_isCanceledFlag) return;
@@ -443,14 +592,20 @@ class EpubDownloadService {
 
         currentTask.value = currentTask.value?.copyWith(
           failedChapters: failed,
+          illustrationDownloadedCount: _downloadedIllustrationsCount,
+          speedText: _speedTracker.speedText,
         );
 
         // 如果是 429 频率限制，主动暂停
         if (_isRateLimitError(e)) {
           _isPausedFlag = true;
+          _speedTracker.reset();
           currentTask.value = currentTask.value?.copyWith(
             phase: EpubTaskPhase.paused,
             statusMessage: '服务端访问过于频繁（429），已自动暂停，请稍后继续',
+            speedText: '',
+            currentIllustrationIndex: 0,
+            currentIllustrationTotal: 0,
           );
           await _saveTaskCheckpoint(currentTask.value!);
           return;
@@ -466,9 +621,13 @@ class EpubDownloadService {
       await _enterEditingMetadataPhase(currentTask.value!);
     } else {
       // 存在部分失败章节
+      _speedTracker.reset();
       final updated = currentTask.value!.copyWith(
         phase: EpubTaskPhase.paused,
         statusMessage: '正文下载暂未全部完成（${failed.length} 章失败）',
+        speedText: '',
+        currentIllustrationIndex: 0,
+        currentIllustrationTotal: 0,
       );
       currentTask.value = updated;
     }
@@ -494,7 +653,7 @@ class EpubDownloadService {
     }
   }
 
-  /// 处理本章插画（复用缓存，或按需下载并落盘）
+  /// 处理本章插画（复用缓存，或带流式测速与超时下载并落盘）
   Future<void> _processChapterIllustrations(
     LKChapterDetail detail,
     Directory taskDir,
@@ -523,57 +682,97 @@ class EpubDownloadService {
       } catch (_) {}
     }
 
-    for (final rawUrl in urls) {
+    final urlList = urls.toList();
+    final totalInChapter = urlList.length;
+    DateTime lastThrottledUpdate = DateTime.now();
+
+    for (int i = 0; i < totalInChapter; i++) {
       if (_isCanceledFlag || _isPausedFlag) return;
+      final rawUrl = urlList[i];
       final cleanUrl = rawUrl.replaceAll('&amp;', '&').trim();
       if (cleanUrl.isEmpty) continue;
       final fileName = getIllustrationFileName(cleanUrl);
       final destFile = File('${imagesDir.path}/$fileName');
 
+      final curSpeed = _speedTracker.speedText;
+      currentTask.value = currentTask.value?.copyWith(
+        currentIllustrationIndex: i + 1,
+        currentIllustrationTotal: totalInChapter,
+        illustrationDownloadedCount: _downloadedIllustrationsCount,
+        speedText: curSpeed,
+        statusMessage: curSpeed.isNotEmpty
+            ? '正在下载插画 (${i + 1}/$totalInChapter): ${detail.title} · $curSpeed'
+            : '正在下载插画 (${i + 1}/$totalInChapter): ${detail.title}',
+      );
+
+      bool isNewDownload = false;
       if (!await destFile.exists()) {
         try {
-          // 1. 优先尝试从本地已有插画缓存管理器复制文件
+          // 1. 优先尝试从本地已有插画缓存管理器复制文件（离线秒开）
           final cached =
               await YomiruIllustrationCache.manager.cachedFile(cleanUrl);
           if (cached != null && await File(cached.file.path).exists()) {
             await File(cached.file.path).copy(destFile.path);
+            isNewDownload = true;
           }
         } catch (_) {}
 
         if (!await destFile.exists()) {
-          try {
-            // 2. 尝试从缓存管理器预取并落盘
-            final downloaded = await _networkSemaphore.run(
-                () => YomiruIllustrationCache.prefetch(cleanUrl));
-            if (downloaded != null && await File(downloaded.path).exists()) {
-              await File(downloaded.path).copy(destFile.path);
-            }
-          } catch (_) {}
-        }
-
-        if (!await destFile.exists()) {
-          try {
-            // 3. 降级保障：直接通过 HTTP 请求下载原图落盘
-            final uri = Uri.parse(cleanUrl);
-            final res = await _networkSemaphore.run(() => http.get(uri));
-            if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
-              await destFile.writeAsBytes(res.bodyBytes);
-            }
-          } catch (_) {
-            // 单张插画失败不中断正文任务
+          // 2. 带流式测速与 25s 超时的下载
+          final downloaded = await _downloadImageToDisk(
+            cleanUrl,
+            destFile,
+            onBytes: (chunkBytes) {
+              _speedTracker.addBytes(chunkBytes);
+              final now = DateTime.now();
+              if (now.difference(lastThrottledUpdate).inMilliseconds >= 300) {
+                lastThrottledUpdate = now;
+                final liveSpeed = _speedTracker.speedText;
+                currentTask.value = currentTask.value?.copyWith(
+                  currentIllustrationIndex: i + 1,
+                  currentIllustrationTotal: totalInChapter,
+                  illustrationDownloadedCount: _downloadedIllustrationsCount,
+                  speedText: liveSpeed,
+                  statusMessage: liveSpeed.isNotEmpty
+                      ? '正在下载插画 (${i + 1}/$totalInChapter): ${detail.title} · $liveSpeed'
+                      : '正在下载插画 (${i + 1}/$totalInChapter): ${detail.title}',
+                );
+              }
+            },
+          );
+          if (downloaded) {
+            isNewDownload = true;
           }
         }
       }
 
       if (await destFile.exists()) {
+        if (isNewDownload) {
+          _downloadedIllustrationsCount++;
+        }
         map[rawUrl] = fileName;
         map[cleanUrl] = fileName;
         map[illustrationCacheKey(cleanUrl)] = fileName;
         map[fileName] = fileName;
+
+        currentTask.value = currentTask.value?.copyWith(
+          currentIllustrationIndex: i + 1,
+          currentIllustrationTotal: totalInChapter,
+          illustrationDownloadedCount: _downloadedIllustrationsCount,
+          speedText: _speedTracker.speedText,
+        );
       }
     }
 
     await mapFile.writeAsString(jsonEncode(map));
+
+    // 本章插画处理完毕，重置当前章节插画状态
+    currentTask.value = currentTask.value?.copyWith(
+      currentIllustrationIndex: 0,
+      currentIllustrationTotal: 0,
+      illustrationDownloadedCount: _downloadedIllustrationsCount,
+      speedText: _speedTracker.speedText,
+    );
   }
 
   /// 阶段 3: 准备封面与标题自选数据，进入编辑阶段
@@ -581,6 +780,7 @@ class EpubDownloadService {
     EpubDownloadTask task, {
     bool exportIncomplete = false,
   }) async {
+    _speedTracker.reset();
     final taskDir = await _getTaskDirectory(task.bookId);
 
     // 收集所有已落盘的插画文件路径
@@ -599,7 +799,7 @@ class EpubDownloadService {
     final defaultCoverPath =
         await defaultCoverFile.exists() ? defaultCoverFile.path : null;
 
-    // 计算预设标题："[书名]  [卷名]"
+    // 计算预设标题："书名  [卷名]"
     final presetTitle =
         computeDefaultEpubTitle(task.bookTitle, task.selectedVolumes);
 
@@ -611,6 +811,10 @@ class EpubDownloadService {
       customTitle: task.customTitle ?? presetTitle,
       customCoverPath: task.customCoverPath ?? defaultCoverPath,
       availableIllustrationPaths: illustrationPaths,
+      illustrationDownloadedCount: illustrationPaths.length,
+      currentIllustrationIndex: 0,
+      currentIllustrationTotal: 0,
+      speedText: '',
       statusMessage: '正文与插画下载完成，请确认封面与文件标题',
     );
     currentTask.value = updated;
@@ -620,6 +824,7 @@ class EpubDownloadService {
   /// 阶段 4: Isolate 中执行 EPUB 3 标准容器打包
   Future<void> _runPackagingPhase(EpubDownloadTask task) async {
     try {
+      _speedTracker.reset();
       final taskDir = await _getTaskDirectory(task.bookId);
       final exportsDir = await _getExportsDirectory();
       await exportsDir.create(recursive: true);
@@ -634,6 +839,9 @@ class EpubDownloadService {
       currentTask.value = currentTask.value?.copyWith(
         phase: EpubTaskPhase.packaging,
         statusMessage: '正在打包 EPUB 3 容器…',
+        speedText: '',
+        currentIllustrationIndex: 0,
+        currentIllustrationTotal: 0,
       );
 
       final buildContext = EpubBuildContext(

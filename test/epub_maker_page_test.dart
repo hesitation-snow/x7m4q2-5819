@@ -151,6 +151,51 @@ void main() {
     expect(find.text('取消制作'), findsOneWidget);
   });
 
+  testWidgets('EpubMakerPage renders illustration progress and speed during downloadingContent', (tester) async {
+    final book = LKBook(bookId: 201, title: '带插画巨作');
+    final volumes = [LKVolume(volumeId: 1, title: '第1卷', chapterCount: 5)];
+
+    EpubDownloadService.shared.currentTask.value = EpubDownloadTask(
+      bookId: 201,
+      bookTitle: '带插画巨作',
+      authorName: '名作家',
+      ownerUid: 1,
+      options: const EpubExportOptions(includeIllustrations: true),
+      phase: EpubTaskPhase.downloadingContent,
+      statusMessage: '正在下载插画 (2/5): 第 1 章 · 350.5 KB/s',
+      chapters: List.generate(
+        5,
+        (i) => EpubChapterItem(
+          chapterId: i + 1,
+          chapterNo: i + 1,
+          title: '第 ${i + 1} 章',
+          volumeId: 1,
+          volumeTitle: '第1卷',
+        ),
+      ),
+      completedChapterIds: const {1},
+      illustrationDownloadedCount: 6,
+      currentIllustrationIndex: 2,
+      currentIllustrationTotal: 5,
+      speedText: '350.5 KB/s',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EpubMakerPage(
+          book: book,
+          initialVolumes: volumes,
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('正在下载插画 (2/5): 第 1 章 · 350.5 KB/s'), findsOneWidget);
+    expect(find.text('插画: 第 2 / 5 张 · 累计 6 张'), findsOneWidget);
+    expect(find.text('350.5 KB/s'), findsOneWidget);
+  });
+
   testWidgets('EpubMakerPage renders editingMetadata view with preset title and cover selection', (tester) async {
     final book = LKBook(bookId: 300, title: '魔法禁书目录', authorName: '镰池和马');
     final volumes = [
@@ -166,7 +211,7 @@ void main() {
       selectedVolumes: volumes,
       phase: EpubTaskPhase.editingMetadata,
       statusMessage: '正文与插画下载完成，请确认封面与文件标题',
-      customTitle: '[魔法禁书目录]  [旧约 第一卷]',
+      customTitle: '魔法禁书目录  [旧约 第一卷]',
       availableIllustrationPaths: const ['/tmp/art_01.jpg', '/tmp/art_02.jpg'],
     );
 
@@ -189,7 +234,7 @@ void main() {
     expect(find.text('完成'), findsOneWidget);
 
     // 验证标题输入框包含预设值
-    expect(find.text('[魔法禁书目录]  [旧约 第一卷]'), findsOneWidget);
+    expect(find.text('魔法禁书目录  [旧约 第一卷]'), findsOneWidget);
     expect(find.text('文件与书籍标题'), findsOneWidget);
 
     // 验证封面区域
@@ -217,6 +262,6 @@ void main() {
     // 点击“恢复预设”按钮
     await tester.tap(find.byTooltip('恢复预设标题'));
     await tester.pumpAndSettle();
-    expect(find.text('[魔法禁书目录]  [旧约 第一卷]'), findsOneWidget);
+    expect(find.text('魔法禁书目录  [旧约 第一卷]'), findsOneWidget);
   });
 }

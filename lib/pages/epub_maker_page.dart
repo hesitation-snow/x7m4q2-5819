@@ -560,6 +560,62 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                       ),
                     ],
                   ),
+                  if (task.options.includeIllustrations || task.speedText.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          if (task.options.includeIllustrations)
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Icon(Icons.photo_library_outlined,
+                                      size: 15, color: scheme.primary),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      task.currentIllustrationTotal > 0
+                                          ? '插画: 第 ${task.currentIllustrationIndex} / ${task.currentIllustrationTotal} 张 · 累计 ${task.illustrationDownloadedCount} 张'
+                                          : '插画: 已下载 ${task.illustrationDownloadedCount} 张',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else
+                            const Spacer(),
+                          if (task.speedText.isNotEmpty)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.speed_rounded,
+                                    size: 15, color: scheme.primary),
+                                const SizedBox(width: 4),
+                                Text(
+                                  task.speedText,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: scheme.primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),
@@ -802,7 +858,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                               setState(() {});
                             },
                           ),
-                          helperText: '预设格式：[书名]  [卷名]，作为电子书内标题及导出文件名',
+                          helperText: '预设格式：书名  [卷名]，作为电子书内标题及导出文件名',
                           helperMaxLines: 2,
                         ),
                       ),

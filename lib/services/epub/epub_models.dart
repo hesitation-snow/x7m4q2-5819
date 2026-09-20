@@ -56,21 +56,21 @@ enum EpubTaskPhase {
   canceled,
 }
 
-/// 计算预设的电子书与导出文件名标题："[书名]  [卷名]"
+/// 计算预设的电子书与导出文件名标题："书名  [卷名]"
 String computeDefaultEpubTitle(String bookTitle, List<LKVolume> volumes) {
   final cleanBookTitle = bookTitle.trim();
   if (volumes.length == 1) {
     final volTitle = volumes.first.title.trim();
-    return '[$cleanBookTitle]  [${volTitle.isNotEmpty ? volTitle : "正文"}]';
+    return '$cleanBookTitle  [${volTitle.isNotEmpty ? volTitle : "正文"}]';
   } else if (volumes.length > 1) {
     final first = volumes.first.title.trim();
     final last = volumes.last.title.trim();
     if (first.isNotEmpty && last.isNotEmpty && first != last) {
-      return '[$cleanBookTitle]  [$first - $last]';
+      return '$cleanBookTitle  [$first - $last]';
     }
-    return '[$cleanBookTitle]  [全本]';
+    return '$cleanBookTitle  [全本]';
   }
-  return '[$cleanBookTitle]';
+  return cleanBookTitle;
 }
 
 /// 导出选项
@@ -173,6 +173,10 @@ class EpubDownloadTask {
   final String? customTitle;
   final String? customCoverPath;
   final List<String> availableIllustrationPaths;
+  final int illustrationDownloadedCount;
+  final int currentIllustrationIndex;
+  final int currentIllustrationTotal;
+  final String speedText;
 
   const EpubDownloadTask({
     required this.bookId,
@@ -195,6 +199,10 @@ class EpubDownloadTask {
     this.customTitle,
     this.customCoverPath,
     this.availableIllustrationPaths = const [],
+    this.illustrationDownloadedCount = 0,
+    this.currentIllustrationIndex = 0,
+    this.currentIllustrationTotal = 0,
+    this.speedText = '',
   });
 
   int get totalChapters => chapters.length;
@@ -248,6 +256,10 @@ class EpubDownloadTask {
     String? customTitle,
     String? customCoverPath,
     List<String>? availableIllustrationPaths,
+    int? illustrationDownloadedCount,
+    int? currentIllustrationIndex,
+    int? currentIllustrationTotal,
+    String? speedText,
   }) =>
       EpubDownloadTask(
         bookId: bookId ?? this.bookId,
@@ -273,6 +285,13 @@ class EpubDownloadTask {
         customCoverPath: customCoverPath ?? this.customCoverPath,
         availableIllustrationPaths:
             availableIllustrationPaths ?? this.availableIllustrationPaths,
+        illustrationDownloadedCount:
+            illustrationDownloadedCount ?? this.illustrationDownloadedCount,
+        currentIllustrationIndex:
+            currentIllustrationIndex ?? this.currentIllustrationIndex,
+        currentIllustrationTotal:
+            currentIllustrationTotal ?? this.currentIllustrationTotal,
+        speedText: speedText ?? this.speedText,
       );
 
   Map<String, dynamic> toJson() => {
@@ -295,5 +314,9 @@ class EpubDownloadTask {
         'custom_title': customTitle,
         'custom_cover_path': customCoverPath,
         'available_illustration_paths': availableIllustrationPaths,
+        'illustration_downloaded_count': illustrationDownloadedCount,
+        'current_illustration_index': currentIllustrationIndex,
+        'current_illustration_total': currentIllustrationTotal,
+        'speed_text': speedText,
       };
 }

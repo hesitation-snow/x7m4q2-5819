@@ -161,14 +161,14 @@ void main() {
       expect(urls[1], equals('https://api.lightnovel.fun/upload-files/images/260731/c44ecc6d854642742676d5226c9cb343.jpg'));
     });
 
-    test('computeDefaultEpubTitle formats preset title strictly as [书名]  [卷名]', () {
+    test('computeDefaultEpubTitle formats preset title strictly as 书名  [卷名]', () {
       // 单卷情况
       final singleVol = [
         LKVolume(volumeId: 1, title: '第一卷 地位向上篇'),
       ];
       expect(
         computeDefaultEpubTitle('关于我转生成为史莱姆的那件事', singleVol),
-        equals('[关于我转生成为史莱姆的那件事]  [第一卷 地位向上篇]'),
+        equals('关于我转生成为史莱姆的那件事  [第一卷 地位向上篇]'),
       );
 
       // 单卷标题为空回退为 [正文]
@@ -177,7 +177,7 @@ void main() {
       ];
       expect(
         computeDefaultEpubTitle('无头骑士异闻录', emptyTitleVol),
-        equals('[无头骑士异闻录]  [正文]'),
+        equals('无头骑士异闻录  [正文]'),
       );
 
       // 多卷情况（首卷与末卷）
@@ -188,37 +188,49 @@ void main() {
       ];
       expect(
         computeDefaultEpubTitle('加速世界', multiVol),
-        equals('[加速世界]  [第一卷 - 第三卷]'),
+        equals('加速世界  [第一卷 - 第三卷]'),
       );
 
       // 空列表
       expect(
         computeDefaultEpubTitle('狼与香辛料', const []),
-        equals('[狼与香辛料]'),
+        equals('狼与香辛料'),
       );
     });
 
-    test('EpubDownloadTask supports custom metadata and effectiveTitle resolution', () {
+    test('EpubDownloadTask supports custom metadata, speed and illustration progress', () {
       const task = EpubDownloadTask(
         bookId: 88,
         bookTitle: '原始书名',
         authorName: '作者',
         ownerUid: 1,
         phase: EpubTaskPhase.editingMetadata,
-        customTitle: '[原始书名]  [自定义卷名]',
+        customTitle: '原始书名  [自定义卷名]',
         customCoverPath: '/tmp/test_cover.jpg',
         availableIllustrationPaths: ['/tmp/img1.jpg', '/tmp/img2.jpg'],
+        illustrationDownloadedCount: 15,
+        currentIllustrationIndex: 2,
+        currentIllustrationTotal: 5,
+        speedText: '420.5 KB/s',
       );
 
-      expect(task.effectiveTitle, equals('[原始书名]  [自定义卷名]'));
+      expect(task.effectiveTitle, equals('原始书名  [自定义卷名]'));
       expect(task.customCoverPath, equals('/tmp/test_cover.jpg'));
       expect(task.availableIllustrationPaths.length, equals(2));
+      expect(task.illustrationDownloadedCount, equals(15));
+      expect(task.currentIllustrationIndex, equals(2));
+      expect(task.currentIllustrationTotal, equals(5));
+      expect(task.speedText, equals('420.5 KB/s'));
       expect(task.isRunning, isTrue);
 
       final json = task.toJson();
-      expect(json['custom_title'], equals('[原始书名]  [自定义卷名]'));
+      expect(json['custom_title'], equals('原始书名  [自定义卷名]'));
       expect(json['custom_cover_path'], equals('/tmp/test_cover.jpg'));
       expect(json['available_illustration_paths'], contains('/tmp/img1.jpg'));
+      expect(json['illustration_downloaded_count'], equals(15));
+      expect(json['current_illustration_index'], equals(2));
+      expect(json['current_illustration_total'], equals(5));
+      expect(json['speed_text'], equals('420.5 KB/s'));
     });
   });
 }
