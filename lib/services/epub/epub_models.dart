@@ -37,10 +37,13 @@ enum EpubTaskPhase {
   /// 阶段 2: 逐章下载正文与相关插画
   downloadingContent,
 
-  /// 阶段 3: Isolate 中执行 EPUB 3 标准容器打包
+  /// 阶段 3: 用户自选封面与文件标题
+  editingMetadata,
+
+  /// 阶段 4: Isolate 中执行 EPUB 3 标准容器打包
   packaging,
 
-  /// 阶段 4: 制作全部完成
+  /// 阶段 5: 制作全部完成
   completed,
 
   /// 用户或限流主动暂停
@@ -51,6 +54,23 @@ enum EpubTaskPhase {
 
   /// 用户主动取消
   canceled,
+}
+
+/// 计算预设的电子书与导出文件名标题："[书名]  [卷名]"
+String computeDefaultEpubTitle(String bookTitle, List<LKVolume> volumes) {
+  final cleanBookTitle = bookTitle.trim();
+  if (volumes.length == 1) {
+    final volTitle = volumes.first.title.trim();
+    return '[$cleanBookTitle]  [${volTitle.isNotEmpty ? volTitle : "正文"}]';
+  } else if (volumes.length > 1) {
+    final first = volumes.first.title.trim();
+    final last = volumes.last.title.trim();
+    if (first.isNotEmpty && last.isNotEmpty && first != last) {
+      return '[$cleanBookTitle]  [$first - $last]';
+    }
+    return '[$cleanBookTitle]  [全本]';
+  }
+  return '[$cleanBookTitle]';
 }
 
 /// 导出选项
@@ -150,6 +170,9 @@ class EpubDownloadTask {
   final String? outputPath;
   final int outputSizeBytes;
   final double packagingProgress; // 0.0 ~ 1.0
+  final String? customTitle;
+  final String? customCoverPath;
+  final List<String> availableIllustrationPaths;
 
   const EpubDownloadTask({
     required this.bookId,
@@ -169,6 +192,9 @@ class EpubDownloadTask {
     this.outputPath,
     this.outputSizeBytes = 0,
     this.packagingProgress = 0.0,
+    this.customTitle,
+    this.customCoverPath,
+    this.availableIllustrationPaths = const [],
   });
 
   int get totalChapters => chapters.length;
@@ -178,6 +204,7 @@ class EpubDownloadTask {
   bool get isRunning =>
       phase == EpubTaskPhase.fetchingCatalog ||
       phase == EpubTaskPhase.downloadingContent ||
+      phase == EpubTaskPhase.editingMetadata ||
       phase == EpubTaskPhase.packaging;
 
   bool get isPaused => phase == EpubTaskPhase.paused;
@@ -186,6 +213,14 @@ class EpubDownloadTask {
       phase == EpubTaskPhase.completed ||
       phase == EpubTaskPhase.failed ||
       phase == EpubTaskPhase.canceled;
+
+  String get effectiveTitle {
+    final custom = customTitle?.trim();
+    if (custom != null && custom.isNotEmpty) {
+      return custom;
+    }
+    return bookTitle;
+  }
 
   double get downloadProgress {
     if (chapters.isEmpty) return 0.0;
@@ -210,6 +245,9 @@ class EpubDownloadTask {
     String? outputPath,
     int? outputSizeBytes,
     double? packagingProgress,
+    String? customTitle,
+    String? customCoverPath,
+    List<String>? availableIllustrationPaths,
   }) =>
       EpubDownloadTask(
         bookId: bookId ?? this.bookId,
@@ -231,6 +269,10 @@ class EpubDownloadTask {
         outputPath: outputPath ?? this.outputPath,
         outputSizeBytes: outputSizeBytes ?? this.outputSizeBytes,
         packagingProgress: packagingProgress ?? this.packagingProgress,
+        customTitle: customTitle ?? this.customTitle,
+        customCoverPath: customCoverPath ?? this.customCoverPath,
+        availableIllustrationPaths:
+            availableIllustrationPaths ?? this.availableIllustrationPaths,
       );
 
   Map<String, dynamic> toJson() => {
@@ -250,5 +292,8 @@ class EpubDownloadTask {
         'status_message': statusMessage,
         'output_path': outputPath,
         'output_size_bytes': outputSizeBytes,
+        'custom_title': customTitle,
+        'custom_cover_path': customCoverPath,
+        'available_illustration_paths': availableIllustrationPaths,
       };
 }

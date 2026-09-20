@@ -290,13 +290,21 @@ nav#toc li {
       // 处理封面
       var hasCover = false;
       final coverFile = File('${taskDir.path}/cover.jpg');
+      if (ctx.coverImagePath != null && ctx.coverImagePath!.isNotEmpty) {
+        final customCover = File(ctx.coverImagePath!);
+        if (await customCover.exists() && customCover.path != coverFile.path) {
+          try {
+            await customCover.copy(coverFile.path);
+          } catch (_) {}
+        }
+      }
       if (await coverFile.exists()) {
         hasCover = true;
         await writer.addFile('EPUB/images/cover.jpg', coverFile, compress: false);
         imagesManifest.add((
           id: 'cover-image',
           href: 'images/cover.jpg',
-          mime: 'image/jpeg',
+          mime: mimeTypeForFile(coverFile.path),
           isCover: true,
         ));
         urlToRelMap['cover'] = '../images/cover.jpg';

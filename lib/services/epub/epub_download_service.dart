@@ -159,6 +159,11 @@ class EpubDownloadService {
         statusMessage: '继续下载正文…',
       );
       unawaited(_runDownloadPhase(currentTask.value!));
+    } else if (task.phase == EpubTaskPhase.editingMetadata) {
+      currentTask.value = task.copyWith(
+        phase: EpubTaskPhase.editingMetadata,
+        statusMessage: '请确认封面与文件标题',
+      );
     } else {
       currentTask.value = task.copyWith(
         phase: EpubTaskPhase.packaging,
@@ -201,17 +206,51 @@ class EpubDownloadService {
     unawaited(_runDownloadPhase(currentTask.value!));
   }
 
-  /// 显式选择导出已完成内容（部分章节缺失的不完整版）
+  /// 显式选择导出已完成内容（部分章节缺失的不完整版），先进入封面与标题确认
   Future<void> exportCompletedContent() async {
     final task = currentTask.value;
     if (task == null || task.completedCount == 0) return;
 
+    await _enterEditingMetadataPhase(task, exportIncomplete: true);
+  }
+
+  /// 用户确认封面与标题后，正式进入 Isolate 打包阶段
+  Future<void> confirmMetadataAndPackage({
+    String? customTitle,
+    String? customCoverPath,
+  }) async {
+    final task = currentTask.value;
+    if (task == null) return;
+
+    final taskDir = await _getTaskDirectory(task.bookId);
+
+    // 如果指定了自定义封面路径，且不是 cover.jpg 本身，安全将其拷贝覆盖至 cover.jpg
+    final chosenCover = customCoverPath ?? task.customCoverPath;
+    if (chosenCover != null && chosenCover.isNotEmpty) {
+      final targetCover = File('${taskDir.path}/cover.jpg');
+      if (chosenCover != targetCover.path) {
+        final src = File(chosenCover);
+        if (await src.exists()) {
+          try {
+            await src.copy(targetCover.path);
+          } catch (_) {}
+        }
+      }
+    }
+
+    final finalTitle = (customTitle != null && customTitle.trim().isNotEmpty)
+        ? customTitle.trim()
+        : task.customTitle;
+
     final updated = task.copyWith(
-      options: task.options.copyWith(exportIncomplete: true),
+      customTitle: finalTitle,
+      customCoverPath: chosenCover,
       phase: EpubTaskPhase.packaging,
-      statusMessage: '正在导出已完成内容…',
+      statusMessage: '正在生成 EPUB 文件…',
     );
     currentTask.value = updated;
+    await _saveTaskCheckpoint(updated);
+
     unawaited(_runPackagingPhase(updated));
   }
 
@@ -423,13 +462,8 @@ class EpubDownloadService {
 
     // 检查是否所有章节都处理完毕
     if (completed.length == task.totalChapters) {
-      // 全量完成，进入制作阶段
-      final updated = currentTask.value!.copyWith(
-        phase: EpubTaskPhase.packaging,
-        statusMessage: '正在生成 EPUB 文件…',
-      );
-      currentTask.value = updated;
-      await _runPackagingPhase(updated);
+      // 全量正文与插画下载完成，进入封面与标题编辑阶段
+      await _enterEditingMetadataPhase(currentTask.value!);
     } else {
       // 存在部分失败章节
       final updated = currentTask.value!.copyWith(
@@ -542,15 +576,57 @@ class EpubDownloadService {
     await mapFile.writeAsString(jsonEncode(map));
   }
 
-  /// 阶段 3: Isolate 中执行 EPUB 3 标准容器打包
+  /// 阶段 3: 准备封面与标题自选数据，进入编辑阶段
+  Future<void> _enterEditingMetadataPhase(
+    EpubDownloadTask task, {
+    bool exportIncomplete = false,
+  }) async {
+    final taskDir = await _getTaskDirectory(task.bookId);
+
+    // 收集所有已落盘的插画文件路径
+    final illustrationPaths = <String>[];
+    final imagesDir = Directory('${taskDir.path}/images');
+    if (await imagesDir.exists()) {
+      final entries = imagesDir.listSync().whereType<File>().toList();
+      entries.sort((a, b) => a.path.compareTo(b.path));
+      for (final f in entries) {
+        illustrationPaths.add(f.path);
+      }
+    }
+
+    // 预设默认封面（如果存在）
+    final defaultCoverFile = File('${taskDir.path}/cover.jpg');
+    final defaultCoverPath =
+        await defaultCoverFile.exists() ? defaultCoverFile.path : null;
+
+    // 计算预设标题："[书名]  [卷名]"
+    final presetTitle =
+        computeDefaultEpubTitle(task.bookTitle, task.selectedVolumes);
+
+    final updated = task.copyWith(
+      options: exportIncomplete
+          ? task.options.copyWith(exportIncomplete: true)
+          : task.options,
+      phase: EpubTaskPhase.editingMetadata,
+      customTitle: task.customTitle ?? presetTitle,
+      customCoverPath: task.customCoverPath ?? defaultCoverPath,
+      availableIllustrationPaths: illustrationPaths,
+      statusMessage: '正文与插画下载完成，请确认封面与文件标题',
+    );
+    currentTask.value = updated;
+    await _saveTaskCheckpoint(updated);
+  }
+
+  /// 阶段 4: Isolate 中执行 EPUB 3 标准容器打包
   Future<void> _runPackagingPhase(EpubDownloadTask task) async {
     try {
       final taskDir = await _getTaskDirectory(task.bookId);
       final exportsDir = await _getExportsDirectory();
       await exportsDir.create(recursive: true);
 
-      // 文件名清洗，避免特殊符号
-      final safeTitle = task.bookTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      // 文件名清洗，避免特殊符号（优先使用自定义/预设有效标题）
+      final effectiveTitle = task.effectiveTitle;
+      final safeTitle = effectiveTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
       final incompleteSuffix = task.options.exportIncomplete ? '_不完整版' : '';
       final fileName = '$safeTitle$incompleteSuffix.epub';
       final outputPath = '${exportsDir.path}/$fileName';
@@ -564,13 +640,14 @@ class EpubDownloadService {
         taskDir: taskDir.path,
         outputPath: outputPath,
         bookId: task.bookId,
-        bookTitle: task.bookTitle,
+        bookTitle: effectiveTitle,
         authorName: task.authorName,
         summary: task.summary,
         includeIllustrations: task.options.includeIllustrations,
         exportIncomplete: task.options.exportIncomplete,
         chapters: task.chapters,
         completedChapterIds: task.completedChapterIds.toList(),
+        coverImagePath: task.customCoverPath,
       );
 
       final sizeBytes = await EpubBuilder.packageInIsolate(buildContext);

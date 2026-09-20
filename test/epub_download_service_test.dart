@@ -160,5 +160,65 @@ void main() {
       expect(urls[0], equals('https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&t=1700000000'));
       expect(urls[1], equals('https://api.lightnovel.fun/upload-files/images/260731/c44ecc6d854642742676d5226c9cb343.jpg'));
     });
+
+    test('computeDefaultEpubTitle formats preset title strictly as [书名]  [卷名]', () {
+      // 单卷情况
+      final singleVol = [
+        LKVolume(volumeId: 1, title: '第一卷 地位向上篇'),
+      ];
+      expect(
+        computeDefaultEpubTitle('关于我转生成为史莱姆的那件事', singleVol),
+        equals('[关于我转生成为史莱姆的那件事]  [第一卷 地位向上篇]'),
+      );
+
+      // 单卷标题为空回退为 [正文]
+      final emptyTitleVol = [
+        LKVolume(volumeId: 1, title: ''),
+      ];
+      expect(
+        computeDefaultEpubTitle('无头骑士异闻录', emptyTitleVol),
+        equals('[无头骑士异闻录]  [正文]'),
+      );
+
+      // 多卷情况（首卷与末卷）
+      final multiVol = [
+        LKVolume(volumeId: 1, title: '第一卷'),
+        LKVolume(volumeId: 2, title: '第二卷'),
+        LKVolume(volumeId: 3, title: '第三卷'),
+      ];
+      expect(
+        computeDefaultEpubTitle('加速世界', multiVol),
+        equals('[加速世界]  [第一卷 - 第三卷]'),
+      );
+
+      // 空列表
+      expect(
+        computeDefaultEpubTitle('狼与香辛料', const []),
+        equals('[狼与香辛料]'),
+      );
+    });
+
+    test('EpubDownloadTask supports custom metadata and effectiveTitle resolution', () {
+      const task = EpubDownloadTask(
+        bookId: 88,
+        bookTitle: '原始书名',
+        authorName: '作者',
+        ownerUid: 1,
+        phase: EpubTaskPhase.editingMetadata,
+        customTitle: '[原始书名]  [自定义卷名]',
+        customCoverPath: '/tmp/test_cover.jpg',
+        availableIllustrationPaths: ['/tmp/img1.jpg', '/tmp/img2.jpg'],
+      );
+
+      expect(task.effectiveTitle, equals('[原始书名]  [自定义卷名]'));
+      expect(task.customCoverPath, equals('/tmp/test_cover.jpg'));
+      expect(task.availableIllustrationPaths.length, equals(2));
+      expect(task.isRunning, isTrue);
+
+      final json = task.toJson();
+      expect(json['custom_title'], equals('[原始书名]  [自定义卷名]'));
+      expect(json['custom_cover_path'], equals('/tmp/test_cover.jpg'));
+      expect(json['available_illustration_paths'], contains('/tmp/img1.jpg'));
+    });
   });
 }
