@@ -161,7 +161,7 @@ nav#toc li {
   }
 
   static final RegExp _imageTagRe = RegExp(
-      r'''<img[^>]*src\s*=\s*["']([^"']+)["'][^>]*>''',
+      r'''<img[^>]*\bsrc\s*=\s*["']?([^"'>\s]+)["']?[^>]*>''',
       caseSensitive: false);
   static final RegExp _scriptTagRe = RegExp(
       r'''<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>''',
@@ -172,6 +172,28 @@ nav#toc li {
   static final RegExp _paragraphSplitRe =
       RegExp(r'</p>|<br\s*/?>', caseSensitive: false);
   static final RegExp _stripTagsRe = RegExp(r'<[^>]+>');
+  static final RegExp _resourceTagRe = RegExp(r'\[res\][^[]+\[/res\]');
+
+  /// 多级检索插画的本地相对路径（支持原始 URL、去实体 URL、安全文件名与基名）
+  static String? _resolveImageLocalPath(
+    String rawSrc,
+    Map<String, String> map,
+  ) {
+    if (rawSrc.isEmpty) return null;
+    if (map.containsKey(rawSrc)) return map[rawSrc];
+    final unescaped = rawSrc.replaceAll('&amp;', '&').trim();
+    if (map.containsKey(unescaped)) return map[unescaped];
+    final fileName = getIllustrationFileName(unescaped);
+    if (map.containsKey(fileName)) return map[fileName];
+    final withoutQuery = unescaped.replaceAll(RegExp(r'\?.*$'), '');
+    if (map.containsKey(withoutQuery)) return map[withoutQuery];
+    final uri = Uri.tryParse(unescaped);
+    if (uri != null && uri.pathSegments.isNotEmpty) {
+      final last = uri.pathSegments.last;
+      if (map.containsKey(last)) return map[last];
+    }
+    return null;
+  }
 
   static void _convertHtmlToXHtml(
     String html,
@@ -182,13 +204,14 @@ nav#toc li {
     var cleaned = html.replaceAll(_scriptTagRe, '').replaceAll(_styleTagRe, '');
 
     // 2. 将段落和断行按顺序解析，同时查找插画标签
+    final initialLength = buffer.length;
     var pos = 0;
     for (final match in _imageTagRe.allMatches(cleaned)) {
       final textBefore = cleaned.substring(pos, match.start);
       _emitTextParagraphs(textBefore, buffer);
 
       final src = match.group(1)?.trim() ?? '';
-      final localRel = imageUrlToLocalPath[src];
+      final localRel = _resolveImageLocalPath(src, imageUrlToLocalPath);
       if (localRel != null && localRel.isNotEmpty) {
         buffer.writeln('    <div class="illustration">');
         buffer.writeln('      <img src="$localRel" alt=""/>');
@@ -198,11 +221,25 @@ nav#toc li {
     }
     final remainingText = cleaned.substring(pos);
     _emitTextParagraphs(remainingText, buffer);
+
+    if (buffer.length == initialLength) {
+      buffer.writeln('    <p>(本章暂无内容)</p>');
+    }
   }
 
   static void _emitTextParagraphs(String seg, StringBuffer buffer) {
     if (seg.trim().isEmpty) return;
-    final lines = seg.split(_paragraphSplitRe);
+    var decoded = seg
+        .replaceAll(_resourceTagRe, '')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&apos;', "'")
+        .replaceAll('&amp;', '&');
+
+    final lines = decoded.split(_paragraphSplitRe);
     for (var line in lines) {
       // 剔除遗留的 HTML 标签，如 <span>, <div>, <a> 等，保留文字
       line = line.replaceAll(_stripTagsRe, '').trim();
@@ -284,6 +321,7 @@ nav#toc li {
           // 映射规则：原 URL/hash 映射到 relative path
           final rawKey = Uri.decodeComponent(fileName);
           urlToRelMap[rawKey] = '../images/$fileName';
+          urlToRelMap[fileName] = '../images/$fileName';
           imgIndex++;
         }
       }

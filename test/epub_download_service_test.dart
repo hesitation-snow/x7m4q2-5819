@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yomiru/api/models.dart';
 import 'package:yomiru/services/epub/epub_download_service.dart';
 import 'package:yomiru/services/epub/epub_models.dart';
+import 'package:yomiru/services/illustration_cache.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -144,6 +145,20 @@ void main() {
       expect(updated.completedCount, equals(1));
       expect(updated.failedCount, equals(1));
       expect(updated.failedChapters[2], contains('无权限'));
+    });
+
+    test('extractImageUrls properly extracts and unescapes illustration urls', () {
+      const html = '''
+        <p>正文段落</p>
+        <img src="https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&amp;t=1700000000" />
+        <img class="lazy" src='https://api.lightnovel.fun/upload-files/images/260731/c44ecc6d854642742676d5226c9cb343.jpg' width="400" />
+        <p>后文</p>
+      ''';
+
+      final urls = YomiruIllustrationCache.extractImageUrls(html);
+      expect(urls.length, equals(2));
+      expect(urls[0], equals('https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&t=1700000000'));
+      expect(urls[1], equals('https://api.lightnovel.fun/upload-files/images/260731/c44ecc6d854642742676d5226c9cb343.jpg'));
     });
   });
 }

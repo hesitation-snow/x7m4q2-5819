@@ -59,17 +59,24 @@ class YomiruIllustrationCache {
   }
 
   static final RegExp _imageTagRe = RegExp(
-      r'''<img[^>]*src\s*=\s*["']([^"']+)["'][^>]*>''',
+      r'''<img[^>]*\bsrc\s*=\s*["']?([^"'>\s]+)["']?[^>]*>''',
       caseSensitive: false);
 
-  /// 从章节 HTML 正文中提取所有合法的 https 插画 URL
+  /// 从章节 HTML 正文中提取所有合法的插画 URL（支持 &amp; 转义与 http/https）
   static List<String> extractImageUrls(String html) {
     if (html.isEmpty) return const [];
     final urls = <String>[];
     for (final m in _imageTagRe.allMatches(html)) {
-      final raw = m.group(1)?.trim() ?? '';
+      var raw = m.group(1)?.trim() ?? '';
+      if (raw.isEmpty) continue;
+      raw = raw.replaceAll('&amp;', '&');
+      if (raw.startsWith('//')) {
+        raw = 'https:$raw';
+      }
       final uri = Uri.tryParse(raw);
-      if (uri != null && uri.scheme == 'https' && uri.host.isNotEmpty) {
+      if (uri != null &&
+          (uri.scheme == 'https' || uri.scheme == 'http') &&
+          uri.host.isNotEmpty) {
         urls.add(raw);
       }
     }

@@ -1,4 +1,30 @@
 import '../../api/models.dart';
+import '../illustration_identity.dart';
+
+/// 为插画 URL 生成合法、唯一且跨平台安全的文件名（无冒号、斜杠或查询参数）
+String getIllustrationFileName(String url) {
+  final clean = url.replaceAll('&amp;', '&').trim();
+  final key = illustrationCacheKey(clean);
+  final uri = Uri.tryParse(key);
+  var ext = 'jpg';
+  if (uri != null && uri.path.contains('.')) {
+    final dotExt = uri.path.split('.').last.toLowerCase();
+    if (const {'jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'}.contains(dotExt)) {
+      ext = dotExt == 'jpeg' ? 'jpg' : dotExt;
+    }
+  }
+  if (uri != null && uri.pathSegments.isNotEmpty) {
+    final last = uri.pathSegments.last;
+    final dotIdx = last.lastIndexOf('.');
+    final nameWithoutExt = dotIdx > 0 ? last.substring(0, dotIdx) : last;
+    if (RegExp(r'^[a-zA-Z0-9_-]{6,64}$').hasMatch(nameWithoutExt)) {
+      return '$nameWithoutExt.$ext';
+    }
+  }
+  final hash = (key.hashCode & 0x7FFFFFFF).toRadixString(16).padLeft(8, '0');
+  final len = key.length.toRadixString(16);
+  return 'img_${hash}_$len.$ext';
+}
 
 /// 制作任务所处的当前阶段
 enum EpubTaskPhase {

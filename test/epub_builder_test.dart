@@ -77,6 +77,48 @@ void main() {
       expect(css.toLowerCase().contains('color: black'), isFalse);
       expect(css.toLowerCase().contains('color: white'), isFalse);
     });
+
+    test('getIllustrationFileName produces safe and consistent file names without url characters', () {
+      const lkUrl = 'https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&t=1700000000';
+      final fileName = getIllustrationFileName(lkUrl);
+      expect(fileName, equals('6bda583f9cf992ba5ab8b0e6f2773cf0.jpg'));
+      expect(fileName.contains(':'), isFalse);
+      expect(fileName.contains('/'), isFalse);
+      expect(fileName.contains('?'), isFalse);
+
+      const htmlEscapedUrl = 'https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&amp;t=1700000000';
+      expect(getIllustrationFileName(htmlEscapedUrl), equals('6bda583f9cf992ba5ab8b0e6f2773cf0.jpg'));
+
+      const pngUrl = 'https://example.com/images/chapter_art.png?v=2';
+      final pngFileName = getIllustrationFileName(pngUrl);
+      expect(pngFileName.endsWith('.png'), isTrue);
+      expect(pngFileName.contains('/'), isFalse);
+      expect(pngFileName.contains(':'), isFalse);
+    });
+
+    test('sanitizeToXHtml resolves image with query parameters and &amp; properly', () {
+      const rawHtml = '''
+        <p>正文段落前文。</p>
+        <img src="https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=xyz&amp;t=9999" width="600" height="800" />
+        <p>正文段落后文包含&nbsp;空格与&amp;符号。</p>
+      ''';
+
+      // 映射表无论以何种形态存储，均能正确命中
+      final map = {
+        '6bda583f9cf992ba5ab8b0e6f2773cf0.jpg': '../images/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg',
+      };
+
+      final xhtml = EpubBuilder.sanitizeToXHtml(
+        title: '插画章节',
+        rawHtml: rawHtml,
+        rawText: '',
+        imageUrlToLocalPath: map,
+      );
+
+      expect(xhtml.contains('<div class="illustration">'), isTrue);
+      expect(xhtml.contains('<img src="../images/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg" alt=""/>'), isTrue);
+      expect(xhtml.contains('&amp;nbsp;'), isFalse); // &nbsp; 已被正确转为普通空格，不产生非法 XML 实体
+    });
   });
 
   group('EpubBuilder Full Package Integration', () {

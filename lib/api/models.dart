@@ -1631,6 +1631,12 @@ class LKChapterDetail {
         body = prev['body_text'] as String;
       }
     }
+    if (html == null || html.isEmpty) {
+      final prev = _firstJsonMap(j['render_preview']);
+      if (prev != null && prev['body_html'] is String) {
+        html = prev['body_html'] as String;
+      }
+    }
     final nav = _jsonMap(j['navigation']);
     // prev_chapter/next_chapter 可能是对象,也可能是数组(服务端形态不一)
     final prevRaw = nav?['prev_chapter'];

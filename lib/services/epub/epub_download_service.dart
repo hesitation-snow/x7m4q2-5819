@@ -11,6 +11,7 @@ import '../../api/lk_api.dart';
 import '../../api/lk_client.dart';
 import '../../api/models.dart';
 import '../illustration_cache.dart';
+import '../illustration_identity.dart';
 import 'epub_builder.dart';
 import 'epub_models.dart';
 
@@ -340,11 +341,42 @@ class EpubDownloadService {
       );
 
       try {
-        final detail = await _fetchChapterWithRetry(task.bookId, ch.chapterId);
+        final chFile = File('${taskDir.path}/chapters/${ch.chapterId}.json');
+        LKChapterDetail detail;
+        if (await chFile.exists()) {
+          try {
+            final json =
+                jsonDecode(await chFile.readAsString()) as Map<String, dynamic>;
+            detail = LKChapterDetail(
+              chapterId: (json['chapter_id'] as num?)?.toInt() ?? ch.chapterId,
+              chapterNo: (json['chapter_no'] as num?)?.toInt() ?? ch.chapterNo,
+              title: (json['title'] ?? ch.title).toString(),
+              bodyText: (json['body_text'] ?? '').toString(),
+              bodyHtml: json['body_html'] as String?,
+            );
+          } catch (_) {
+            detail = await _fetchChapterWithRetry(task.bookId, ch.chapterId);
+          }
+        } else {
+          detail = await _fetchChapterWithRetry(task.bookId, ch.chapterId);
+        }
+
+        // 若需要下载插画，但已存章节没有 bodyHtml，则重新向服务端请求带 HTML 的最新数据
+        if (task.options.includeIllustrations &&
+            (detail.bodyHtml == null || detail.bodyHtml!.isEmpty)) {
+          try {
+            final refreshed =
+                await _fetchChapterWithRetry(task.bookId, ch.chapterId);
+            if (refreshed.bodyHtml != null &&
+                refreshed.bodyHtml!.isNotEmpty) {
+              detail = refreshed;
+            }
+          } catch (_) {}
+        }
+
         if (_isCanceledFlag) return;
 
         // 写入独立章节文件
-        final chFile = File('${taskDir.path}/chapters/${ch.chapterId}.json');
         await chFile.writeAsString(jsonEncode({
           'chapter_id': detail.chapterId,
           'chapter_no': detail.chapterNo,
@@ -434,45 +466,76 @@ class EpubDownloadService {
     Directory taskDir,
   ) async {
     final html = detail.bodyHtml ?? '';
-    if (html.isEmpty) return;
-
-    final urls = YomiruIllustrationCache.extractImageUrls(html);
+    final text = detail.bodyText;
+    final urls = <String>{};
+    if (html.isNotEmpty) {
+      urls.addAll(YomiruIllustrationCache.extractImageUrls(html));
+    }
+    if (text.contains('<img')) {
+      urls.addAll(YomiruIllustrationCache.extractImageUrls(text));
+    }
     if (urls.isEmpty) return;
 
     final imagesDir = Directory('${taskDir.path}/images');
+    if (!await imagesDir.exists()) {
+      await imagesDir.create(recursive: true);
+    }
     final mapFile = File('${taskDir.path}/image_map.json');
     final map = <String, String>{};
     if (await mapFile.exists()) {
       try {
-        map.addAll(Map<String, String>.from(jsonDecode(await mapFile.readAsString())));
+        map.addAll(
+            Map<String, String>.from(jsonDecode(await mapFile.readAsString())));
       } catch (_) {}
     }
 
-    for (final url in urls) {
+    for (final rawUrl in urls) {
       if (_isCanceledFlag || _isPausedFlag) return;
-      final hashName = '${YomiruIllustrationCache.keyFor(url)}.jpg';
-      final destFile = File('${imagesDir.path}/$hashName');
+      final cleanUrl = rawUrl.replaceAll('&amp;', '&').trim();
+      if (cleanUrl.isEmpty) continue;
+      final fileName = getIllustrationFileName(cleanUrl);
+      final destFile = File('${imagesDir.path}/$fileName');
 
       if (!await destFile.exists()) {
         try {
-          // 1. 优先尝试从本地已有插画缓存管理器获取
-          final cached = await YomiruIllustrationCache.manager.cachedFile(url);
-          if (cached != null && await cached.file.exists()) {
-            await cached.file.copy(destFile.path);
-          } else {
-            // 2. 按需下载
-            final downloaded = await _networkSemaphore.run(() => YomiruIllustrationCache.prefetch(url));
-            if (downloaded != null && await downloaded.exists()) {
-              await downloaded.copy(destFile.path);
-            }
+          // 1. 优先尝试从本地已有插画缓存管理器复制文件
+          final cached =
+              await YomiruIllustrationCache.manager.cachedFile(cleanUrl);
+          if (cached != null && await File(cached.file.path).exists()) {
+            await File(cached.file.path).copy(destFile.path);
           }
-        } catch (_) {
-          // 单张插画失败不中断正文任务
+        } catch (_) {}
+
+        if (!await destFile.exists()) {
+          try {
+            // 2. 尝试从缓存管理器预取并落盘
+            final downloaded = await _networkSemaphore.run(
+                () => YomiruIllustrationCache.prefetch(cleanUrl));
+            if (downloaded != null && await File(downloaded.path).exists()) {
+              await File(downloaded.path).copy(destFile.path);
+            }
+          } catch (_) {}
+        }
+
+        if (!await destFile.exists()) {
+          try {
+            // 3. 降级保障：直接通过 HTTP 请求下载原图落盘
+            final uri = Uri.parse(cleanUrl);
+            final res = await _networkSemaphore.run(() => http.get(uri));
+            if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
+              await destFile.writeAsBytes(res.bodyBytes);
+            }
+          } catch (_) {
+            // 单张插画失败不中断正文任务
+          }
         }
       }
 
       if (await destFile.exists()) {
-        map[url] = hashName;
+        map[rawUrl] = fileName;
+        map[cleanUrl] = fileName;
+        map[illustrationCacheKey(cleanUrl)] = fileName;
+        map[fileName] = fileName;
       }
     }
 
