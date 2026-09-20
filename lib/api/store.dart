@@ -45,6 +45,10 @@ class LKStore {
   /// 实验性功能：EPUB 下载制作开关
   static final ValueNotifier<bool> epubDownloadEnabled = ValueNotifier(false);
 
+  /// 实验性功能：正文样式增强开关
+  static final ValueNotifier<bool> enhancedContentStyleEnabled =
+      ValueNotifier(false);
+
   /// 已确认需勇者权限的小说 ID 缓存（内置预置 14162 标杆书籍）
   static final Set<int> _braveBookIds = {14162};
 
@@ -132,6 +136,8 @@ class LKStore {
     hideBraveBooks.value = p.getBool('hide_brave_books') ?? true;
     gridColumnCount.value = p.getInt('grid_column_count') ?? 0;
     epubDownloadEnabled.value = p.getBool('epub_download_enabled') ?? false;
+    enhancedContentStyleEnabled.value =
+        p.getBool('reader_enhanced_content_style') ?? false;
     setBraveBookChecker(isBraveBook);
     final storedBraveIds = p.getStringList('known_brave_book_ids');
     if (storedBraveIds != null) {
@@ -213,6 +219,13 @@ class LKStore {
     epubDownloadEnabled.value = enable;
     final p = await SharedPreferences.getInstance();
     await p.setBool('epub_download_enabled', enable);
+  }
+
+  static Future<void> setEnhancedContentStyleEnabled(bool enable) async {
+    if (enhancedContentStyleEnabled.value == enable) return;
+    enhancedContentStyleEnabled.value = enable;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('reader_enhanced_content_style', enable);
   }
 
   static Future<void> clear() async {

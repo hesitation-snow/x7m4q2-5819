@@ -104,6 +104,35 @@ class ExperimentalSettingsPage extends StatelessWidget {
             ),
           ]),
           const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+            child: Text(
+              '正文排版',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          _settingsGroup(context, [
+            ValueListenableBuilder<bool>(
+              valueListenable: LKStore.enhancedContentStyleEnabled,
+              builder: (context, enabled, _) => SwitchListTile(
+                secondary: _settingsIcon(
+                  context,
+                  Icons.format_paint_outlined,
+                ),
+                title: const Text('正文样式增强'),
+                subtitle: const Text(
+                  '保留作者设置的标题、强调与注释样式。默认关闭，关闭后仍使用当前阅读方式。不修改服务器正文，也不删除现有缓存。',
+                ),
+                isThreeLine: true,
+                value: enabled,
+                onChanged: (v) => LKStore.setEnhancedContentStyleEnabled(v),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 16),
           Card(
             color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
             surfaceTintColor: Colors.transparent,

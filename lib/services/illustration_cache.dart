@@ -74,9 +74,7 @@ class YomiruIllustrationCache {
         raw = 'https:$raw';
       }
       final uri = Uri.tryParse(raw);
-      if (uri != null &&
-          (uri.scheme == 'https' || uri.scheme == 'http') &&
-          uri.host.isNotEmpty) {
+      if (uri != null && uri.scheme == 'https' && uri.host.isNotEmpty) {
         urls.add(raw);
       }
     }

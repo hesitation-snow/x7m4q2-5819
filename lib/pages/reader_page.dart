@@ -35,6 +35,7 @@ import '../services/app_motion.dart';
 import '../services/reader_volume_keys.dart';
 import '../services/reader_system_ui.dart';
 import '../widgets/reader_device_status.dart';
+import '../reader/structured_content.dart';
 
 /// 正文块:文本(可含链接区间)或插画
 class _BodyBlock {
@@ -44,12 +45,30 @@ class _BodyBlock {
 
   /// 链接区间 (start, end, url),相对于 [text] 的下标
   final List<(int, int, String)> links;
+
+  /// 结构化正文模型（开启正文样式增强时提供）
+  final StructuredBlock? structured;
+
   _BodyBlock.text(this.text, [this.links = const []])
       : image = null,
-        aspect = null;
+        aspect = null,
+        structured = null;
+
   _BodyBlock.image(this.image, {this.aspect})
       : text = '',
-        links = const [];
+        links = const [],
+        structured = null;
+
+  _BodyBlock.structured(StructuredBlock block)
+      : image = block.imageUrl,
+        aspect = block.imageAspect,
+        text = block.text,
+        links = block.extractLinks(),
+        structured = block;
+
+  bool get isDivider => structured?.isDivider ?? false;
+  TextAlign? get textAlign => structured?.align;
+  double get indent => structured?.indent ?? 0.0;
 }
 
 @visibleForTesting
@@ -62,7 +81,7 @@ Future<List<({String? image, String text, double? aspect})>>
       .toList(growable: false);
 }
 
-/// 翻页模式:一页内的条目(切分后的文本/插画)
+/// 翻页模式:一页内的条目(切分后的文本/插画/分割线)
 class _PageItem {
   final String? image;
   final double? aspect;
@@ -71,17 +90,37 @@ class _PageItem {
   final int blockIndex;
   final int startOffset;
   final int endOffset;
-  _PageItem.text(this.text, this.links,
-      {required this.blockIndex,
-      required this.startOffset,
-      required this.endOffset})
-      : image = null,
-        aspect = null;
+  final StructuredBlock? structured;
+  final bool isDivider;
+
+  _PageItem.text(
+    this.text,
+    this.links, {
+    required this.blockIndex,
+    required this.startOffset,
+    required this.endOffset,
+    this.structured,
+  })  : image = null,
+        aspect = null,
+        isDivider = false;
+
   _PageItem.image(this.image, {this.aspect, required this.blockIndex})
       : text = '',
         startOffset = 0,
         endOffset = 0,
-        links = const [];
+        links = const [],
+        structured = null,
+        isDivider = false;
+
+  _PageItem.divider({required this.blockIndex})
+      : image = null,
+        aspect = null,
+        text = '',
+        startOffset = 0,
+        endOffset = 0,
+        links = const [],
+        structured = null,
+        isDivider = true;
 }
 
 /// 保留内部名称，避免把正文分页代码和 UI 细节耦合到具体模型名称。
@@ -185,6 +224,7 @@ class _ReaderPageState extends State<ReaderPage>
   LKChapterDetail? _detail;
   LKChapterDetail? _parsedDetail;
   int _parsedMode = -1;
+  bool? _parsedEnhanced;
   List<_BodyBlock>? _parsedBlocks;
   late final Future<void> _prefsReady;
 
@@ -318,8 +358,20 @@ class _ReaderPageState extends State<ReaderPage>
                 null);
     FocusManager.instance.addListener(_syncVolumeKeys);
     _sc.addListener(_onScroll);
+    LKStore.enhancedContentStyleEnabled
+        .addListener(_onEnhancedContentStyleChanged);
     _prefsReady = _loadPrefs();
     _load();
+  }
+
+  void _onEnhancedContentStyleChanged() {
+    if (!mounted || _detail == null) return;
+    final currentAnchor =
+        _positionController.value ?? _anchorForProgress(_progress);
+    _renderDetail(_detail!,
+        restore: _progress,
+        restorePosition: true,
+        savedPosition: currentAnchor);
   }
 
   void _onScroll() {
@@ -368,27 +420,70 @@ class _ReaderPageState extends State<ReaderPage>
 
   TextSpan _scrollTextSpan(_BodyBlock block, {required bool lockedBody}) {
     final hint = _isLockedText(block, lockedBody);
+    if (hint) {
+      return TextSpan(
+        style: _bodyTextStyle,
+        children: const [TextSpan(text: '本章需要轻币解锁')],
+      );
+    }
+    if (block.structured != null) {
+      return block.structured!.buildTextSpan(
+        baseStyle: _bodyTextStyle,
+        linkColor: _linkColor,
+        backgroundColor: _bgColor,
+        onLinkTap: _paged
+            ? null
+            : (url) {
+                _suppressNextTextTap = true;
+                _openLink(url);
+              },
+        forMeasurement: false,
+      );
+    }
     return TextSpan(
       style: _bodyTextStyle,
-      children: hint ? const [TextSpan(text: '本章需要轻币解锁')] : _spansFor(block),
+      children: _spansFor(block),
     );
   }
 
   TextPainter _scrollTextPainter(int index,
       {double? viewportWidth, bool? lockedBody}) {
     final block = _blocks[index];
-    final displayText = _scrollTextContent(
+    final isLocked = _isLockedText(
       block,
-      lockedBody: lockedBody ?? _scrollLayoutLockedBody,
+      lockedBody ?? _scrollLayoutLockedBody,
     );
+    final maxWidth = (block.indent > 0)
+        ? (_scrollContentWidth(viewportWidth) - block.indent)
+            .clamp(1.0, 2000.0)
+            .toDouble()
+        : _scrollContentWidth(viewportWidth);
+
+    final TextSpan span;
+    if (isLocked) {
+      span = TextSpan(style: _bodyTextStyle, text: '本章需要轻币解锁');
+    } else if (block.structured != null) {
+      span = block.structured!.buildTextSpan(
+        baseStyle: _bodyTextStyle,
+        linkColor: _linkColor,
+        backgroundColor: _bgColor,
+        forMeasurement: true,
+      );
+    } else {
+      final displayText = _scrollTextContent(
+        block,
+        lockedBody: lockedBody ?? _scrollLayoutLockedBody,
+      );
+      span = TextSpan(style: _bodyTextStyle, text: displayText);
+    }
+
     return TextPainter(
-      // 链接只改变颜色和下划线，不改变排版尺寸；不在测量阶段创建
-      // TapGestureRecognizer，避免每次 Sliver 布局都产生不可回收对象。
-      text: TextSpan(style: _bodyTextStyle, text: displayText),
+      text: span,
       textDirection: TextDirection.ltr,
       textScaler: MediaQuery.textScalerOf(context),
       locale: Localizations.maybeLocaleOf(context),
-    )..layout(maxWidth: _scrollContentWidth(viewportWidth));
+      textAlign: block.textAlign ?? TextAlign.start,
+    )..layout(maxWidth: maxWidth);
   }
 
   double _scrollImageHeight(_BodyBlock block, double contentWidth) {
@@ -425,6 +520,10 @@ class _ReaderPageState extends State<ReaderPage>
         final block = _blocks[index];
         if (block.image != null) {
           extents.add(_scrollImageHeight(block, contentWidth) + 20);
+          continue;
+        }
+        if (block.isDivider) {
+          extents.add(24 + 12);
           continue;
         }
         final painter = _scrollTextPainter(
@@ -899,6 +998,8 @@ class _ReaderPageState extends State<ReaderPage>
   void dispose() {
     readerRouteObserver.unsubscribe(this);
     FocusManager.instance.removeListener(_syncVolumeKeys);
+    LKStore.enhancedContentStyleEnabled
+        .removeListener(_onEnhancedContentStyleChanged);
     _volumeKeys.dispose();
     // 让所有未完成的异步恢复回调失效，避免在 PositionController 已经
     // dispose 后仍然提交位置。
@@ -1534,7 +1635,9 @@ class _ReaderPageState extends State<ReaderPage>
 
   Future<List<_BodyBlock>> _parseBlocks(LKChapterDetail d) async {
     final mode = _scriptMode;
+    final enhanced = LKStore.enhancedContentStyleEnabled.value;
     if (_parsedMode == mode &&
+        _parsedEnhanced == enhanced &&
         _parsedDetail?.hasSameContent(d) == true &&
         _parsedBlocks != null) {
       return _parsedBlocks!;
@@ -1545,44 +1648,87 @@ class _ReaderPageState extends State<ReaderPage>
       _parsedCacheGeneration = ReaderContentCache.generation;
     }
     final source = d.bodyHtml?.isNotEmpty == true ? d.bodyHtml! : d.bodyText;
-    final cacheKey = '${d.chapterId}:$mode:${source.length}:${source.hashCode}';
+    final cacheKey =
+        '${d.chapterId}:$mode:$enhanced:${source.length}:${source.hashCode}';
     final shared = _parsedChapterCache.remove(cacheKey);
     if (shared != null) {
       _parsedChapterCache[cacheKey] = shared;
       _parsedDetail = d;
       _parsedMode = mode;
+      _parsedEnhanced = enhanced;
       _parsedBlocks = shared;
       return shared;
     }
 
-    var html = d.bodyHtml;
     List<_BodyBlock> blocks = const [];
-    if (html != null && html.isNotEmpty) {
-      // 简繁转换(整章一次转换;OpenCC 不影响 HTML 标签/实体)
-      if (mode == 1) {
-        html = await ChineseConverter.convert(html, S2T());
-      } else if (mode == 2) {
-        html = await ChineseConverter.convert(html, T2S());
+    if (enhanced) {
+      var html = d.bodyHtml;
+      if (html != null && html.isNotEmpty) {
+        List<StructuredBlock> structuredBlocks;
+        if (html.length < 12000) {
+          structuredBlocks = StructuredContentParser.parseHtml(html);
+        } else {
+          structuredBlocks = await compute(
+            StructuredContentParser.parseHtml,
+            html,
+            debugLabel: 'Yomiru structured HTML parser',
+          );
+        }
+        if (mode == 1 || mode == 2) {
+          structuredBlocks = await StructuredContentParser.convertBlocks(
+            structuredBlocks,
+            mode,
+          );
+        }
+        blocks = structuredBlocks
+            .map(_BodyBlock.structured)
+            .toList(growable: false);
       }
-      blocks = await _parseHtmlOffMainIsolate(html);
-    }
-    if (blocks.isEmpty) {
-      var text = d.bodyText;
-      if (mode == 1) {
-        text = await ChineseConverter.convert(text, S2T());
-      } else if (mode == 2) {
-        text = await ChineseConverter.convert(text, T2S());
+      if (blocks.isEmpty) {
+        var text = d.bodyText;
+        if (mode == 1) {
+          text = await ChineseConverter.convert(text, S2T());
+        } else if (mode == 2) {
+          text = await ChineseConverter.convert(text, T2S());
+        }
+        final structuredBlocks = StructuredContentParser.parseText(text);
+        blocks = structuredBlocks
+            .map(_BodyBlock.structured)
+            .toList(growable: false);
       }
-      blocks = await _parseTextOffMainIsolate(text);
+    } else {
+      var html = d.bodyHtml;
+      if (html != null && html.isNotEmpty) {
+        // 简繁转换(整章一次转换;OpenCC 不影响 HTML 标签/实体)
+        if (mode == 1) {
+          html = await ChineseConverter.convert(html, S2T());
+        } else if (mode == 2) {
+          html = await ChineseConverter.convert(html, T2S());
+        }
+        blocks = await _parseHtmlOffMainIsolate(html);
+      }
+      if (blocks.isEmpty) {
+        var text = d.bodyText;
+        if (mode == 1) {
+          text = await ChineseConverter.convert(text, S2T());
+        } else if (mode == 2) {
+          text = await ChineseConverter.convert(text, T2S());
+        }
+        blocks = await _parseTextOffMainIsolate(text);
+      }
     }
 
-    // A rapid script-mode change supersedes this parse instead of briefly
+    // A rapid script-mode or style change supersedes this parse instead of briefly
     // showing content produced for the previous selection.
-    if (mode != _scriptMode) return _parseBlocks(d);
+    if (mode != _scriptMode ||
+        enhanced != LKStore.enhancedContentStyleEnabled.value) {
+      return _parseBlocks(d);
+    }
     final result = List<_BodyBlock>.unmodifiable(
         blocks.isEmpty ? [_BodyBlock.text('(本章暂无内容)')] : blocks);
     _parsedDetail = d;
     _parsedMode = mode;
+    _parsedEnhanced = enhanced;
     _parsedBlocks = result;
     _parsedChapterCache[cacheKey] = result;
     while (_parsedChapterCache.length > _parsedChapterCacheLimit) {
@@ -2535,6 +2681,50 @@ class _ReaderPageState extends State<ReaderPage>
       );
     }
 
+    if (block.isDivider) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: SizedBox(
+          height: 24,
+          child: Center(
+            child: Divider(
+              height: 1,
+              thickness: 1,
+              color: _textColor.withValues(alpha: 0.25),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget content = Text.rich(
+      key: _scrollTextKeys[index],
+      _scrollTextSpan(block, lockedBody: lockedBody),
+      textScaler: _readerTextScaler,
+      locale: _readerLocale,
+      textAlign: block.textAlign ?? TextAlign.start,
+    );
+
+    if (block.structured?.isBlockquote == true) {
+      content = Container(
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: _linkColor.withValues(alpha: 0.6),
+              width: 3,
+            ),
+          ),
+        ),
+        padding: const EdgeInsets.only(left: 11),
+        child: content,
+      );
+    } else if (block.indent > 0) {
+      content = Padding(
+        padding: EdgeInsets.only(left: block.indent),
+        child: content,
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Listener(
@@ -2544,12 +2734,7 @@ class _ReaderPageState extends State<ReaderPage>
         onPointerUp: _textPointerUp,
         onPointerCancel: _textPointerCancel,
         child: SelectionArea(
-          child: Text.rich(
-            key: _scrollTextKeys[index],
-            _scrollTextSpan(block, lockedBody: lockedBody),
-            textScaler: _readerTextScaler,
-            locale: _readerLocale,
-          ),
+          child: content,
         ),
       ),
     );
@@ -2857,6 +3042,20 @@ class _ReaderPageState extends State<ReaderPage>
                             ],
                           );
                         })
+                      else if (it.isDivider)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: SizedBox(
+                            height: 24,
+                            child: Center(
+                              child: Divider(
+                                height: 1,
+                                thickness: 1,
+                                color: _textColor.withValues(alpha: 0.25),
+                              ),
+                            ),
+                          ),
+                        )
                       else
                         Padding(
                           padding: const EdgeInsets.only(bottom: 12),
@@ -2867,18 +3066,59 @@ class _ReaderPageState extends State<ReaderPage>
                             onPointerUp: _textPointerUp,
                             onPointerCancel: _textPointerCancel,
                             child: SelectionArea(
-                              child: Text.rich(
-                                TextSpan(
-                                  style: _bodyTextStyle,
-                                  children: (lockedBody &&
-                                          it.links.isEmpty &&
-                                          it.text == '(本章暂无内容)')
-                                      ? const [TextSpan(text: '本章需要轻币解锁')]
-                                      : _spans(it.text, it.links),
-                                ),
-                                textScaler: _readerTextScaler,
-                                locale: _readerLocale,
-                              ),
+                              child: Builder(builder: (_) {
+                                final isLocked = lockedBody &&
+                                    it.links.isEmpty &&
+                                    it.text == '(本章暂无内容)';
+                                final TextSpan span;
+                                if (isLocked) {
+                                  span = const TextSpan(text: '本章需要轻币解锁');
+                                } else if (it.structured != null) {
+                                  span = it.structured!.buildTextSpan(
+                                    baseStyle: _bodyTextStyle,
+                                    linkColor: _linkColor,
+                                    backgroundColor: _bgColor,
+                                    forMeasurement: false,
+                                  );
+                                } else {
+                                  span = TextSpan(
+                                    style: _bodyTextStyle,
+                                    children: _spans(it.text, it.links),
+                                  );
+                                }
+
+                                Widget textWidget = Text.rich(
+                                  span,
+                                  textScaler: _readerTextScaler,
+                                  locale: _readerLocale,
+                                  textAlign:
+                                      it.structured?.align ?? TextAlign.start,
+                                );
+
+                                if (it.structured?.isBlockquote == true) {
+                                  textWidget = Container(
+                                    decoration: BoxDecoration(
+                                      border: Border(
+                                        left: BorderSide(
+                                          color:
+                                              _linkColor.withValues(alpha: 0.6),
+                                          width: 3,
+                                        ),
+                                      ),
+                                    ),
+                                    padding: const EdgeInsets.only(left: 11),
+                                    child: textWidget,
+                                  );
+                                } else if ((it.structured?.indent ?? 0) > 0) {
+                                  textWidget = Padding(
+                                    padding: EdgeInsets.only(
+                                        left: it.structured!.indent),
+                                    child: textWidget,
+                                  );
+                                }
+
+                                return textWidget;
+                              }),
                             ),
                           ),
                         ),
@@ -3115,6 +3355,13 @@ class _ReaderPageState extends State<ReaderPage>
           ]));
           continue;
         }
+        if (b.isDivider) {
+          const dividerHeight = 24.0;
+          if (used > 0 && used + dividerHeight + gap > contentH) flush();
+          cur.add(_PageItem.divider(blockIndex: blockIndex));
+          used += dividerHeight + gap;
+          continue;
+        }
         if (b.text.trim().isEmpty) continue; // 空文本块不占页
 
         // 不能只按正文块分页: HTML 中的一个段落可能占半页,如果它放不下
@@ -3153,6 +3400,7 @@ class _ReaderPageState extends State<ReaderPage>
             blockIndex: blockIndex,
             startOffset: chunkStart,
             endOffset: chunkEnd,
+            structured: b.structured?.slice(chunkStart, chunkEnd),
           ));
           used += chunkHeight + gap;
         }
@@ -3202,12 +3450,28 @@ class _ReaderPageState extends State<ReaderPage>
   /// 避免 iOS 上测量高度与最终渲染高度不一致。
   List<({int start, int end, double height})> _textLineRanges(
       _BodyBlock b, double w) {
+    final effectiveW = (b.indent > 0)
+        ? (w - b.indent).clamp(80.0, 2000.0).toDouble()
+        : w;
+    final TextSpan span;
+    if (b.structured != null) {
+      span = b.structured!.buildTextSpan(
+        baseStyle: _bodyTextStyle,
+        linkColor: _linkColor,
+        backgroundColor: _bgColor,
+        forMeasurement: true,
+      );
+    } else {
+      span = TextSpan(text: b.text, style: _bodyTextStyle);
+    }
+
     final tp = TextPainter(
-      text: TextSpan(text: b.text, style: _bodyTextStyle),
+      text: span,
       textDirection: TextDirection.ltr,
       textScaler: _readerTextScaler,
       locale: _readerLocale,
-    )..layout(maxWidth: w);
+      textAlign: b.textAlign ?? TextAlign.start,
+    )..layout(maxWidth: effectiveW);
     final lms = tp.computeLineMetrics();
     if (lms.isEmpty) {
       final height = tp.height;
@@ -3230,8 +3494,15 @@ class _ReaderPageState extends State<ReaderPage>
     }
     if (start < b.text.length) {
       final tail = b.text.substring(start);
-      out.add(
-          (start: start, end: b.text.length, height: _measureText(tail, w)));
+      out.add((
+        start: start,
+        end: b.text.length,
+        height: _measureText(
+          tail,
+          effectiveW,
+          structured: b.structured?.slice(start, b.text.length),
+        ),
+      ));
     }
     tp.dispose();
     return out;
@@ -3250,12 +3521,24 @@ class _ReaderPageState extends State<ReaderPage>
     return out;
   }
 
-  double _measureText(String text, double w) {
+  double _measureText(String text, double w, {StructuredBlock? structured}) {
+    final TextSpan span;
+    if (structured != null) {
+      span = structured.buildTextSpan(
+        baseStyle: _bodyTextStyle,
+        linkColor: _linkColor,
+        backgroundColor: _bgColor,
+        forMeasurement: true,
+      );
+    } else {
+      span = TextSpan(text: text, style: _bodyTextStyle);
+    }
     final tp = TextPainter(
-      text: TextSpan(text: text, style: _bodyTextStyle),
+      text: span,
       textDirection: TextDirection.ltr,
       textScaler: _readerTextScaler,
       locale: _readerLocale,
+      textAlign: structured?.align ?? TextAlign.start,
     )..layout(maxWidth: w);
     final height = tp.height;
     tp.dispose();
