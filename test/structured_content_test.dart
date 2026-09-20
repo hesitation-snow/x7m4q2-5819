@@ -222,5 +222,28 @@ void main() {
       expect(b.runs.firstWhere((r) => r.linkUrl != null).linkUrl,
           'https://example.com/link');
     });
+
+    test('text-indent in paragraph does not cause whole-block indentation', () {
+      const html = '''
+        <h1>第一章 序幕</h1>
+        <p style="text-indent: 2em;">这是第一段正文，换行后不应当整段靠右。</p>
+        <blockquote style="text-align: left;"><p>引用文字</p></blockquote>
+      ''';
+      final blocks = StructuredContentParser.parseHtml(html);
+      expect(blocks.length, 3);
+
+      // 大标题 indent 为 0
+      expect(blocks[0].isHeading, isTrue);
+      expect(blocks[0].indent, 0.0);
+
+      // 普通正文 indent 必须为 0，与大标题对齐，且换行后不损失横向空间
+      expect(blocks[1].isHeading, isFalse);
+      expect(blocks[1].isBlockquote, isFalse);
+      expect(blocks[1].indent, 0.0);
+
+      // 引用块合法保留缩进
+      expect(blocks[2].isBlockquote, isTrue);
+      expect(blocks[2].indent, greaterThan(0));
+    });
   });
 }

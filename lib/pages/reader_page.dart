@@ -498,7 +498,7 @@ class _ReaderPageState extends State<ReaderPage>
 
   String _scrollLayoutKey(double viewportWidth, bool lockedBody) {
     final scale = MediaQuery.textScalerOf(context).scale(_fontSize);
-    return '${identityHashCode(_blocks)}|$viewportWidth|${_readerLocale ?? ''}|'
+    return 'v2_noindent|${identityHashCode(_blocks)}|$viewportWidth|${_readerLocale ?? ''}|'
         '${_fontSize.toStringAsFixed(2)}|${_lineHeight.toStringAsFixed(2)}|'
         '${_bodyPadding.left}|${_bodyPadding.top}|${_bodyPadding.right}|'
         '${_bodyPadding.bottom}|$lockedBody|'
@@ -1649,7 +1649,7 @@ class _ReaderPageState extends State<ReaderPage>
     }
     final source = d.bodyHtml?.isNotEmpty == true ? d.bodyHtml! : d.bodyText;
     final cacheKey =
-        '${d.chapterId}:$mode:$enhanced:${source.length}:${source.hashCode}';
+        'v2_noindent:${d.chapterId}:$mode:$enhanced:${source.length}:${source.hashCode}';
     final shared = _parsedChapterCache.remove(cacheKey);
     if (shared != null) {
       _parsedChapterCache[cacheKey] = shared;

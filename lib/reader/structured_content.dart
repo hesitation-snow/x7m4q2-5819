@@ -800,13 +800,6 @@ class StructuredContentParser {
         } else if (val == 'left' || val == 'start') {
           updated = updated.copyWith(align: TextAlign.left);
         }
-      } else if (key == 'text-indent') {
-        if (val.contains('em')) {
-          final numPart = double.tryParse(val.replaceAll('em', '').trim()) ?? 0;
-          if (numPart > 0) {
-            updated = updated.copyWith(indent: numPart * 16.0);
-          }
-        }
       }
     }
     return updated;
