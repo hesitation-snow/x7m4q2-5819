@@ -245,5 +245,79 @@ void main() {
       expect(blocks[2].isBlockquote, isTrue);
       expect(blocks[2].indent, greaterThan(0));
     });
+
+    test('parses unordered <ul> and ordered <ol> lists with bullet and number prefixes', () {
+      const html = '''
+        <ul class="ln-list">
+          <li>第一项</li>
+          <li>第二项</li>
+        </ul>
+        <ol class="ln-list">
+          <li>有序首项</li>
+          <li>有序次项</li>
+        </ol>
+      ''';
+      final blocks = StructuredContentParser.parseHtml(html);
+      expect(blocks.length, 4);
+
+      // 无序列表
+      expect(blocks[0].isListItem, isTrue);
+      expect(blocks[0].text, '• 第一项');
+      expect(blocks[0].indent, 14.0);
+      expect(blocks[0].listNumber, isNull);
+
+      expect(blocks[1].isListItem, isTrue);
+      expect(blocks[1].text, '• 第二项');
+      expect(blocks[1].indent, 14.0);
+
+      // 有序列表
+      expect(blocks[2].isListItem, isTrue);
+      expect(blocks[2].text, '1. 有序首项');
+      expect(blocks[2].indent, 14.0);
+      expect(blocks[2].listNumber, 1);
+
+      expect(blocks[3].isListItem, isTrue);
+      expect(blocks[3].text, '2. 有序次项');
+      expect(blocks[3].indent, 14.0);
+      expect(blocks[3].listNumber, 2);
+    });
+
+    test('parses superscript <sup> with 0.75 multiplier and footnote marker', () {
+      const html = '<p>正文123<sup class="ln-footnote-ref">[1]</sup>456</p>';
+      final blocks = StructuredContentParser.parseHtml(html);
+      expect(blocks.length, 1);
+      final b = blocks.first;
+      expect(b.text, '正文123[1]456');
+
+      final supRun = b.runs.firstWhere((r) => r.text == '[1]');
+      expect(supRun.fontSizeMultiplier, 0.75);
+      expect(supRun.isFootnote, isTrue);
+    });
+
+    test('buildTextSpan provides explicit decorationColor and thickness for strikethrough', () {
+      const block = StructuredBlock(
+        type: StructuredBlockType.paragraph,
+        text: '1234567890',
+        runs: [
+          StructuredInlineRun(text: '123'),
+          StructuredInlineRun(text: '456', isStrikethrough: true),
+          StructuredInlineRun(text: '7890'),
+        ],
+      );
+
+      final span = block.buildTextSpan(
+        baseStyle: const TextStyle(fontSize: 16, color: Colors.white),
+        linkColor: Colors.blue,
+        backgroundColor: Colors.black,
+      );
+
+      expect(span.children, isNotNull);
+      final strikeSpan = span.children![1] as TextSpan;
+      expect(strikeSpan.text, '456');
+      expect(strikeSpan.style?.decoration, TextDecoration.lineThrough);
+      expect(strikeSpan.style?.decorationColor, Colors.white);
+      expect(strikeSpan.style?.decorationThickness, 1.5);
+    });
   });
 }
+

@@ -292,21 +292,6 @@ class StructuredBlock {
         runStyle = runStyle.copyWith(fontStyle: FontStyle.italic);
       }
 
-      final hasUnderline = run.isUnderline;
-      final hasStrikethrough = run.isStrikethrough;
-      if (hasUnderline && hasStrikethrough) {
-        runStyle = runStyle.copyWith(
-          decoration: TextDecoration.combine([
-            TextDecoration.underline,
-            TextDecoration.lineThrough,
-          ]),
-        );
-      } else if (hasUnderline) {
-        runStyle = runStyle.copyWith(decoration: TextDecoration.underline);
-      } else if (hasStrikethrough) {
-        runStyle = runStyle.copyWith(decoration: TextDecoration.lineThrough);
-      }
-
       if (run.linkUrl != null) {
         runStyle = runStyle.copyWith(
           color: linkColor,
@@ -316,6 +301,33 @@ class StructuredBlock {
       } else if (run.color != null) {
         runStyle = runStyle.copyWith(
           color: ensureLegibleColor(run.color!, backgroundColor),
+        );
+      }
+
+      final hasUnderline = run.isUnderline || run.linkUrl != null;
+      final hasStrikethrough = run.isStrikethrough;
+      final effectiveDecColor =
+          runStyle.color ?? blockStyle.color ?? baseStyle.color;
+
+      if (hasUnderline && hasStrikethrough) {
+        runStyle = runStyle.copyWith(
+          decoration: TextDecoration.combine([
+            TextDecoration.underline,
+            TextDecoration.lineThrough,
+          ]),
+          decorationColor: effectiveDecColor,
+          decorationThickness: 1.5,
+        );
+      } else if (hasUnderline) {
+        runStyle = runStyle.copyWith(
+          decoration: TextDecoration.underline,
+          decorationColor: effectiveDecColor,
+        );
+      } else if (hasStrikethrough) {
+        runStyle = runStyle.copyWith(
+          decoration: TextDecoration.lineThrough,
+          decorationColor: effectiveDecColor,
+          decorationThickness: 1.5,
         );
       }
 
@@ -385,6 +397,19 @@ class StructuredBlock {
   }
 }
 
+/// 列表环境上下文跟踪
+class _ActiveListContext {
+  _ActiveListContext({required this.isOrdered});
+  final bool isOrdered;
+  int counter = 0;
+}
+
+/// 列表项前缀注入状态
+class _LiState {
+  _LiState(this.prefix);
+  String? prefix;
+}
+
 /// 解析环境样式上下文
 class _StyleScope {
   const _StyleScope({
@@ -397,8 +422,12 @@ class _StyleScope {
     this.linkUrl,
     this.headingLevel = 0,
     this.isBlockquote = false,
+    this.isListItem = false,
+    this.listNumber,
     this.align,
     this.indent = 0.0,
+    this.isFootnote = false,
+    this.liState,
   });
 
   final bool isBold;
@@ -410,8 +439,12 @@ class _StyleScope {
   final String? linkUrl;
   final int headingLevel;
   final bool isBlockquote;
+  final bool isListItem;
+  final int? listNumber;
   final TextAlign? align;
   final double indent;
+  final bool isFootnote;
+  final _LiState? liState;
 
   _StyleScope copyWith({
     bool? isBold,
@@ -423,8 +456,12 @@ class _StyleScope {
     String? linkUrl,
     int? headingLevel,
     bool? isBlockquote,
+    bool? isListItem,
+    int? listNumber,
     TextAlign? align,
     double? indent,
+    bool? isFootnote,
+    _LiState? liState,
   }) {
     return _StyleScope(
       isBold: isBold ?? this.isBold,
@@ -436,8 +473,12 @@ class _StyleScope {
       linkUrl: linkUrl ?? this.linkUrl,
       headingLevel: headingLevel ?? this.headingLevel,
       isBlockquote: isBlockquote ?? this.isBlockquote,
+      isListItem: isListItem ?? this.isListItem,
+      listNumber: listNumber ?? this.listNumber,
       align: align ?? this.align,
       indent: indent ?? this.indent,
+      isFootnote: isFootnote ?? this.isFootnote,
+      liState: liState ?? this.liState,
     );
   }
 }
@@ -463,6 +504,7 @@ class StructuredContentParser {
 
     final blocks = <StructuredBlock>[];
     final currentRuns = <StructuredInlineRun>[];
+    final listStack = <_ActiveListContext>[];
     _StyleScope activeScope = const _StyleScope();
 
     void flushCurrentBlock() {
@@ -479,6 +521,8 @@ class StructuredContentParser {
         bType = StructuredBlockType.heading;
       } else if (activeScope.isBlockquote) {
         bType = StructuredBlockType.blockquote;
+      } else if (activeScope.isListItem) {
+        bType = StructuredBlockType.listItem;
       }
 
       final block = StructuredBlock(
@@ -488,6 +532,7 @@ class StructuredContentParser {
         headingLevel: activeScope.headingLevel,
         align: activeScope.align,
         indent: activeScope.indent,
+        listNumber: activeScope.listNumber,
       );
       _appendSplitBlock(blocks, block);
       currentRuns.clear();
@@ -506,6 +551,17 @@ class StructuredContentParser {
             }
             final part = parts[i];
             if (part.isNotEmpty) {
+              if (scope.liState?.prefix != null) {
+                final pfx = scope.liState!.prefix!;
+                scope.liState!.prefix = null;
+                activeScope = scope;
+                currentRuns.add(StructuredInlineRun(
+                  text: pfx,
+                  isBold: scope.isBold,
+                  isItalic: scope.isItalic,
+                  color: scope.color,
+                ));
+              }
               activeScope = scope;
               currentRuns.add(StructuredInlineRun(
                 text: part,
@@ -516,6 +572,7 @@ class StructuredContentParser {
                 color: scope.color,
                 fontSizeMultiplier: scope.fontSizeMultiplier,
                 linkUrl: scope.linkUrl,
+                isFootnote: scope.isFootnote,
               ));
             }
           }
@@ -633,11 +690,30 @@ class StructuredContentParser {
         );
       }
 
+      final isUl = tagName == 'ul';
+      final isOl = tagName == 'ol';
+      if (isUl) {
+        listStack.add(_ActiveListContext(isOrdered: false));
+      } else if (isOl) {
+        listStack.add(_ActiveListContext(isOrdered: true));
+      }
+
       // 列表项
       if (tagName == 'li') {
         flushCurrentBlock();
+        final currentList = listStack.isNotEmpty ? listStack.last : null;
+        final int? itemNum = currentList != null && currentList.isOrdered
+            ? ++currentList.counter
+            : null;
+        final String prefix = currentList != null
+            ? (currentList.isOrdered ? '$itemNum. ' : '• ')
+            : '• ';
+
         childScope = childScope.copyWith(
-          indent: childScope.indent + 8.0,
+          isListItem: true,
+          listNumber: itemNum,
+          indent: childScope.indent + 14.0,
+          liState: _LiState(prefix),
         );
       }
 
@@ -656,12 +732,18 @@ class StructuredContentParser {
       }
       if (tagName == 'small' || tagName == 'sub') {
         childScope = childScope.copyWith(
-          fontSizeMultiplier: (childScope.fontSizeMultiplier ?? 1.0) * 0.85,
+          fontSizeMultiplier: (childScope.fontSizeMultiplier ?? 1.0) * 0.82,
         );
       }
-      if (tagName == 'big' || tagName == 'sup') {
+      if (tagName == 'big') {
         childScope = childScope.copyWith(
           fontSizeMultiplier: (childScope.fontSizeMultiplier ?? 1.0) * 1.15,
+        );
+      }
+      if (tagName == 'sup' || node.classes.contains('ln-footnote-ref')) {
+        childScope = childScope.copyWith(
+          fontSizeMultiplier: (childScope.fontSizeMultiplier ?? 1.0) * 0.75,
+          isFootnote: true,
         );
       }
 
@@ -704,6 +786,8 @@ class StructuredContentParser {
           tagName == 'div' ||
           tagName == 'section' ||
           tagName == 'article' ||
+          tagName == 'ul' ||
+          tagName == 'ol' ||
           tagName == 'li' ||
           tagName == 'blockquote' ||
           (tagName.length == 2 && tagName.startsWith('h'));
@@ -714,6 +798,12 @@ class StructuredContentParser {
 
       for (final child in node.nodes) {
         walk(child, childScope);
+      }
+
+      if (isUl || isOl) {
+        if (listStack.isNotEmpty) {
+          listStack.removeLast();
+        }
       }
 
       if (isBlockElement) {
