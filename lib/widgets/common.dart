@@ -480,7 +480,7 @@ class BookCard extends StatelessWidget {
                       key: ValueKey(book.bookId),
                       url: book.coverUrl,
                       width: 76,
-                      height: 101,
+                      height: 107,
                       radius: 8,
                       isBrave: book.isBrave),
                   const SizedBox(width: 12),
@@ -749,6 +749,11 @@ class BookGridDelegate extends SliverGridDelegate {
   final double maxCrossAxisExtent;
   final bool isShelf;
 
+  /// 轻小说文库本标准封面宽高比（A6 规格：105mm × 148mm，约 1 : 1.4095）。
+  /// 平台小说封面均依此日本文库本标准规格制作（如 697x981、826x1163、1065x1500、1367x1923），
+  /// 锁定 105:148 可让封面 100% 完整展示，彻底解决 3:4 比例下顶部书名/LOGO 与底部出版标识被裁切的问题。
+  static const double coverAspectRatio = 105.0 / 148.0; // 约 0.7095 (1 : 1.4095)
+
   const BookGridDelegate({
     this.columnCount = 0,
     this.crossAxisSpacing = 10,
@@ -797,7 +802,7 @@ class BookGridDelegate extends SliverGridDelegate {
     final double totalCrossSpacing = crossAxisSpacing * (count - 1);
     final double cellWidth =
         math.max(0.0, (usableWidth - totalCrossSpacing) / count);
-    final double coverHeight = cellWidth * (4.0 / 3.0);
+    final double coverHeight = cellWidth / coverAspectRatio;
     final double textHeight = calculateTextHeight(cellWidth, isShelf: isShelf);
     final double cellHeight = coverHeight + textHeight;
     final double effectiveMainAxisSpacing =
@@ -1052,9 +1057,9 @@ class BookGridCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 封面严格锁定 3:4 比例，杜绝文字挤压变形
+                // 封面严格锁定文库本 105:148 比例（约 1:1.41），100% 完整展现原图无裁切
                 AspectRatio(
-                  aspectRatio: 3 / 4,
+                  aspectRatio: BookGridDelegate.coverAspectRatio,
                   child: Stack(
                     children: [
                       Positioned.fill(

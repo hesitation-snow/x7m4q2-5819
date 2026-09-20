@@ -49,8 +49,8 @@ void main() {
         final expectedWidth = (screenWidth - 10 * (col - 1)) / col;
         expect(m.cellWidth, closeTo(expectedWidth, 0.01));
 
-        final coverHeight = m.cellWidth * (4.0 / 3.0);
-        expect(coverHeight / m.cellWidth, closeTo(4.0 / 3.0, 0.001));
+        final coverHeight = m.cellWidth / BookGridDelegate.coverAspectRatio;
+        expect(coverHeight / m.cellWidth, closeTo(148.0 / 105.0, 0.001));
 
         final textH = BookGridDelegate.calculateTextHeight(m.cellWidth);
         expect(m.cellHeight, closeTo(coverHeight + textH, 0.01));
@@ -104,7 +104,8 @@ void main() {
       expect(regular.crossAxisCount, 3);
       const expectedChildCross = (370.0 - 20) / 3;
       expect(regular.childCrossAxisExtent, closeTo(expectedChildCross, 0.01));
-      const expectedChildMain = expectedChildCross * (4.0 / 3.0) + 48.0;
+      const expectedChildMain =
+          expectedChildCross * (148.0 / 105.0) + 48.0;
       expect(regular.childMainAxisExtent, closeTo(expectedChildMain, 0.01));
       expect(regular.mainAxisStride, closeTo(expectedChildMain + 12, 0.01));
     });
@@ -154,7 +155,7 @@ void main() {
             body: Center(
               child: SizedBox(
                 width: 180,
-                height: 300,
+                height: 330,
                 child: BookGridCard(
                   book: sampleBook,
                   rank: 1,
@@ -167,7 +168,8 @@ void main() {
       );
 
       final aspect = tester.widget<AspectRatio>(find.byType(AspectRatio));
-      expect(aspect.aspectRatio, closeTo(3 / 4, 0.001));
+      expect(aspect.aspectRatio,
+          closeTo(BookGridDelegate.coverAspectRatio, 0.001));
       expect(find.text('关于我转生成为史莱姆的那档事'), findsOneWidget);
       expect(find.textContaining('异世界'), findsOneWidget);
       expect(find.text('152.0万字'), findsOneWidget);
@@ -208,7 +210,7 @@ void main() {
             body: Center(
               child: SizedBox(
                 width: 120,
-                height: 220,
+                height: 240,
                 child: BookGridCard(
                   book: sampleBook,
                   onTap: () {},
@@ -230,7 +232,7 @@ void main() {
             body: Center(
               child: SizedBox(
                 width: 180,
-                height: 280,
+                height: 310,
                 child: BookGridCard(
                   book: sampleBook,
                   isShelf: true,
