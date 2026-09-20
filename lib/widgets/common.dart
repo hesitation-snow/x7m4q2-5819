@@ -152,6 +152,33 @@ Future<bool?> showLogoutScopeDialog(BuildContext context) {
   );
 }
 
+/// 取消关注用户的二次确认对话框。返回 true 表示确认取关，false 表示取消。
+Future<bool> confirmUnfollowUser(BuildContext context, {String? nickname}) async {
+  final name = (nickname != null && nickname.trim().isNotEmpty) ? '“$nickname”' : '该用户';
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('取消关注'),
+      content: Text('确定不再关注 $name 吗？'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text(
+            '确定取关',
+            style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+          ),
+        ),
+      ],
+    ),
+  );
+  return result ?? false;
+}
+
+
 /// 无封面书籍的默认封面(站点官方占位图)
 const String kDefaultCover =
     'https://www.lightnovel.fun/sample-assets/legacy/default_article_cover_v.jpg';

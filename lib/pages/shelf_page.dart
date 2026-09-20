@@ -282,6 +282,10 @@ class _ShelfPageState extends State<ShelfPage> {
           _hasMore = false;
           _error = null;
         });
+        if (items.isNotEmpty) {
+          unawaited(
+              _verifyServerBookStatuses(items, forceRefresh: forceRefresh));
+        }
         return;
       }
       Future<LoadedPage<LKBook>> fetchPage(int number, String cursor) async {
@@ -585,13 +589,23 @@ class _ShelfPageState extends State<ShelfPage> {
   @override
   Widget build(BuildContext context) {
     final visibleItems = _visibleItems;
-    final body = _error != null && _items.isEmpty
-        ? Center(
-            child: Text(_error!, style: const TextStyle(color: Colors.grey)))
-        : MotionRefreshIndicator(
-            onRefresh: () => _load(forceRefresh: true),
-            child: _loading && _items.isEmpty
-                ? ListView(
+    final body = MotionRefreshIndicator(
+      onRefresh: () => _load(forceRefresh: true),
+      child: _error != null && _items.isEmpty
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                SizedBox(
+                  height: MediaQuery.sizeOf(context).height * 0.55,
+                  child: Center(
+                    child: Text(_error!,
+                        style: const TextStyle(color: Colors.grey)),
+                  ),
+                ),
+              ],
+            )
+          : _loading && _items.isEmpty
+              ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     children: [
                       SizedBox(

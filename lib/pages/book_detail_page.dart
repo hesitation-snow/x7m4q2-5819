@@ -499,8 +499,17 @@ class _BookDetailPageState extends State<BookDetailPage> {
     }
     if (session.uid == book.publisherUid) return;
 
-    final request = _publisherRelation.beginMutation();
     final follow = !_publisherFollowed;
+    if (!follow) {
+      final publisherName = book.publisherName.trim().isNotEmpty
+          ? book.publisherName.trim()
+          : (book.authorName.trim().isNotEmpty ? book.authorName.trim() : '该发布者');
+      final confirmed =
+          await confirmUnfollowUser(context, nickname: publisherName);
+      if (!confirmed || !mounted) return;
+    }
+
+    final request = _publisherRelation.beginMutation();
     setState(() => _publisherFollowBusy = true);
     try {
       await LKApi.toggleFollow(book.publisherUid, follow);

@@ -214,6 +214,11 @@ class _FollowListPageState extends State<_FollowListPageBody>
         _followActionUids.contains(user.uid)) {
       return;
     }
+    if (following) {
+      final confirmed =
+          await confirmUnfollowUser(context, nickname: user.nickname);
+      if (!confirmed || !mounted || !_session.isCurrent) return;
+    }
     setState(() => _followActionUids.add(user.uid));
     try {
       await LKApi.toggleFollow(user.uid, !following);

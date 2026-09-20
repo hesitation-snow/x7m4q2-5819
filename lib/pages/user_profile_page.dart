@@ -342,6 +342,11 @@ class _UserProfilePageState extends State<UserProfilePage>
     if (profile == null) return;
     final targetUid = profile.uid > 0 ? profile.uid : widget.uid;
     final follow = !_followed;
+    if (!follow) {
+      final confirmed =
+          await confirmUnfollowUser(context, nickname: profile.nickname);
+      if (!confirmed || !mounted) return;
+    }
     final revision = LKClient.sessionRev.value;
     _relationRevision++;
     setState(() => _followBusy = true);
@@ -407,34 +412,38 @@ class _UserProfilePageState extends State<UserProfilePage>
       appBar: AppBar(
         title: Text(profile.nickname.isEmpty ? '用户主页' : profile.nickname),
       ),
-      body: NestedScrollView(
-        headerSliverBuilder: (context, _) => [
-          SliverToBoxAdapter(child: _buildProfileHeader(profile)),
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _ProfileTabsHeader(
-              backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-              tabBar: TabBar(
-                controller: _tabs,
-                tabs: const [
-                  Tab(text: '动态'),
-                  Tab(text: '公开发布'),
-                  Tab(text: '公开书架'),
-                ],
+      body: MotionRefreshIndicator(
+        onRefresh: _refresh,
+        child: NestedScrollView(
+          headerSliverBuilder: (context, _) => [
+            SliverToBoxAdapter(child: _buildProfileHeader(profile)),
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _ProfileTabsHeader(
+                backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                tabBar: TabBar(
+                  controller: _tabs,
+                  dividerHeight: 0,
+                  tabs: const [
+                    Tab(text: '动态'),
+                    Tab(text: '公开发布'),
+                    Tab(text: '公开书架'),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
-        body: TabBarView(
-          physics: AppMotion.isDisabled(context)
-              ? const NeverScrollableScrollPhysics()
-              : null,
-          controller: _tabs,
-          children: [
-            _buildDynamicTab(),
-            _buildPublicationTab(),
-            _buildBookshelfTab(),
           ],
+          body: TabBarView(
+            physics: AppMotion.isDisabled(context)
+                ? const NeverScrollableScrollPhysics()
+                : null,
+            controller: _tabs,
+            children: [
+              _buildDynamicTab(),
+              _buildPublicationTab(),
+              _buildBookshelfTab(),
+            ],
+          ),
         ),
       ),
     );
@@ -622,35 +631,32 @@ class _UserProfilePageState extends State<UserProfilePage>
                 .where((d) => d.bookId <= 0 || !LKStore.isBraveBook(d.bookId))
                 .toList()
             : _dynamics;
-        return MotionRefreshIndicator(
-          onRefresh: _refresh,
-          child: visibleDynamics.isEmpty
-              ? _filteredList(
-                  hideBrave && _dynamics.isNotEmpty
-                      ? '已按设置隐藏勇者相关动态'
-                      : (_dynamicError ?? '暂无公开动态'),
-                  hasMore: _dynamicHasMore,
-                  loading: _dynamicLoading,
-                  pageKey: _dynamicCursor,
-                  error: _dynamicError,
-                  onLoadMore: () => _loadDynamics(append: true))
-              : ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: visibleDynamics.length + (_dynamicHasMore ? 1 : 0),
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, index) {
-                    if (index == visibleDynamics.length) {
-                      return ListContinuation(
-                          pageKey: _dynamicCursor,
-                          loading: _dynamicLoading,
-                          error: _dynamicError,
-                          onLoadMore: () => _loadDynamics(append: true));
-                    }
-                    return _dynamicTile(visibleDynamics[index]);
-                  },
-                ),
-        );
+        return visibleDynamics.isEmpty
+            ? _filteredList(
+                hideBrave && _dynamics.isNotEmpty
+                    ? '已按设置隐藏勇者相关动态'
+                    : (_dynamicError ?? '暂无公开动态'),
+                hasMore: _dynamicHasMore,
+                loading: _dynamicLoading,
+                pageKey: _dynamicCursor,
+                error: _dynamicError,
+                onLoadMore: () => _loadDynamics(append: true))
+            : ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.only(top: 8, bottom: 16),
+                itemCount: visibleDynamics.length + (_dynamicHasMore ? 1 : 0),
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (_, index) {
+                  if (index == visibleDynamics.length) {
+                    return ListContinuation(
+                        pageKey: _dynamicCursor,
+                        loading: _dynamicLoading,
+                        error: _dynamicError,
+                        onLoadMore: () => _loadDynamics(append: true));
+                  }
+                  return _dynamicTile(visibleDynamics[index]);
+                },
+              );
       },
     );
   }
@@ -661,7 +667,7 @@ class _UserProfilePageState extends State<UserProfilePage>
         ? item.authorMedals
         : (_globalMedals[item.authorUid] ?? const <LKMedal>[]);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Card(
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
@@ -903,35 +909,32 @@ class _UserProfilePageState extends State<UserProfilePage>
                 .where((b) => !b.isBrave && !LKStore.isBraveBook(b.bookId))
                 .toList()
             : allPublications;
-        return MotionRefreshIndicator(
-          onRefresh: _refresh,
-          child: publications.isEmpty
-              ? _filteredList(
-                  hideBrave && allPublications.isNotEmpty
-                      ? '已按设置隐藏勇者作品'
-                      : '暂无公开发布',
-                  hasMore: _home!.hasMore,
-                  loading: _publicationLoading,
-                  pageKey: _home!.page,
-                  error: _publicationError,
-                  onLoadMore: _loadMorePublications)
-              : ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: publications.length + (_home!.hasMore ? 1 : 0),
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, index) {
-                    if (index == publications.length) {
-                      return ListContinuation(
-                          pageKey: _home!.page,
-                          loading: _publicationLoading,
-                          error: _publicationError,
-                          onLoadMore: _loadMorePublications);
-                    }
-                    return _bookTile(publications[index]);
-                  },
-                ),
-        );
+        return publications.isEmpty
+            ? _filteredList(
+                hideBrave && allPublications.isNotEmpty
+                    ? '已按设置隐藏勇者作品'
+                    : '暂无公开发布',
+                hasMore: _home!.hasMore,
+                loading: _publicationLoading,
+                pageKey: _home!.page,
+                error: _publicationError,
+                onLoadMore: _loadMorePublications)
+            : ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.only(top: 8, bottom: 16),
+                itemCount: publications.length + (_home!.hasMore ? 1 : 0),
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (_, index) {
+                  if (index == publications.length) {
+                    return ListContinuation(
+                        pageKey: _home!.page,
+                        loading: _publicationLoading,
+                        error: _publicationError,
+                        onLoadMore: _loadMorePublications);
+                  }
+                  return _bookTile(publications[index]);
+                },
+              );
       },
     );
   }
@@ -939,16 +942,10 @@ class _UserProfilePageState extends State<UserProfilePage>
   Widget _buildBookshelfTab() {
     final shelf = _bookshelf;
     if (_bookshelfError != null && shelf == null) {
-      return MotionRefreshIndicator(
-        onRefresh: () => _loadInitial(forceRefresh: true),
-        child: _emptyList(_bookshelfError!, onRetry: _loadInitial),
-      );
+      return _emptyList(_bookshelfError!, onRetry: _loadInitial);
     }
     if (shelf == null || !shelf.visible) {
-      return MotionRefreshIndicator(
-        onRefresh: _refresh,
-        child: _emptyList('该用户未公开书架'),
-      );
+      return _emptyList('该用户未公开书架');
     }
     return ValueListenableBuilder<bool>(
       valueListenable: LKStore.hideBraveBooks,
@@ -959,33 +956,30 @@ class _UserProfilePageState extends State<UserProfilePage>
                 .where((b) => !b.isBrave && !LKStore.isBraveBook(b.bookId))
                 .toList()
             : allBooks;
-        return MotionRefreshIndicator(
-          onRefresh: _refresh,
-          child: books.isEmpty
-              ? _filteredList(
-                  hideBrave && allBooks.isNotEmpty ? '已按设置隐藏勇者书籍' : '公开书架暂无作品',
-                  hasMore: shelf.hasMore,
-                  loading: _bookshelfLoading,
-                  pageKey: shelf.page,
-                  error: _bookshelfError,
-                  onLoadMore: _loadMoreBookshelf)
-              : ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: books.length + (shelf.hasMore ? 1 : 0),
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, index) {
-                    if (index == books.length) {
-                      return ListContinuation(
-                          pageKey: shelf.page,
-                          loading: _bookshelfLoading,
-                          error: _bookshelfError,
-                          onLoadMore: _loadMoreBookshelf);
-                    }
-                    return _bookTile(books[index]);
-                  },
-                ),
-        );
+        return books.isEmpty
+            ? _filteredList(
+                hideBrave && allBooks.isNotEmpty ? '已按设置隐藏勇者书籍' : '公开书架暂无作品',
+                hasMore: shelf.hasMore,
+                loading: _bookshelfLoading,
+                pageKey: shelf.page,
+                error: _bookshelfError,
+                onLoadMore: _loadMoreBookshelf)
+            : ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.only(top: 8, bottom: 16),
+                itemCount: books.length + (shelf.hasMore ? 1 : 0),
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (_, index) {
+                  if (index == books.length) {
+                    return ListContinuation(
+                        pageKey: shelf.page,
+                        loading: _bookshelfLoading,
+                        error: _bookshelfError,
+                        onLoadMore: _loadMoreBookshelf);
+                  }
+                  return _bookTile(books[index]);
+                },
+              );
       },
     );
   }
@@ -993,60 +987,69 @@ class _UserProfilePageState extends State<UserProfilePage>
   Widget _bookTile(LKPublicBook book) {
     _verifyBookAccess(book);
     final isBrave = book.isBrave || LKStore.isBraveBook(book.bookId);
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: CoverImage(
-        key: ValueKey(book.bookId),
-        url: book.coverUrl,
-        width: 48,
-        height: 64,
-        isBrave: isBrave,
-        showPeekButton: false,
-      ),
-      title: Row(
-        children: [
-          if (isBrave) ...[
-            Container(
-              margin: const EdgeInsets.only(right: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE53935).withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color: const Color(0xFFE53935).withValues(alpha: 0.4),
-                  width: 0.8,
-                ),
-              ),
-              child: const Text(
-                '勇者',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFFE53935),
-                ),
-              ),
-            ),
-          ],
-          Expanded(
-            child:
-                Text(book.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+          leading: CoverImage(
+            key: ValueKey(book.bookId),
+            url: book.coverUrl,
+            width: 48,
+            height: 64,
+            isBrave: isBrave,
+            showPeekButton: false,
           ),
-        ],
+          title: Row(
+            children: [
+              if (isBrave) ...[
+                Container(
+                  margin: const EdgeInsets.only(right: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE53935).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: const Color(0xFFE53935).withValues(alpha: 0.4),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: const Text(
+                    '勇者',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFE53935),
+                    ),
+                  ),
+                ),
+              ],
+              Expanded(
+                child: Text(book.title,
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ),
+          subtitle: Text(
+            [book.typeText, _shortTime(book.updatedAt)]
+                .where((e) => e.isNotEmpty)
+                .join(' · '),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          onTap: book.bookId > 0
+              ? () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => BookDetailPage(bookId: book.bookId)),
+                  )
+              : null,
+        ),
       ),
-      subtitle: Text(
-        [book.typeText, _shortTime(book.updatedAt)]
-            .where((e) => e.isNotEmpty)
-            .join(' · '),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      onTap: book.bookId > 0
-          ? () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => BookDetailPage(bookId: book.bookId)),
-              )
-          : null,
     );
   }
 
