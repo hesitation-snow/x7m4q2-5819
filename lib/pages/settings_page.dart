@@ -1,5 +1,6 @@
 import '../services/app_motion.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../api/lk_api.dart';
@@ -28,7 +29,18 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    LKClient.sessionRev.addListener(_onSessionRev);
     _loadCacheUsage();
+  }
+
+  @override
+  void dispose() {
+    LKClient.sessionRev.removeListener(_onSessionRev);
+    super.dispose();
+  }
+
+  void _onSessionRev() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadCacheUsage() async {
@@ -187,7 +199,7 @@ class _SettingsPageState extends State<SettingsPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('使用 Flutter 开发的 轻之国度 第三方客户端'),
+              const Text('使用 Flutter 开发的轻之国度第三方客户端'),
               const SizedBox(height: 8),
               Text('当前版本：${info.version}+${info.buildNumber}'),
               const SizedBox(height: 18),
@@ -232,7 +244,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 10),
               Text(
-                'Telegram群聊',
+                'Telegram',
                 style: Theme.of(dialogContext).textTheme.labelLarge?.copyWith(
                       color:
                           Theme.of(dialogContext).colorScheme.onSurfaceVariant,
@@ -247,6 +259,14 @@ class _SettingsPageState extends State<SettingsPage> {
                     context,
                     'https://t.me/FurippuFurappazu',
                   );
+                },
+                onLongPress: () async {
+                  await Clipboard.setData(
+                    const ClipboardData(text: 'https://t.me/FurippuFurappazu'),
+                  );
+                  if (mounted) {
+                    showFloatingPrompt(context, '已复制 Telegram 链接');
+                  }
                 },
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
@@ -434,19 +454,20 @@ class _SettingsPageState extends State<SettingsPage> {
                 }
               },
             ),
-            ListTile(
-              leading: _settingsIcon(context, Icons.science_outlined),
-              title: const Text('实验性功能'),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const ExperimentalSettingsPage(),
-                  ),
-                );
-              },
-            ),
+            if (LKClient.shared.session.isLoggedIn)
+              ListTile(
+                leading: _settingsIcon(context, Icons.science_outlined),
+                title: const Text('实验性功能'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ExperimentalSettingsPage(),
+                    ),
+                  );
+                },
+              ),
           ]),
           const SizedBox(height: 20),
           _sectionTitle(context, '账号与信息'),

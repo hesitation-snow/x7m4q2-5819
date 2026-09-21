@@ -400,7 +400,7 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
                       height: 20,
                       child: MotionProgressIndicator(strokeWidth: 2),
                     )
-                  : Text(isLast ? '交卷' : '下一题'),
+                  : Text(isLast ? '提交' : '下一题'),
             ),
           ),
         ],

@@ -2288,22 +2288,7 @@ class _ReaderPageState extends State<ReaderPage>
                               if (v) ReaderPrefs.setTraditional(false);
                               await _reparseCurrentDetail();
                             }),
-                            const SizedBox(height: 6),
-                            Text('字号',
-                                style: TextStyle(
-                                    fontSize: 12, color: Colors.grey.shade500)),
-                            Slider(
-                              value: _fontSize,
-                              min: 12,
-                              max: 28,
-                              divisions: 16,
-                              onChanged: (v) {
-                                setSheet(() {});
-                                setState(() => _fontSize = v);
-                                ReaderPrefs.setFontSize(v);
-                              },
-                            ),
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 12),
                             Row(
                               children: [
                                 for (var i = 0; i < _presets.length; i++)
@@ -2394,6 +2379,11 @@ class _ReaderPageState extends State<ReaderPage>
                         ReaderTypographySheet(
                           initialTypography: _typography,
                           fontSize: _fontSize,
+                          onFontSizeChanged: (v) {
+                            setSheet(() {});
+                            setState(() => _fontSize = v);
+                            ReaderPrefs.setFontSize(v);
+                          },
                           textColor: _textColor,
                           backgroundColor: _bgColor,
                           linkColor: _linkColor,

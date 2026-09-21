@@ -958,7 +958,7 @@ class _UserProfilePageState extends State<UserProfilePage>
             : allBooks;
         return books.isEmpty
             ? _filteredList(
-                hideBrave && allBooks.isNotEmpty ? '已按设置隐藏勇者书籍' : '公开书架暂无作品',
+                hideBrave && allBooks.isNotEmpty ? '已按设置隐藏勇者书籍' : '暂无作品',
                 hasMore: shelf.hasMore,
                 loading: _bookshelfLoading,
                 pageKey: shelf.page,

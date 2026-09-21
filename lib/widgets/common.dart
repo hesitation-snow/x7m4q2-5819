@@ -154,7 +154,7 @@ Future<bool?> showLogoutScopeDialog(BuildContext context) {
 
 /// 取消关注用户的二次确认对话框。返回 true 表示确认取关，false 表示取消。
 Future<bool> confirmUnfollowUser(BuildContext context, {String? nickname}) async {
-  final name = (nickname != null && nickname.trim().isNotEmpty) ? '“$nickname”' : '该用户';
+  final name = (nickname != null && nickname.trim().isNotEmpty) ? nickname : '该用户';
   final result = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -168,7 +168,7 @@ Future<bool> confirmUnfollowUser(BuildContext context, {String? nickname}) async
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(true),
           child: Text(
-            '确定取关',
+            '确定',
             style: TextStyle(color: Theme.of(ctx).colorScheme.error),
           ),
         ),

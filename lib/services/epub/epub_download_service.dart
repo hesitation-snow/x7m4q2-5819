@@ -116,8 +116,8 @@ class EpubDownloadService {
   /// 状态通知器，驱动所有观察者 UI 响应
   final ValueNotifier<EpubDownloadTask?> currentTask = ValueNotifier(null);
 
-  /// 网络请求并发限制器：最多 2 个网络并发
-  final ConcurrencyLimiter _networkSemaphore = ConcurrencyLimiter(2);
+  /// 网络请求并发限制器：多线程并发支持（最多 6 个网络并发）
+  final ConcurrencyLimiter _networkSemaphore = ConcurrencyLimiter(6);
 
   final _SpeedTracker _speedTracker = _SpeedTracker();
   int _downloadedIllustrationsCount = 0;
@@ -175,6 +175,7 @@ class EpubDownloadService {
       authorName: book.authorName,
       coverUrl: book.coverUrl,
       summary: book.summary,
+      publisherUid: book.publisherUid,
       ownerUid: _boundUid,
       options: options,
       selectedVolumes: selectedVolumes,
@@ -210,10 +211,19 @@ class EpubDownloadService {
     final task = currentTask.value;
     if (task == null || task.phase != EpubTaskPhase.paused) return;
 
+    final currentUid = LKClient.shared.session.uid;
+    if (task.ownerUid > 0 && currentUid != task.ownerUid) {
+      _handleAccountChanged('登录账号已切换，无法恢复非当前账号创建的任务');
+      return;
+    } else if (task.ownerUid > 0 && !LKClient.shared.session.isLoggedIn) {
+      _handleAccountChanged('已退出登录，无法恢复制作任务');
+      return;
+    }
+
     _isPausedFlag = false;
     _isCanceledFlag = false;
     _speedTracker.reset();
-    _boundUid = LKClient.shared.session.uid;
+    _boundUid = task.ownerUid;
 
     if (task.completedCount < task.totalChapters) {
       currentTask.value = task.copyWith(
@@ -291,16 +301,26 @@ class EpubDownloadService {
     final taskDir = await _getTaskDirectory(task.bookId);
 
     // 如果指定了自定义封面路径，且不是 cover.jpg 本身，安全将其拷贝覆盖至 cover.jpg
+    final targetCover = File('${taskDir.path}/cover.jpg');
+    final origCover = File('${taskDir.path}/original_cover.jpg');
     final chosenCover = customCoverPath ?? task.customCoverPath;
-    if (chosenCover != null && chosenCover.isNotEmpty) {
-      final targetCover = File('${taskDir.path}/cover.jpg');
-      if (chosenCover != targetCover.path) {
-        final src = File(chosenCover);
-        if (await src.exists()) {
-          try {
-            await src.copy(targetCover.path);
-          } catch (_) {}
-        }
+
+    if (chosenCover != null && chosenCover.isNotEmpty && chosenCover != targetCover.path) {
+      final src = File(chosenCover);
+      if (await src.exists()) {
+        try {
+          if (!await origCover.exists() && await targetCover.exists()) {
+            await targetCover.copy(origCover.path);
+          }
+          await src.copy(targetCover.path);
+        } catch (_) {}
+      }
+    } else if (chosenCover == null || chosenCover == targetCover.path) {
+      // 恢复为默认原始封面
+      if (await origCover.exists()) {
+        try {
+          await origCover.copy(targetCover.path);
+        } catch (_) {}
       }
     }
 
@@ -476,6 +496,12 @@ class EpubDownloadService {
       await _downloadImageToDisk(task.coverUrl, coverFile, onBytes: (chunk) {
         _speedTracker.addBytes(chunk);
       });
+      final origCover = File('${taskDir.path}/original_cover.jpg');
+      if (await coverFile.exists() && !await origCover.exists()) {
+        try {
+          await coverFile.copy(origCover.path);
+        } catch (_) {}
+      }
     } catch (_) {
       // 封面下载失败不阻断全书制作
     }
@@ -491,19 +517,8 @@ class EpubDownloadService {
         ? imagesDir.listSync().whereType<File>().length
         : 0;
 
-    for (final ch in task.chapters) {
-      if (_isCanceledFlag) return;
-      if (_isPausedFlag) {
-        _speedTracker.reset();
-        await _saveTaskCheckpoint(currentTask.value!);
-        return;
-      }
-
-      // 如果本章已完成，跳过
-      if (completed.contains(ch.chapterId)) continue;
-
-      // 如果已在失败列表中且未处于重试流程，跳过
-      if (failed.containsKey(ch.chapterId)) continue;
+    Future<void> downloadSingleChapter(EpubChapterItem ch) async {
+      if (_isCanceledFlag || _isPausedFlag) return;
 
       final curSpeed = _speedTracker.speedText;
       currentTask.value = currentTask.value?.copyWith(
@@ -561,7 +576,7 @@ class EpubDownloadService {
           } catch (_) {}
         }
 
-        if (_isCanceledFlag) return;
+        if (_isCanceledFlag || _isPausedFlag) return;
 
         // 写入独立章节文件
         await chFile.writeAsString(jsonEncode({
@@ -612,6 +627,28 @@ class EpubDownloadService {
           return;
         }
       }
+    }
+
+    final pendingChapters = task.chapters.where((ch) =>
+        !completed.contains(ch.chapterId) && !failed.containsKey(ch.chapterId)).toList();
+
+    int nextChapterIndex = 0;
+    Future<void> chapterWorker() async {
+      while (nextChapterIndex < pendingChapters.length) {
+        if (_isCanceledFlag || _isPausedFlag) return;
+        final ch = pendingChapters[nextChapterIndex++];
+        await downloadSingleChapter(ch);
+      }
+    }
+
+    const maxConcurrentChapters = 3;
+    final workerCount = pendingChapters.isEmpty
+        ? 0
+        : maxConcurrentChapters.clamp(1, pendingChapters.length);
+    if (workerCount > 0) {
+      await Future.wait([
+        for (int i = 0; i < workerCount; i++) chapterWorker(),
+      ]);
     }
 
     await _saveTaskCheckpoint(currentTask.value!);
@@ -686,84 +723,98 @@ class EpubDownloadService {
     final urlList = urls.toList();
     final totalInChapter = urlList.length;
     DateTime lastThrottledUpdate = DateTime.now();
+    int nextImageIdx = 0;
+    int processedCount = 0;
 
-    for (int i = 0; i < totalInChapter; i++) {
-      if (_isCanceledFlag || _isPausedFlag) return;
-      final rawUrl = urlList[i];
-      final cleanUrl = rawUrl.replaceAll('&amp;', '&').trim();
-      if (cleanUrl.isEmpty) continue;
-      final fileName = getIllustrationFileName(cleanUrl);
-      final destFile = File('${imagesDir.path}/$fileName');
+    Future<void> illustrationWorker() async {
+      while (nextImageIdx < totalInChapter) {
+        if (_isCanceledFlag || _isPausedFlag) return;
+        final i = nextImageIdx++;
+        final rawUrl = urlList[i];
+        final cleanUrl = rawUrl.replaceAll('&amp;', '&').trim();
+        if (cleanUrl.isEmpty) continue;
+        final fileName = getIllustrationFileName(cleanUrl);
+        final destFile = File('${imagesDir.path}/$fileName');
 
-      final curSpeed = _speedTracker.speedText;
-      currentTask.value = currentTask.value?.copyWith(
-        currentIllustrationIndex: i + 1,
-        currentIllustrationTotal: totalInChapter,
-        illustrationDownloadedCount: _downloadedIllustrationsCount,
-        speedText: curSpeed,
-        statusMessage: curSpeed.isNotEmpty
-            ? '正在下载插画 (${i + 1}/$totalInChapter): ${detail.title} · $curSpeed'
-            : '正在下载插画 (${i + 1}/$totalInChapter): ${detail.title}',
-      );
-
-      bool isNewDownload = false;
-      if (!await destFile.exists()) {
-        try {
-          // 1. 优先尝试从本地已有插画缓存管理器复制文件（离线秒开）
-          final cached =
-              await YomiruIllustrationCache.manager.cachedFile(cleanUrl);
-          if (cached != null && await File(cached.file.path).exists()) {
-            await File(cached.file.path).copy(destFile.path);
-            isNewDownload = true;
-          }
-        } catch (_) {}
-
-        if (!await destFile.exists()) {
-          // 2. 带流式测速与 25s 超时的下载
-          final downloaded = await _downloadImageToDisk(
-            cleanUrl,
-            destFile,
-            onBytes: (chunkBytes) {
-              _speedTracker.addBytes(chunkBytes);
-              final now = DateTime.now();
-              if (now.difference(lastThrottledUpdate).inMilliseconds >= 300) {
-                lastThrottledUpdate = now;
-                final liveSpeed = _speedTracker.speedText;
-                currentTask.value = currentTask.value?.copyWith(
-                  currentIllustrationIndex: i + 1,
-                  currentIllustrationTotal: totalInChapter,
-                  illustrationDownloadedCount: _downloadedIllustrationsCount,
-                  speedText: liveSpeed,
-                  statusMessage: liveSpeed.isNotEmpty
-                      ? '正在下载插画 (${i + 1}/$totalInChapter): ${detail.title} · $liveSpeed'
-                      : '正在下载插画 (${i + 1}/$totalInChapter): ${detail.title}',
-                );
-              }
-            },
-          );
-          if (downloaded) {
-            isNewDownload = true;
-          }
-        }
-      }
-
-      if (await destFile.exists()) {
-        if (isNewDownload) {
-          _downloadedIllustrationsCount++;
-        }
-        map[rawUrl] = fileName;
-        map[cleanUrl] = fileName;
-        map[illustrationCacheKey(cleanUrl)] = fileName;
-        map[fileName] = fileName;
-
+        final curSpeed = _speedTracker.speedText;
         currentTask.value = currentTask.value?.copyWith(
-          currentIllustrationIndex: i + 1,
+          currentIllustrationIndex:
+              (processedCount + 1).clamp(1, totalInChapter),
           currentIllustrationTotal: totalInChapter,
           illustrationDownloadedCount: _downloadedIllustrationsCount,
-          speedText: _speedTracker.speedText,
+          speedText: curSpeed,
+          statusMessage: curSpeed.isNotEmpty
+              ? '正在下载插画 (${processedCount + 1}/$totalInChapter): ${detail.title} · $curSpeed'
+              : '正在下载插画 (${processedCount + 1}/$totalInChapter): ${detail.title}',
         );
+
+        bool isNewDownload = false;
+        if (!await destFile.exists()) {
+          try {
+            // 1. 优先尝试从本地已有插画缓存管理器复制文件（离线秒开）
+            final cached =
+                await YomiruIllustrationCache.manager.cachedFile(cleanUrl);
+            if (cached != null && await File(cached.file.path).exists()) {
+              await File(cached.file.path).copy(destFile.path);
+              isNewDownload = true;
+            }
+          } catch (_) {}
+
+          if (!await destFile.exists()) {
+            // 2. 带流式测速与 25s 超时的下载
+            final downloaded = await _downloadImageToDisk(
+              cleanUrl,
+              destFile,
+              onBytes: (chunkBytes) {
+                _speedTracker.addBytes(chunkBytes);
+                final now = DateTime.now();
+                if (now.difference(lastThrottledUpdate).inMilliseconds >= 300) {
+                  lastThrottledUpdate = now;
+                  final liveSpeed = _speedTracker.speedText;
+                  currentTask.value = currentTask.value?.copyWith(
+                    currentIllustrationIndex:
+                        (processedCount + 1).clamp(1, totalInChapter),
+                    currentIllustrationTotal: totalInChapter,
+                    illustrationDownloadedCount: _downloadedIllustrationsCount,
+                    speedText: liveSpeed,
+                    statusMessage: liveSpeed.isNotEmpty
+                        ? '正在下载插画 (${processedCount + 1}/$totalInChapter): ${detail.title} · $liveSpeed'
+                        : '正在下载插画 (${processedCount + 1}/$totalInChapter): ${detail.title}',
+                  );
+                }
+              },
+            );
+            if (downloaded) {
+              isNewDownload = true;
+            }
+          }
+        }
+
+        if (await destFile.exists()) {
+          if (isNewDownload) {
+            _downloadedIllustrationsCount++;
+          }
+          map[rawUrl] = fileName;
+          map[cleanUrl] = fileName;
+          map[illustrationCacheKey(cleanUrl)] = fileName;
+          map[fileName] = fileName;
+          processedCount++;
+
+          currentTask.value = currentTask.value?.copyWith(
+            currentIllustrationIndex: processedCount.clamp(1, totalInChapter),
+            currentIllustrationTotal: totalInChapter,
+            illustrationDownloadedCount: _downloadedIllustrationsCount,
+            speedText: _speedTracker.speedText,
+          );
+        }
       }
     }
+
+    const maxImgConcurrency = 3;
+    final imgWorkers = maxImgConcurrency.clamp(1, totalInChapter);
+    await Future.wait([
+      for (int w = 0; w < imgWorkers; w++) illustrationWorker(),
+    ]);
 
     await mapFile.writeAsString(jsonEncode(map));
 
@@ -879,6 +930,8 @@ class EpubDownloadService {
         bookTitle: effectiveTitle,
         authorName: task.authorName,
         summary: task.summary,
+        publisherUid: task.publisherUid,
+        exporterUid: task.ownerUid,
         includeIllustrations: task.options.includeIllustrations,
         exportIncomplete: task.options.exportIncomplete,
         chapters: task.chapters,

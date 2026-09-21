@@ -164,6 +164,7 @@ class EpubDownloadTask {
   final String authorName;
   final String coverUrl;
   final String summary;
+  final int publisherUid;
   final int ownerUid;
   final EpubExportOptions options;
   final List<LKVolume> selectedVolumes;
@@ -184,12 +185,16 @@ class EpubDownloadTask {
   final int currentIllustrationTotal;
   final String speedText;
 
+  /// 导出账号 UID（与 ownerUid 语义相同）
+  int get exporterUid => ownerUid;
+
   const EpubDownloadTask({
     required this.bookId,
     required this.bookTitle,
     required this.authorName,
     this.coverUrl = '',
     this.summary = '',
+    this.publisherUid = 0,
     required this.ownerUid,
     this.options = const EpubExportOptions(),
     this.selectedVolumes = const [],
@@ -247,6 +252,7 @@ class EpubDownloadTask {
     String? authorName,
     String? coverUrl,
     String? summary,
+    int? publisherUid,
     int? ownerUid,
     EpubExportOptions? options,
     List<LKVolume>? selectedVolumes,
@@ -273,6 +279,7 @@ class EpubDownloadTask {
         authorName: authorName ?? this.authorName,
         coverUrl: coverUrl ?? this.coverUrl,
         summary: summary ?? this.summary,
+        publisherUid: publisherUid ?? this.publisherUid,
         ownerUid: ownerUid ?? this.ownerUid,
         options: options ?? this.options,
         selectedVolumes: selectedVolumes ?? this.selectedVolumes,
@@ -306,7 +313,9 @@ class EpubDownloadTask {
         'author_name': authorName,
         'cover_url': coverUrl,
         'summary': summary,
+        'publisher_uid': publisherUid,
         'owner_uid': ownerUid,
+        'exporter_uid': ownerUid,
         'options': options.toJson(),
         'selected_volume_ids': selectedVolumes.map((v) => v.volumeId).toList(),
         'chapters': chapters.map((c) => c.toJson()).toList(),
@@ -325,4 +334,55 @@ class EpubDownloadTask {
         'current_illustration_total': currentIllustrationTotal,
         'speed_text': speedText,
       };
+
+  factory EpubDownloadTask.fromJson(Map<String, dynamic> json) {
+    return EpubDownloadTask(
+      bookId: json['book_id'] as int? ?? 0,
+      bookTitle: (json['book_title'] ?? '').toString(),
+      authorName: (json['author_name'] ?? '').toString(),
+      coverUrl: (json['cover_url'] ?? '').toString(),
+      summary: (json['summary'] ?? '').toString(),
+      publisherUid: (json['publisher_uid'] as num?)?.toInt() ?? 0,
+      ownerUid: (json['owner_uid'] as num?)?.toInt() ??
+          (json['exporter_uid'] as num?)?.toInt() ??
+          0,
+      options: json['options'] != null
+          ? EpubExportOptions.fromJson(json['options'] as Map<String, dynamic>)
+          : const EpubExportOptions(),
+      selectedVolumes: const [],
+      chapters: (json['chapters'] as List?)
+              ?.map((e) => EpubChapterItem.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+      completedChapterIds: (json['completed_chapter_ids'] as List?)
+              ?.map((e) => (e as num).toInt())
+              .toSet() ??
+          const {},
+      failedChapters: (json['failed_chapters'] as Map?)?.map((k, v) =>
+              MapEntry(int.tryParse(k.toString()) ?? 0, v.toString())) ??
+          const {},
+      phase: EpubTaskPhase.values.firstWhere(
+        (p) => p.name == json['phase'],
+        orElse: () => EpubTaskPhase.idle,
+      ),
+      statusMessage: (json['status_message'] ?? '').toString(),
+      currentChapterTitle: (json['current_chapter_title'] ?? '').toString(),
+      outputPath: json['output_path'] as String?,
+      outputSizeBytes: json['output_size_bytes'] as int? ?? 0,
+      customTitle: json['custom_title'] as String?,
+      customCoverPath: json['custom_cover_path'] as String?,
+      availableIllustrationPaths:
+          (json['available_illustration_paths'] as List?)
+                  ?.map((e) => e.toString())
+                  .toList() ??
+              const [],
+      illustrationDownloadedCount:
+          json['illustration_downloaded_count'] as int? ?? 0,
+      currentIllustrationIndex:
+          json['current_illustration_index'] as int? ?? 0,
+      currentIllustrationTotal:
+          json['current_illustration_total'] as int? ?? 0,
+      speedText: (json['speed_text'] ?? '').toString(),
+    );
+  }
 }

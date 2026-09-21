@@ -125,7 +125,7 @@ class _LoginPageState extends State<LoginPage> {
                               width: 20,
                               height: 20,
                               child: MotionProgressIndicator(strokeWidth: 2))
-                          : Text(s.isLoggedIn ? '重新登录' : '登 录'),
+                          : Text(s.isLoggedIn ? '重新登录' : '登录'),
                     ),
                     if (s.isLoggedIn) ...[
                       const SizedBox(height: 8),

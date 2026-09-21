@@ -259,7 +259,7 @@ class LKApi {
     final loggedIn = client.session.isLoggedIn;
     final accessMessage = loggedIn
         ? '无法阅读\n没有权限访问或者内容已删除'
-        : '该正文可能需要登录或勇者权限才能访问,请先登录;如果登录后仍无法打开,可能是当前账号没有访问权限。';
+        : '该正文可能需要登录才能访问,请先登录。';
     late final Map<String, dynamic> data;
     try {
       data = await client.post(

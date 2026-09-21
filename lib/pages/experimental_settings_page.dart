@@ -60,6 +60,35 @@ class ExperimentalSettingsPage extends StatelessWidget {
     );
   }
 
+  Future<void> _handleBookImportToggle(BuildContext context, bool enable) async {
+    if (!enable) {
+      await LKStore.setBookImportEnabled(false);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('版权与使用须知'),
+        content: const Text(
+          '作品版权归原作者或相应权利人所有。请遵守站点规则及作品授权要求，未经许可，请勿上传、分享、售卖或用于其他商业用途。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('拒绝'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await LKStore.setBookImportEnabled(true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -75,16 +104,6 @@ class ExperimentalSettingsPage extends StatelessWidget {
           MediaQuery.of(context).padding.bottom + 24,
         ),
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-            child: Text(
-              '书籍与导出',
-              style: theme.textTheme.labelLarge?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
           _settingsGroup(context, [
             ValueListenableBuilder<bool>(
               valueListenable: LKStore.epubDownloadEnabled,
@@ -95,26 +114,29 @@ class ExperimentalSettingsPage extends StatelessWidget {
                 ),
                 title: const Text('书籍导出'),
                 subtitle: const Text(
-                  '开启后，在书籍详情页菜单中提供「书籍导出」功能，支持选择单卷、多卷或全书导出为 EPUB 电子书或 TXT 纯文本。',
+                  '开启后，在书籍详情页菜单中提供「书籍导出」功能，支持选择导出为 EPUB 或 TXT 。',
                 ),
                 isThreeLine: true,
                 value: enabled,
                 onChanged: (v) => LKStore.setEpubDownloadEnabled(v),
               ),
             ),
-          ]),
-          const SizedBox(height: 16),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-            child: Text(
-              '正文排版',
-              style: theme.textTheme.labelLarge?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
+            ValueListenableBuilder<bool>(
+              valueListenable: LKStore.bookImportEnabled,
+              builder: (context, enabled, _) => SwitchListTile(
+                secondary: _settingsIcon(
+                  context,
+                  Icons.upload_file_outlined,
+                ),
+                title: const Text('书籍导入'),
+                subtitle: const Text(
+                  '开启本地书籍导入功能，支持导入自定义 EPUB 或 TXT 格式书籍。',
+                ),
+                isThreeLine: true,
+                value: enabled,
+                onChanged: (v) => _handleBookImportToggle(context, v),
               ),
             ),
-          ),
-          _settingsGroup(context, [
             ValueListenableBuilder<bool>(
               valueListenable: LKStore.enhancedContentStyleEnabled,
               builder: (context, enabled, _) => SwitchListTile(
@@ -124,7 +146,7 @@ class ExperimentalSettingsPage extends StatelessWidget {
                 ),
                 title: const Text('正文样式增强'),
                 subtitle: const Text(
-                  '保留作者设置的标题、强调与注释样式。默认关闭，关闭后仍使用当前阅读方式。不修改服务器正文，也不删除现有缓存。',
+                  '保留作者设置的标题、强调与注释样式。',
                 ),
                 isThreeLine: true,
                 value: enabled,
@@ -155,7 +177,7 @@ class ExperimentalSettingsPage extends StatelessWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      '实验性功能可能随版本更新持续调整。导出的书籍文件仅供个人学习与离线阅读使用，严禁用于商业传播。',
+                      '实验性功能可能随版本更新持续调整。',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                         height: 1.45,

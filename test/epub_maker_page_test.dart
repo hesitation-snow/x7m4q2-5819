@@ -44,9 +44,16 @@ void main() {
     expect(find.text('关于我转生成为史莱姆的那件事'), findsOneWidget);
     expect(find.text('作者：伏濑'), findsOneWidget);
 
-    // 默认全选 3 卷，总共 10+15+20 = 45 章
-    expect(find.text('已选择 3 卷 · 45 章'), findsOneWidget);
+    // 默认不全选，初始为 0 卷 · 0 章
+    expect(find.text('已选择 0 卷 · 0 章'), findsOneWidget);
     expect(find.text('开始制作'), findsOneWidget);
+
+    // 点击“全选”
+    await tester.tap(find.text('全选'));
+    await tester.pumpAndSettle();
+
+    // 全选 3 卷，总共 10+15+20 = 45 章
+    expect(find.text('已选择 3 卷 · 45 章'), findsOneWidget);
 
     // 点击“清空”
     await tester.tap(find.text('清空'));
@@ -241,6 +248,7 @@ void main() {
     expect(find.text('电子书封面'), findsOneWidget);
     expect(find.text('当前封面'), findsOneWidget);
     expect(find.text('默认封面'), findsOneWidget);
+    expect(find.text('自选本机'), findsOneWidget);
     expect(find.text('插画 1'), findsOneWidget);
     expect(find.text('插画 2'), findsOneWidget);
 
@@ -248,13 +256,10 @@ void main() {
     expect(find.text('取消制作'), findsOneWidget);
     expect(find.text('确认并生成 EPUB'), findsOneWidget);
 
-    // 滚动并点击插画 1 切换封面
-    await tester.ensureVisible(find.text('插画 1'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('插画 1'));
-    await tester.pumpAndSettle();
+    // 验证账号标识告知卡片
+    expect(find.text('导出的 EPUB 元数据中包含可还原的发布者与当前导出账号 UID 标识'), findsOneWidget);
 
-    // 修改标题并测试一键恢复预设
+    // 修改标题输入框
     await tester.enterText(find.byType(TextField), '自定义测试标题');
     await tester.pumpAndSettle();
     expect(find.text('自定义测试标题'), findsOneWidget);
@@ -263,6 +268,12 @@ void main() {
     await tester.tap(find.byTooltip('恢复预设标题'));
     await tester.pumpAndSettle();
     expect(find.text('魔法禁书目录  [旧约 第一卷]'), findsOneWidget);
+
+    // 滚动并点击插画 1 切换封面
+    await tester.ensureVisible(find.text('插画 1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('插画 1'));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('EpubMakerPage handles TXT pure text export toggle and editing view', (tester) async {
@@ -316,5 +327,41 @@ void main() {
     expect(find.text('电子书封面'), findsNothing);
     // 底部生成按钮为 TXT
     expect(find.text('确认并生成 TXT'), findsOneWidget);
+  });
+
+  testWidgets('EpubMakerPage completed view renders separate save as file and share buttons', (tester) async {
+    final book = LKBook(bookId: 500, title: '完成测试作品', authorName: '作者B');
+    final volumes = [
+      LKVolume(volumeId: 1, title: '第一卷', chapterCount: 5),
+    ];
+
+    EpubDownloadService.shared.currentTask.value = const EpubDownloadTask(
+      bookId: 500,
+      bookTitle: '完成测试作品',
+      authorName: '作者B',
+      ownerUid: 1,
+      phase: EpubTaskPhase.completed,
+      statusMessage: '制作完成',
+      outputPath: '/fake/path/book.epub',
+      outputSizeBytes: 1024 * 1024 * 2, // 2MB
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EpubMakerPage(
+          book: book,
+          initialVolumes: volumes,
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('EPUB 制作完成'), findsOneWidget);
+    expect(find.text('book.epub'), findsOneWidget);
+    expect(find.text('文件大小：2.00 MB'), findsOneWidget);
+    expect(find.text('另存为文件'), findsOneWidget);
+    expect(find.text('分享'), findsOneWidget);
+    expect(find.text('清理临时文件并退出'), findsOneWidget);
   });
 }

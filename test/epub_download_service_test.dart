@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/models.dart';
 import 'package:yomiru/services/epub/epub_download_service.dart';
 import 'package:yomiru/services/epub/epub_models.dart';
@@ -231,6 +232,63 @@ void main() {
       expect(json['current_illustration_index'], equals(2));
       expect(json['current_illustration_total'], equals(5));
       expect(json['speed_text'], equals('420.5 KB/s'));
+    });
+
+    test('EpubDownloadTask preserves publisherUid and exporterUid across serialization', () {
+      const task = EpubDownloadTask(
+        bookId: 88,
+        bookTitle: '原始书名',
+        authorName: '作者',
+        publisherUid: 123456,
+        ownerUid: 654321,
+        phase: EpubTaskPhase.paused,
+      );
+
+      expect(task.publisherUid, equals(123456));
+      expect(task.ownerUid, equals(654321));
+      expect(task.exporterUid, equals(654321));
+
+      final json = task.toJson();
+      expect(json['publisher_uid'], equals(123456));
+      expect(json['owner_uid'], equals(654321));
+      expect(json['exporter_uid'], equals(654321));
+
+      final restored = EpubDownloadTask.fromJson(json);
+      expect(restored.publisherUid, equals(123456));
+      expect(restored.ownerUid, equals(654321));
+      expect(restored.exporterUid, equals(654321));
+    });
+
+    test('resumeTask validates account ownership and rejects mismatched account', () async {
+      final service = EpubDownloadService.shared;
+
+      // 模拟任务创建时的绑定账号 654321
+      const task = EpubDownloadTask(
+        bookId: 88,
+        bookTitle: '原始书名',
+        authorName: '作者',
+        publisherUid: 123456,
+        ownerUid: 654321,
+        phase: EpubTaskPhase.paused,
+      );
+      service.currentTask.value = task;
+
+      // 当前登录账号切换为 999999
+      LKClient.shared.session.securityKey = 'fake_key';
+      LKClient.shared.session.uid = 999999;
+
+      // 尝试恢复任务
+      await service.resumeTask();
+
+      // 任务应该被终止并标记为失败，而不是以新账号继续
+      final current = service.currentTask.value;
+      expect(current, isNotNull);
+      expect(current!.phase, equals(EpubTaskPhase.failed));
+      expect(current.statusMessage, contains('账号已切换'));
+
+      // 清理会话
+      LKClient.shared.session.clear();
+      service.currentTask.value = null;
     });
   });
 }

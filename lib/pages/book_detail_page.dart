@@ -19,6 +19,7 @@ import 'user_profile_page.dart';
 import 'epub_maker_page.dart';
 import 'media_viewer_page.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:share_plus/share_plus.dart';
 
 int _bookDetailInt(dynamic value) {
   if (value is num) return value.toInt();
@@ -679,6 +680,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
     );
   }
 
+  void _shareBook(LKBook b) {
+    Share.share('https://www.lightnovel.fun/reader/${b.bookId}');
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = _book;
@@ -711,31 +716,51 @@ class _BookDetailPageState extends State<BookDetailPage> {
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                         ),
                         actions: [
+                          IconButton(
+                            icon: const Icon(Icons.share_outlined),
+                            tooltip: '分享',
+                            onPressed: () => _shareBook(b),
+                          ),
                           ValueListenableBuilder<bool>(
                             valueListenable: LKStore.epubDownloadEnabled,
                             builder: (context, enabled, _) {
-                              if (!enabled) return const SizedBox.shrink();
                               return PopupMenuButton<String>(
                                 tooltip: '更多操作',
                                 onSelected: (value) {
-                                  if (value == 'epub') {
+                                  if (value == 'share') {
+                                    _shareBook(b);
+                                  } else if (value == 'epub') {
                                     _openEpubMaker();
                                   }
                                 },
                                 itemBuilder: (context) => [
                                   const PopupMenuItem(
-                                    value: 'epub',
+                                    value: 'share',
                                     child: Row(
                                       children: [
                                         Icon(
-                                          Icons.download_for_offline_outlined,
+                                          Icons.share_outlined,
                                           size: 20,
                                         ),
                                         SizedBox(width: 8),
-                                        Text('书籍导出'),
+                                        Text('分享书籍'),
                                       ],
                                     ),
                                   ),
+                                  if (enabled)
+                                    const PopupMenuItem(
+                                      value: 'epub',
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            Icons.download_for_offline_outlined,
+                                            size: 20,
+                                          ),
+                                          SizedBox(width: 8),
+                                          Text('书籍导出'),
+                                        ],
+                                      ),
+                                    ),
                                 ],
                               );
                             },

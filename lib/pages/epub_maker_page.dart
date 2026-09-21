@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../api/models.dart';
@@ -41,11 +42,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
   void initState() {
     super.initState();
     _includeIllustrations = !LKStore.dataSaverMode.value;
-    for (final v in widget.initialVolumes) {
-      if (v.volumeId > 0) {
-        _selectedVolumeIds.add(v.volumeId);
-      }
-    }
+    // 书籍导出不要默认全选所有章节，由用户手动勾选或点全选
   }
 
   @override
@@ -186,6 +183,22 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
     return Rect.fromLTWH(size.width / 4, size.height / 2, size.width / 2, 1);
   }
 
+  Future<void> _pickCustomLocalCover() async {
+    try {
+      final picker = ImagePicker();
+      final photo = await picker.pickImage(source: ImageSource.gallery);
+      if (photo != null && mounted) {
+        setState(() {
+          _selectedCoverPath = photo.path;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        showFloatingPrompt(context, '选择图片失败: $e');
+      }
+    }
+  }
+
   Future<void> _saveAsDocument(
     String filePath,
     String fileName, {
@@ -193,7 +206,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
   }) async {
     final effectiveMime = mimeType ??
         (fileName.endsWith('.txt') ? 'text/plain' : 'application/epub+zip');
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       try {
         const platform = MethodChannel('moe.yutro.yomiru/epub_export');
         final saved = await platform.invokeMethod<bool>('saveDocument', {
@@ -204,12 +217,16 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
         if (saved == true && mounted) {
           showFloatingPrompt(context, '文件已另存为');
           return;
+        } else if (saved == false) {
+          return;
         }
-      } catch (_) {
-        // Fallback to share sheet
+      } catch (e) {
+        if (mounted) {
+          showFloatingPrompt(context, '另存为失败: $e');
+        }
+        return;
       }
     }
-    await _shareBookFile(filePath, fileName, mimeType: effectiveMime);
   }
 
   Future<void> _shareBookFile(
@@ -418,6 +435,35 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                       _exportAsTxt = v;
                     });
                   },
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // 导出账号标识提示卡片
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: scheme.outlineVariant.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded,
+                        size: 18, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '导出文件包含可还原的发布者与当前导出账号 UID 标识',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 20),
@@ -940,6 +986,37 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                   ),
                 ),
               ),
+              const SizedBox(height: 12),
+
+              // 导出账号标识提示卡片
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: scheme.outlineVariant.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded,
+                        size: 18, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        task.options.exportAsTxt
+                            ? '导出的文件包含可还原的账号 UID 标识'
+                            : '导出的 EPUB 元数据中包含可还原的发布者与当前导出账号 UID 标识',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
               // 封面自选卡片（TXT 纯文本模式无封面，直接隐藏）
               if (!task.options.exportAsTxt) ...[
@@ -986,87 +1063,122 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                         ),
                         const SizedBox(height: 20),
 
-                        // 可选插画缩略图列表
-                        if (task.availableIllustrationPaths.isNotEmpty) ...[
-                          Text(
-                            '可选插画（共 ${task.availableIllustrationPaths.length} 张）：',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: scheme.onSurfaceVariant,
+                        // 封面选择横向列表（默认封面 + 本机图片 + 可选插画）
+                        Row(
+                          children: [
+                            Text(
+                              '选择封面：',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: scheme.onSurfaceVariant,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 10),
-                          SizedBox(
-                            height: 122,
-                            child: ListView.separated(
-                              scrollDirection: Axis.horizontal,
-                              itemCount:
-                                  1 + task.availableIllustrationPaths.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(width: 10),
-                              itemBuilder: (context, index) {
-                                if (index == 0) {
-                                  return _buildCoverChoiceTile(
-                                    label: '默认封面',
-                                    isSelected: isDefaultSelected,
-                                    onTap: () {
-                                      setState(() {
-                                        _selectedCoverPath = null;
-                                      });
-                                    },
-                                    image: _buildDefaultCoverThumbnail(task),
-                                  );
-                                }
-                                final illIndex = index - 1;
-                                final illPath =
-                                    task.availableIllustrationPaths[illIndex];
-                                final isSelected = !isDefaultSelected &&
-                                    _selectedCoverPath == illPath;
+                            if (task.availableIllustrationPaths.isNotEmpty)
+                              Text(
+                                '（含 ${task.availableIllustrationPaths.length} 张插画）',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          height: 122,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: 2 + task.availableIllustrationPaths.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 10),
+                            itemBuilder: (context, index) {
+                              if (index == 0) {
                                 return _buildCoverChoiceTile(
-                                  label: '插画 ${illIndex + 1}',
-                                  isSelected: isSelected,
+                                  label: '默认封面',
+                                  isSelected: isDefaultSelected,
                                   onTap: () {
                                     setState(() {
-                                      _selectedCoverPath = illPath;
+                                      _selectedCoverPath = null;
                                     });
                                   },
-                                  image: Image.file(
-                                    File(illPath),
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) =>
-                                        _buildPlaceholderCover(),
-                                  ),
+                                  image: _buildDefaultCoverThumbnail(task),
                                 );
-                              },
-                            ),
-                          ),
-                        ] else ...[
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: scheme.surfaceContainerHighest
-                                  .withValues(alpha: 0.3),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.info_outline_rounded,
-                                    size: 18, color: scheme.onSurfaceVariant),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    task.options.includeIllustrations
-                                        ? '本次所选卷中未包含插画，将直接使用书籍封面'
-                                        : '制作时未开启插画下载，使用书籍默认封面',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: scheme.onSurfaceVariant,
-                                    ),
-                                  ),
+                              }
+                              if (index == 1) {
+                                final isCustomLocalSelected = !isDefaultSelected &&
+                                    _selectedCoverPath != null &&
+                                    !task.availableIllustrationPaths.contains(_selectedCoverPath);
+                                final hasLocalFile = isCustomLocalSelected &&
+                                    File(_selectedCoverPath!).existsSync();
+                                return _buildCoverChoiceTile(
+                                  label: hasLocalFile ? '本机图片' : '自选本机',
+                                  isSelected: isCustomLocalSelected,
+                                  onTap: _pickCustomLocalCover,
+                                  image: hasLocalFile
+                                      ? Image.file(
+                                          File(_selectedCoverPath!),
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              _buildPlaceholderCover(),
+                                        )
+                                      : Container(
+                                          color: scheme.surfaceContainerHighest,
+                                          alignment: Alignment.center,
+                                          child: Column(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.add_photo_alternate_rounded,
+                                                size: 26,
+                                                color: scheme.primary,
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                '相册选取',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: scheme.primary,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                );
+                              }
+                              final illIndex = index - 2;
+                              final illPath =
+                                  task.availableIllustrationPaths[illIndex];
+                              final isSelected = !isDefaultSelected &&
+                                  _selectedCoverPath == illPath;
+                              return _buildCoverChoiceTile(
+                                label: '插画 ${illIndex + 1}',
+                                isSelected: isSelected,
+                                onTap: () {
+                                  setState(() {
+                                    _selectedCoverPath = illPath;
+                                  });
+                                },
+                                image: Image.file(
+                                  File(illPath),
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) =>
+                                      _buildPlaceholderCover(),
                                 ),
-                              ],
+                              );
+                            },
+                          ),
+                        ),
+                        if (task.availableIllustrationPaths.isEmpty) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            task.options.includeIllustrations
+                                ? '本次所选卷中未包含插画，可使用书籍默认封面或选择本机图片'
+                                : '制作时未开启插画下载，可使用书籍默认封面或选择本机图片',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
                             ),
                           ),
                         ],
@@ -1308,8 +1420,9 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
     final scheme = theme.colorScheme;
     final isTxt = task.options.exportAsTxt;
     final defaultFileName = isTxt ? 'book.txt' : 'book.epub';
-    final fileName =
-        task.outputPath?.split(Platform.pathSeparator).last ?? defaultFileName;
+    final fileName = task.outputPath != null
+        ? task.outputPath!.split(RegExp(r'[\\/]')).last
+        : defaultFileName;
 
     final completedTitle = isTxt
         ? (task.options.exportIncomplete ? 'TXT 制作完成（不完整版）' : 'TXT 制作完成')
@@ -1348,12 +1461,11 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
           ),
           const SizedBox(height: 36),
 
-          // 保存与分享按钮
+          // 另存为文件按钮
           SizedBox(
             width: double.infinity,
             height: 48,
             child: FilledButton.icon(
-              key: _shareButtonKey,
               onPressed: () {
                 if (task.outputPath != null) {
                   _saveAsDocument(
@@ -1363,8 +1475,29 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                   );
                 }
               },
-              icon: Icon(Platform.isAndroid ? Icons.save_alt_rounded : Icons.share_rounded),
-              label: Text(Platform.isAndroid ? '另存为 / 导出' : '分享 / 存储到文件'),
+              icon: const Icon(Icons.save_alt_rounded),
+              label: const Text('另存为文件'),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // 独立分享按钮
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: FilledButton.tonalIcon(
+              key: _shareButtonKey,
+              onPressed: () {
+                if (task.outputPath != null) {
+                  _shareBookFile(
+                    task.outputPath!,
+                    fileName,
+                    mimeType: isTxt ? 'text/plain' : 'application/epub+zip',
+                  );
+                }
+              },
+              icon: const Icon(Icons.share_rounded),
+              label: const Text('分享'),
             ),
           ),
           const SizedBox(height: 12),

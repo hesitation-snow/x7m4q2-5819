@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:flutter/foundation.dart';
+
 import 'epub_models.dart';
 import 'epub_zip_writer.dart';
 
@@ -14,6 +16,16 @@ String xmlEscape(String text) {
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&apos;');
+}
+
+/// 将十进制 UID 转为 UTF-8 + 标准 Base64 编码
+String encodeUidToBase64(int uid) {
+  return base64.encode(utf8.encode(uid.toString()));
+}
+
+/// 从标准 Base64 还原十进制 UID
+int decodeUidFromBase64(String b64) {
+  return int.parse(utf8.decode(base64.decode(b64.trim())));
 }
 
 /// 过滤或推断文件的 MIME 类型
@@ -35,6 +47,8 @@ class EpubBuildContext {
   final String bookTitle;
   final String authorName;
   final String summary;
+  final int publisherUid;
+  final int exporterUid;
   final bool includeIllustrations;
   final bool exportIncomplete;
   final List<EpubChapterItem> chapters;
@@ -48,6 +62,8 @@ class EpubBuildContext {
     required this.bookTitle,
     required this.authorName,
     required this.summary,
+    this.publisherUid = 0,
+    this.exporterUid = 0,
     required this.includeIllustrations,
     required this.exportIncomplete,
     required this.chapters,
@@ -505,6 +521,20 @@ nav#toc li {
     return buffer.toString();
   }
 
+  @visibleForTesting
+  static String buildContentOpf({
+    required EpubBuildContext ctx,
+    required bool hasCover,
+    required List<({String id, String href, String mime, bool isCover})> imagesManifest,
+    required List<({String id, String href, String title, int volumeId, String volumeTitle})> chaptersManifest,
+  }) =>
+      _buildContentOpf(
+        ctx: ctx,
+        hasCover: hasCover,
+        imagesManifest: imagesManifest,
+        chaptersManifest: chaptersManifest,
+      );
+
   static String _buildContentOpf({
     required EpubBuildContext ctx,
     required bool hasCover,
@@ -513,6 +543,11 @@ nav#toc li {
   }) {
     final title = ctx.exportIncomplete ? '${ctx.bookTitle} [不完整版]' : ctx.bookTitle;
     final nowIso = DateTime.now().toUtc().toIso8601String().replaceAll(RegExp(r'\.\d+'), '');
+
+    final pubB64 = encodeUidToBase64(ctx.publisherUid);
+    final expB64 = encodeUidToBase64(ctx.exporterUid);
+    final generatorContent =
+        'Yomiru EPUB; publisher_uid_b64=$pubB64; exporter_uid_b64=$expB64';
 
     final buffer = StringBuffer();
     buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
@@ -527,9 +562,8 @@ nav#toc li {
     if (ctx.summary.isNotEmpty) {
       buffer.writeln('    <dc:description>${xmlEscape(ctx.summary)}</dc:description>');
     }
-    buffer.writeln('    <dc:publisher>轻之国度 (Yomiru)</dc:publisher>');
     buffer.writeln('    <meta property="dcterms:modified">$nowIso</meta>');
-    buffer.writeln('    <meta name="generator" content="Yomiru EPUB Engine"/>');
+    buffer.writeln('    <meta name="generator" content="${xmlEscape(generatorContent)}" />');
     if (hasCover) {
       buffer.writeln('    <meta name="cover" content="cover-image"/>');
     }

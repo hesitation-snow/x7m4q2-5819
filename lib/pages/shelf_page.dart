@@ -34,7 +34,7 @@ class _ShelfPageState extends State<ShelfPage> {
   bool _errorFromAppend = false;
   int _page = 0;
   bool _hasMore = true;
-  bool _loading = false;
+  bool _loading = true;
   bool _listMode = false;
   bool _localMode = false;
   bool _reloadAfterCurrent = false;
@@ -224,7 +224,18 @@ class _ShelfPageState extends State<ShelfPage> {
   Future<void> _startLoad() async {
     final request = _loadSerial;
     if (_localMode || !LKClient.shared.session.isLoggedIn) {
-      await _load();
+      final items = await LKStore.localShelf();
+      if (!mounted || request != _loadSerial || !_localMode) return;
+      setState(() {
+        _items = items;
+        _page = 1;
+        _hasMore = false;
+        _error = null;
+        _loading = false;
+      });
+      if (items.isNotEmpty) {
+        unawaited(_verifyServerBookStatuses(items));
+      }
       return;
     }
     final uid = LKClient.shared.session.uid;
@@ -237,12 +248,13 @@ class _ShelfPageState extends State<ShelfPage> {
         cacheKey != _shelfCacheKey(LKClient.shared.session.uid)) {
       return;
     }
-    if (cached != null) {
+    if (cached != null && cached.isNotEmpty) {
       setState(() {
         _items = [...cached];
         _page = cached.isEmpty ? 0 : 1;
         _hasMore = true;
         _error = null;
+        _loading = false;
       });
     }
     await _load(silent: _items.isNotEmpty);
@@ -269,8 +281,8 @@ class _ShelfPageState extends State<ShelfPage> {
     final uid = LKClient.shared.session.uid;
     final cacheKey = _shelfCacheKey(uid);
     setState(() {
-      _loading = true;
-      _error = null;
+      _loading = !silent || _items.isEmpty;
+      if (!silent) _error = null;
     });
     try {
       if (localMode) {
@@ -323,10 +335,12 @@ class _ShelfPageState extends State<ShelfPage> {
           _verifyServerBookStatuses(result.items, forceRefresh: forceRefresh));
     } catch (e) {
       if (mounted && requestSerial == _loadSerial) {
-        setState(() {
-          _error = e.toString();
-          _errorFromAppend = append;
-        });
+        if (!silent || _items.isEmpty) {
+          setState(() {
+            _error = e.toString();
+            _errorFromAppend = append;
+          });
+        }
         if ((silent || !append) && _items.isNotEmpty) {
           _showRefreshError();
         }

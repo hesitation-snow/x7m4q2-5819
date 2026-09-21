@@ -114,14 +114,15 @@ void main() {
       expect(find.text('操作'), findsOneWidget);
       expect(find.text('边距'), findsNothing);
 
-      // Tab 0 (外观) contains 字号, does NOT contain 行距 slider
-      expect(find.text('字号'), findsOneWidget);
+      // Tab 0 (外观) does NOT contain 字号 slider or 行距 slider
+      expect(find.text('字号'), findsNothing);
       expect(find.text('行距'), findsNothing);
 
       // Switch to Tab 1 (排版)
       await tester.tap(find.text('排版'));
       await tester.pumpAndSettle();
       expect(find.text('排版预览'), findsOneWidget);
+      expect(find.text('字号大小'), findsOneWidget);
       expect(find.text('行间距'), findsOneWidget);
       expect(find.text('段落间距'), findsOneWidget);
       expect(find.text('字符间距'), findsOneWidget);

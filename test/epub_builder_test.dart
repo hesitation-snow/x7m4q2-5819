@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yomiru/services/epub/epub_builder.dart';
@@ -176,6 +177,8 @@ void main() {
         bookTitle: '测试书名',
         authorName: '测试作者',
         summary: '这是测试书籍简介',
+        publisherUid: 123456,
+        exporterUid: 654321,
         includeIllustrations: true,
         exportIncomplete: false,
         chapters: const [
@@ -207,6 +210,118 @@ void main() {
       // 验证首 entry 是 mimetype
       final name = ascii.decode(bytes.sublist(30, 38));
       expect(name, equals('mimetype'));
+
+      // 验证生成的 EPUB 内部 content.opf
+      final opfContent = _extractFileFromZip(bytes, 'EPUB/content.opf');
+
+      // 1. 验证 generator 标签仅有一个且格式严格匹配
+      final generatorMatches =
+          RegExp(r'<meta\s+name="generator"[^>]*/>').allMatches(opfContent);
+      expect(generatorMatches.length, equals(1));
+
+      expect(
+        opfContent.contains(
+          '<meta name="generator" content="Yomiru EPUB; publisher_uid_b64=MTIzNDU2; exporter_uid_b64=NjU0MzIx" />',
+        ),
+        isTrue,
+      );
+
+      // 2. 验证两组 UID 可正确解码还原为十进制整数
+      final match = RegExp(
+        r'content="Yomiru EPUB;\s*publisher_uid_b64=([^;]+);\s*exporter_uid_b64=([^"]+)"',
+      ).firstMatch(opfContent);
+      expect(match, isNotNull);
+      expect(decodeUidFromBase64(match!.group(1)!), equals(123456));
+      expect(decodeUidFromBase64(match.group(2)!), equals(654321));
+
+      // 3. 验证 dc:publisher 不再写入
+      expect(opfContent.contains('dc:publisher'), isFalse);
+
+      // 4. 验证 dc:creator 保持原状未被覆盖或新增
+      expect(opfContent.contains('<dc:creator>测试作者</dc:creator>'), isTrue);
+      final creatorMatches =
+          RegExp(r'<dc:creator>.*?</dc:creator>').allMatches(opfContent);
+      expect(creatorMatches.length, equals(1));
+    });
+
+    test('UID base64 conversion and generator OPF metadata format', () {
+      expect(encodeUidToBase64(123456), equals('MTIzNDU2'));
+      expect(decodeUidFromBase64('MTIzNDU2'), equals(123456));
+
+      expect(encodeUidToBase64(654321), equals('NjU0MzIx'));
+      expect(decodeUidFromBase64('NjU0MzIx'), equals(654321));
+
+      expect(encodeUidToBase64(0), equals('MA=='));
+      expect(decodeUidFromBase64('MA=='), equals(0));
+
+      const ctx = EpubBuildContext(
+        taskDir: '',
+        outputPath: '',
+        bookId: 888,
+        bookTitle: '测试书名',
+        authorName: '伏濑',
+        summary: '书本简介',
+        publisherUid: 123456,
+        exporterUid: 654321,
+        includeIllustrations: false,
+        exportIncomplete: false,
+        chapters: [],
+        completedChapterIds: [],
+      );
+
+      final opf = EpubBuilder.buildContentOpf(
+        ctx: ctx,
+        hasCover: false,
+        imagesManifest: [],
+        chaptersManifest: [],
+      );
+
+      // 验证 generator 仅存在一个
+      final generatorMatches =
+          RegExp(r'<meta\s+name="generator"[^>]*/>').allMatches(opf);
+      expect(generatorMatches.length, equals(1));
+
+      // 验证格式完全符合规范
+      expect(
+        opf.contains(
+          '<meta name="generator" content="Yomiru EPUB; publisher_uid_b64=MTIzNDU2; exporter_uid_b64=NjU0MzIx" />',
+        ),
+        isTrue,
+      );
+
+      // 验证 dc:publisher 不存在
+      expect(opf.contains('dc:publisher'), isFalse);
+
+      // 验证 dc:creator 保持原作者
+      expect(opf.contains('<dc:creator>伏濑</dc:creator>'), isTrue);
     });
   });
+}
+
+String _extractFileFromZip(Uint8List bytes, String targetName) {
+  var offset = 0;
+  final byteData = ByteData.sublistView(bytes);
+  while (offset < bytes.length - 30) {
+    final sig = byteData.getUint32(offset, Endian.little);
+    if (sig == 0x04034b50) {
+      final method = byteData.getUint16(offset + 8, Endian.little);
+      final compSize = byteData.getUint32(offset + 18, Endian.little);
+      final nameLen = byteData.getUint16(offset + 26, Endian.little);
+      final extraLen = byteData.getUint16(offset + 28, Endian.little);
+      final name = utf8.decode(bytes.sublist(offset + 30, offset + 30 + nameLen));
+      final payloadOffset = offset + 30 + nameLen + extraLen;
+      if (name == targetName) {
+        final payload = bytes.sublist(payloadOffset, payloadOffset + compSize);
+        if (method == 0) {
+          return utf8.decode(payload);
+        } else if (method == 8) {
+          return utf8.decode(ZLibDecoder(raw: true).convert(payload));
+        }
+      }
+      offset = (payloadOffset + compSize).toInt();
+    } else {
+      offset++;
+    }
+  }
+  throw StateError('File $targetName not found in zip');
 }

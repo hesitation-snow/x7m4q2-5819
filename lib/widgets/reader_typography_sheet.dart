@@ -5,6 +5,7 @@ import '../reader/reader_typography.dart';
 class ReaderTypographySheet extends StatefulWidget {
   final ReaderTypography initialTypography;
   final double fontSize;
+  final ValueChanged<double>? onFontSizeChanged;
   final Color textColor;
   final Color backgroundColor;
   final Color linkColor;
@@ -16,6 +17,7 @@ class ReaderTypographySheet extends StatefulWidget {
     super.key,
     required this.initialTypography,
     required this.fontSize,
+    this.onFontSizeChanged,
     required this.textColor,
     required this.backgroundColor,
     required this.linkColor,
@@ -30,12 +32,22 @@ class ReaderTypographySheet extends StatefulWidget {
 
 class ReaderTypographySheetState extends State<ReaderTypographySheet> {
   late ReaderTypography _current;
+  late double _fontSize;
   bool _moreExpanded = false;
 
   @override
   void initState() {
     super.initState();
     _current = widget.initialTypography;
+    _fontSize = widget.fontSize;
+  }
+
+  @override
+  void didUpdateWidget(ReaderTypographySheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.fontSize != oldWidget.fontSize) {
+      _fontSize = widget.fontSize;
+    }
   }
 
   /// 供外部在关闭面板前确认最后一次提交
@@ -91,6 +103,25 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // 字号大小
+                  _buildSliderRow(
+                    label: '字号大小',
+                    value: _fontSize,
+                    min: 12.0,
+                    max: 28.0,
+                    divisions: 16,
+                    valueText: '${_fontSize.toStringAsFixed(0)} pt',
+                    defaultValue: 17.0,
+                    onChanged: (v) {
+                      setState(() => _fontSize = v);
+                      widget.onFontSizeChanged?.call(v);
+                    },
+                    onChangeEnd: (v) {
+                      widget.onFontSizeChanged?.call(v);
+                    },
+                  ),
+                  const Divider(height: 16, thickness: 0.5),
+
                   // 行间距
                   _buildSliderRow(
                     label: '行间距',
@@ -456,9 +487,9 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
 
   /// 顶部实时排版预览卡片
   Widget _buildPreviewCard(ColorScheme scheme) {
-    final previewIndent = _current.firstLineIndentChars * widget.fontSize;
+    final previewIndent = _current.firstLineIndentChars * _fontSize;
     final textStyle = TextStyle(
-      fontSize: widget.fontSize.clamp(13.0, 18.0),
+      fontSize: _fontSize.clamp(13.0, 18.0),
       height: _current.lineHeight,
       color: widget.textColor,
       letterSpacing: _current.letterSpacing,
