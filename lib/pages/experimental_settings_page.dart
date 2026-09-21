@@ -68,7 +68,7 @@ class ExperimentalSettingsPage extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('版权与使用须知'),
+        title: const Text('使用须知'),
         content: const Text(
           '作品版权归原作者或相应权利人所有。请遵守站点规则及作品授权要求，未经许可，请勿上传、分享、售卖或用于其他商业用途。',
         ),
