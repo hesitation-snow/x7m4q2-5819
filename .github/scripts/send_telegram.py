@@ -64,10 +64,10 @@ def send_file(token, chat_id, path, env):
         f"{env.get('GITHUB_SERVER_URL', 'https://github.com')}/"
         f"{env.get('GITHUB_REPOSITORY', '')}/actions/runs/{env.get('GITHUB_RUN_ID', '')}"
     )
-    platform = "Android APK" if path.suffix.lower() == ".apk" else "iOS IPA（请自签安装）"
+    platform = "Android APK" if path.suffix.lower() == ".apk" else "iOS IPA"
     caption = (
-        f"Yomiru 测试构建 · {platform}\n"
-        f"构建标签：{env.get('RELEASE_TAG', '')}\n"
+        f"Yomiru · {platform}\n"
+        f"TAG：{env.get('RELEASE_TAG', '')}\n"
         f"提交：{env.get('GITHUB_SHA', '')[:12]}\n"
         f"构建次数：{env.get('GITHUB_RUN_ATTEMPT', '1')}\n"
         f"SHA-256：{hashlib.sha256(payload).hexdigest()}\n{run_url}"
