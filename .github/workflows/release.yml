@@ -31,7 +31,7 @@ env:
 
 jobs:
   build-android:
-    name: Build Android APK
+    name: Build Android APK (ARM64)
     runs-on: ubuntu-latest
 
     steps:
@@ -83,17 +83,29 @@ jobs:
           storeFile=yomiru-release.jks
           EOF
 
-      - name: Build release APK
-        run: flutter build apk --release
+      - name: Build release APK (ARM64 only)
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Verify APK contains only ARM64 native libraries
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('build/app/outputs/flutter-apk/app-release.apk') as apk:
+              abis = {name.split('/')[1] for name in apk.namelist()
+                      if name.startswith('lib/') and name.endswith('.so')}
+          if abis != {'arm64-v8a'}:
+              raise SystemExit(f'Expected only arm64-v8a, found: {sorted(abis)}')
+          print('Verified ARM64-only APK')
+          PY
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk "yomiru-android-$RELEASE_TAG.apk"
+        run: cp build/app/outputs/flutter-apk/app-release.apk "yomiru-android-arm64-$RELEASE_TAG.apk"
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v6
         with:
           name: yomiru-android-${{ env.RELEASE_TAG }}
-          path: yomiru-android-${{ env.RELEASE_TAG }}.apk
+          path: yomiru-android-arm64-${{ env.RELEASE_TAG }}.apk
           if-no-files-found: error
           retention-days: 90
 
