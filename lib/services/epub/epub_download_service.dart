@@ -312,7 +312,8 @@ class EpubDownloadService {
       customTitle: finalTitle,
       customCoverPath: chosenCover,
       phase: EpubTaskPhase.packaging,
-      statusMessage: '正在生成 EPUB 文件…',
+      statusMessage:
+          task.options.exportAsTxt ? '正在生成 TXT 文件…' : '正在生成 EPUB 文件…',
     );
     currentTask.value = updated;
     await _saveTaskCheckpoint(updated);
@@ -815,13 +816,15 @@ class EpubDownloadService {
       currentIllustrationIndex: 0,
       currentIllustrationTotal: 0,
       speedText: '',
-      statusMessage: '正文与插画下载完成，请确认封面与文件标题',
+      statusMessage: task.options.exportAsTxt
+          ? '正文下载完成，请确认文件标题'
+          : '正文与插画下载完成，请确认封面与文件标题',
     );
     currentTask.value = updated;
     await _saveTaskCheckpoint(updated);
   }
 
-  /// 阶段 4: Isolate 中执行 EPUB 3 标准容器打包
+  /// 阶段 4: Isolate 中执行 EPUB 3 标准容器打包或直接导出 TXT 纯文本
   Future<void> _runPackagingPhase(EpubDownloadTask task) async {
     try {
       _speedTracker.reset();
@@ -833,8 +836,33 @@ class EpubDownloadService {
       final effectiveTitle = task.effectiveTitle;
       final safeTitle = effectiveTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
       final incompleteSuffix = task.options.exportIncomplete ? '_不完整版' : '';
-      final fileName = '$safeTitle$incompleteSuffix.epub';
+      final isTxt = task.options.exportAsTxt;
+      final ext = isTxt ? 'txt' : 'epub';
+      final fileName = '$safeTitle$incompleteSuffix.$ext';
       final outputPath = '${exportsDir.path}/$fileName';
+
+      if (isTxt) {
+        currentTask.value = currentTask.value?.copyWith(
+          phase: EpubTaskPhase.packaging,
+          statusMessage: '正在生成 TXT 文本…',
+          speedText: '',
+          currentIllustrationIndex: 0,
+          currentIllustrationTotal: 0,
+        );
+
+        final sizeBytes = await _buildTxtFile(task, taskDir, outputPath);
+
+        // 阶段 4: TXT 制作完成
+        currentTask.value = currentTask.value?.copyWith(
+          phase: EpubTaskPhase.completed,
+          statusMessage: '制作完成',
+          outputPath: outputPath,
+          outputSizeBytes: sizeBytes,
+        );
+
+        await _saveTaskCheckpoint(currentTask.value!);
+        return;
+      }
 
       currentTask.value = currentTask.value?.copyWith(
         phase: EpubTaskPhase.packaging,
@@ -876,6 +904,82 @@ class EpubDownloadService {
         statusMessage: '打包失败: $e',
       );
     }
+  }
+
+  /// 构建标准排版的 UTF-8 纯文本 TXT 文件
+  static Future<int> _buildTxtFile(
+    EpubDownloadTask task,
+    Directory taskDir,
+    String outputPath,
+  ) async {
+    final chaptersDir = Directory('${taskDir.path}/chapters');
+    final buffer = StringBuffer();
+
+    // 1. 书籍元数据头部
+    buffer.writeln(task.effectiveTitle);
+    buffer.writeln('作者：${task.authorName}');
+    if (task.summary.trim().isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('【简介】');
+      buffer.writeln(task.summary.trim());
+    }
+    buffer.writeln();
+    buffer.writeln('========================================');
+    buffer.writeln();
+
+    // 2. 遍历各卷各章节
+    int? currentVolId;
+    for (final ch in task.chapters) {
+      if (!task.completedChapterIds.contains(ch.chapterId)) {
+        continue;
+      }
+      final chFile = File('${chaptersDir.path}/${ch.chapterId}.json');
+      if (!await chFile.exists()) continue;
+
+      String chTitle = ch.title;
+      String bodyText = '';
+      try {
+        final json =
+            jsonDecode(await chFile.readAsString()) as Map<String, dynamic>;
+        chTitle = (json['title'] ?? ch.title).toString().trim();
+        bodyText = (json['body_text'] ?? '').toString();
+      } catch (_) {
+        continue;
+      }
+
+      // 如果跨卷，输出分卷标题
+      if (ch.volumeId != currentVolId) {
+        currentVolId = ch.volumeId;
+        if (ch.volumeTitle.trim().isNotEmpty) {
+          buffer.writeln();
+          buffer.writeln('========================================');
+          buffer.writeln(ch.volumeTitle.trim());
+          buffer.writeln('========================================');
+          buffer.writeln();
+        }
+      }
+
+      // 章节标题
+      buffer.writeln(chTitle);
+      buffer.writeln('----------------------------------------');
+      buffer.writeln();
+
+      // 正文内容（清理多余空行，保持规范段落）
+      final cleanText = bodyText
+          .replaceAll('\r\n', '\n')
+          .replaceAll('\r', '\n')
+          .trim();
+      if (cleanText.isNotEmpty) {
+        buffer.writeln(cleanText);
+      }
+      buffer.writeln();
+      buffer.writeln();
+    }
+
+    final bytes = utf8.encode(buffer.toString());
+    final outFile = File(outputPath);
+    await outFile.writeAsBytes(bytes);
+    return bytes.length;
   }
 
   bool _isRateLimitError(dynamic e) {

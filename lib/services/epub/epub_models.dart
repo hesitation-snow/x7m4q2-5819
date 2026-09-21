@@ -77,31 +77,37 @@ String computeDefaultEpubTitle(String bookTitle, List<LKVolume> volumes) {
 class EpubExportOptions {
   final bool includeIllustrations;
   final bool exportIncomplete;
+  final bool exportAsTxt;
 
   const EpubExportOptions({
     this.includeIllustrations = true,
     this.exportIncomplete = false,
+    this.exportAsTxt = false,
   });
 
   EpubExportOptions copyWith({
     bool? includeIllustrations,
     bool? exportIncomplete,
+    bool? exportAsTxt,
   }) =>
       EpubExportOptions(
         includeIllustrations:
             includeIllustrations ?? this.includeIllustrations,
         exportIncomplete: exportIncomplete ?? this.exportIncomplete,
+        exportAsTxt: exportAsTxt ?? this.exportAsTxt,
       );
 
   Map<String, dynamic> toJson() => {
         'include_illustrations': includeIllustrations,
         'export_incomplete': exportIncomplete,
+        'export_as_txt': exportAsTxt,
       };
 
   factory EpubExportOptions.fromJson(Map<String, dynamic> json) =>
       EpubExportOptions(
         includeIllustrations: json['include_illustrations'] == true,
         exportIncomplete: json['export_incomplete'] == true,
+        exportAsTxt: json['export_as_txt'] == true,
       );
 }
 

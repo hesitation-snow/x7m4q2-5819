@@ -230,6 +230,46 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
               ),
+              const SizedBox(height: 10),
+              Text(
+                'Telegram群聊',
+                style: Theme.of(dialogContext).textTheme.labelLarge?.copyWith(
+                      color:
+                          Theme.of(dialogContext).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () async {
+                  Navigator.pop(dialogContext);
+                  await YomiruUpdateService.openExternal(
+                    context,
+                    'https://t.me/FurippuFurappazu',
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          't.me/FurippuFurappazu',
+                          style: TextStyle(
+                            color: Theme.of(dialogContext).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.open_in_new_rounded,
+                        size: 18,
+                        color: Theme.of(dialogContext).colorScheme.primary,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
           actions: [
@@ -302,7 +342,7 @@ class _SettingsPageState extends State<SettingsPage> {
               valueListenable: LKStore.gridColumnCount,
               builder: (context, count, _) {
                 final label =
-                    count == 0 ? '自动（根据屏幕自适应）' : '每行 $count 本';
+                    count == 0 ? '自动' : '每行 $count 本';
                 return ListTile(
                   leading: _settingsIcon(context, Icons.grid_view_rounded),
                   title: const Text('网格列数'),
@@ -397,11 +437,6 @@ class _SettingsPageState extends State<SettingsPage> {
             ListTile(
               leading: _settingsIcon(context, Icons.science_outlined),
               title: const Text('实验性功能'),
-              subtitle: ValueListenableBuilder<bool>(
-                valueListenable: LKStore.epubDownloadEnabled,
-                builder: (context, enabled, _) =>
-                    Text(enabled ? 'EPUB 下载已开启' : '关闭'),
-              ),
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: () {
                 Navigator.push(

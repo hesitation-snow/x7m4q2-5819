@@ -50,9 +50,12 @@ class MainActivity : FlutterActivity() {
                     pendingSaveResult = result
                     pendingSourceFilePath = filePath
 
+                    val explicitMime = call.argument<String>("mimeType")
+                    val mimeType = explicitMime ?: if (fileName.endsWith(".txt", ignoreCase = true)) "text/plain" else "application/epub+zip"
+
                     val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "application/epub+zip"
+                        type = mimeType
                         putExtra(Intent.EXTRA_TITLE, fileName)
                     }
                     try {

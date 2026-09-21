@@ -21,7 +21,7 @@ class YomiruAppCache {
         '图片': DefaultCacheManager().emptyCache,
         '头像与勋章': SmallImagePreloads.clear,
         '小说插画': YomiruIllustrationCache.clear,
-        'EPUB制作缓存': EpubDownloadService.clearAllTempFiles,
+        '书籍导出缓存': EpubDownloadService.clearAllTempFiles,
       });
     } finally {
       // 磁盘清理后同步丢弃当前进程中已经解码的图片。

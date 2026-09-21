@@ -93,9 +93,9 @@ class ExperimentalSettingsPage extends StatelessWidget {
                   context,
                   Icons.download_for_offline_outlined,
                 ),
-                title: const Text('EPUB 下载'),
+                title: const Text('书籍导出'),
                 subtitle: const Text(
-                  '开启后，在书籍详情页菜单中提供「制作 EPUB」功能，支持选择单卷、多卷或全书导出为符合标准的 EPUB 3 电子书。',
+                  '开启后，在书籍详情页菜单中提供「书籍导出」功能，支持选择单卷、多卷或全书导出为 EPUB 电子书或 TXT 纯文本。',
                 ),
                 isThreeLine: true,
                 value: enabled,
@@ -155,7 +155,7 @@ class ExperimentalSettingsPage extends StatelessWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      '实验性功能可能随版本更新持续调整。导出的 EPUB 文件仅供个人学习与离线阅读使用，严禁用于商业传播。',
+                      '实验性功能可能随版本更新持续调整。导出的书籍文件仅供个人学习与离线阅读使用，严禁用于商业传播。',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                         height: 1.45,

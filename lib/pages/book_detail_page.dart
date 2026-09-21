@@ -732,7 +732,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                           size: 20,
                                         ),
                                         SizedBox(width: 8),
-                                        Text('制作 EPUB'),
+                                        Text('书籍导出'),
                                       ],
                                     ),
                                   ),

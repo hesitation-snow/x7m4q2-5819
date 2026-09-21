@@ -84,7 +84,7 @@ void main() {
     expect(find.text('仅纯文本正文'), findsOneWidget);
 
     // 点击切换打开插画开关
-    await tester.tap(find.byType(Switch));
+    await tester.tap(find.widgetWithText(SwitchListTile, '包含封面与插画'));
     await tester.pumpAndSettle();
 
     // 应弹出流量提示对话框
@@ -263,5 +263,58 @@ void main() {
     await tester.tap(find.byTooltip('恢复预设标题'));
     await tester.pumpAndSettle();
     expect(find.text('魔法禁书目录  [旧约 第一卷]'), findsOneWidget);
+  });
+
+  testWidgets('EpubMakerPage handles TXT pure text export toggle and editing view', (tester) async {
+    final book = LKBook(bookId: 400, title: '纯文本轻小说', authorName: '作家A');
+    final volumes = [
+      LKVolume(volumeId: 1, title: '第一卷', chapterCount: 3),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EpubMakerPage(
+          book: book,
+          initialVolumes: volumes,
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    // 默认未开启 TXT 导出
+    expect(find.text('仅文本（保存为 TXT）'), findsOneWidget);
+    expect(find.text('包含封面与插画'), findsWidgets);
+
+    // 打开“仅文本（保存为 TXT）”
+    await tester.tap(find.widgetWithText(SwitchListTile, '仅文本（保存为 TXT）'));
+    await tester.pumpAndSettle();
+
+    // 插画开关变灰提示不支持，底部文案更新
+    expect(find.text('TXT 纯文本格式不支持图片与插画'), findsOneWidget);
+    expect(find.text('导出为 TXT 纯文本'), findsOneWidget);
+
+    // 模拟进入 TXT 模式的 editingMetadata 阶段
+    EpubDownloadService.shared.currentTask.value = EpubDownloadTask(
+      bookId: 400,
+      bookTitle: '纯文本轻小说',
+      authorName: '作家A',
+      ownerUid: 1,
+      selectedVolumes: volumes,
+      options: const EpubExportOptions(exportAsTxt: true, includeIllustrations: false),
+      phase: EpubTaskPhase.editingMetadata,
+      statusMessage: '正文下载完成，请确认文件标题',
+      customTitle: '纯文本轻小说  [第一卷]',
+    );
+
+    await tester.pumpAndSettle();
+
+    // 步骤标签显示 TXT 专用文本
+    expect(find.text('确认标题'), findsOneWidget);
+    expect(find.text('TXT 标题'), findsOneWidget);
+    // 不应展示电子书封面选择卡片
+    expect(find.text('电子书封面'), findsNothing);
+    // 底部生成按钮为 TXT
+    expect(find.text('确认并生成 TXT'), findsOneWidget);
   });
 }

@@ -272,7 +272,6 @@ class StructuredBlock {
       );
     } else if (isBlockquote) {
       blockStyle = blockStyle.copyWith(
-        fontStyle: FontStyle.italic,
         color: baseStyle.color?.withValues(alpha: 0.88),
       );
     }
