@@ -41,7 +41,7 @@ class TelegramDeliveryTests(unittest.TestCase):
                 self.assertEqual((token, method), ("test-token", "sendDocument"))
                 self.assertIn(b"test IPA bytes", body)
                 self.assertIn(b'filename="test.ipa"', body)
-                self.assertIn("请自签安装".encode(), body)
+                self.assertIn(b"iOS IPA", body)
                 self.assertIn(b"v1-test", body)
                 self.assertIn(b"\r\n\r\n123\r\n", body)
                 self.assertNotIn(b"test-token", body)
