@@ -716,11 +716,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
                               maxLines: 1, overflow: TextOverflow.ellipsis),
                         ),
                         actions: [
-                          IconButton(
-                            icon: const Icon(Icons.share_outlined),
-                            tooltip: '分享',
-                            onPressed: () => _shareBook(b),
-                          ),
                           ValueListenableBuilder<bool>(
                             valueListenable: LKStore.epubDownloadEnabled,
                             builder: (context, enabled, _) {
