@@ -1,4 +1,4 @@
-name: Release Android APK and iOS IPA
+name: Debug Android APK and iOS IPA
 
 on:
   push:
