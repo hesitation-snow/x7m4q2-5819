@@ -88,7 +88,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 处于省流模式时，插画默认关闭
-    expect(find.text('仅纯文本正文'), findsOneWidget);
+    expect(find.text('仅纯文本正文'), findsWidgets);
 
     // 点击切换打开插画开关
     await tester.tap(find.widgetWithText(SwitchListTile, '包含封面与插画'));
@@ -293,17 +293,17 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    // 默认未开启 TXT 导出
-    expect(find.text('仅文本（保存为 TXT）'), findsOneWidget);
+    // 默认格式为 EPUB 电子书
+    expect(find.text('EPUB 电子书'), findsOneWidget);
+    expect(find.text('TXT 纯文本'), findsOneWidget);
     expect(find.text('包含封面与插画'), findsWidgets);
 
-    // 打开“仅文本（保存为 TXT）”
-    await tester.tap(find.widgetWithText(SwitchListTile, '仅文本（保存为 TXT）'));
+    // 切换至“TXT 纯文本”
+    await tester.tap(find.text('TXT 纯文本'));
     await tester.pumpAndSettle();
 
-    // 插画开关变灰提示不支持，底部文案更新
-    expect(find.text('TXT 纯文本格式不支持图片与插画'), findsOneWidget);
-    expect(find.text('导出为 TXT 纯文本'), findsOneWidget);
+    // 纯文本格式下不展示插画选项
+    expect(find.text('包含封面与插画'), findsNothing);
 
     // 模拟进入 TXT 模式的 editingMetadata 阶段
     EpubDownloadService.shared.currentTask.value = EpubDownloadTask(
@@ -360,7 +360,7 @@ void main() {
     expect(find.text('EPUB 制作完成'), findsOneWidget);
     expect(find.text('book.epub'), findsOneWidget);
     expect(find.text('文件大小：2.00 MB'), findsOneWidget);
-    expect(find.text('另存为文件'), findsOneWidget);
+    expect(find.text('保存'), findsOneWidget);
     expect(find.text('分享'), findsOneWidget);
     expect(find.text('清理临时文件并退出'), findsOneWidget);
   });

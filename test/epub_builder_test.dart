@@ -53,6 +53,65 @@ void main() {
       expect(RegExp(r'<p>.*?</p>').allMatches(xhtml).length, greaterThanOrEqualTo(3));
     });
 
+    test('sanitizeToXHtml converts rich text typography into standard EPUB 3 XHTML', () {
+      const richHtml = '''
+        <h3>章节副标题</h3>
+        <p>这是<b>加粗文本</b>、<i>斜体文本</i>、<u>下划线文本</u>与<s>删除线文本</s>。</p>
+        <p>日文注音测试：<ruby>漢子<rp>(</rp><rt>かんじ</rt><rp>)</rp></ruby>以及注解<sup>[1]</sup>。</p>
+        <p align="center">居中对齐文本</p>
+        <p align="right">居右对齐文本</p>
+        <p><font color="#ff5500">彩色文本</font>与<a href="https://lightnovel.fun">参考链接</a>。</p>
+        <blockquote>这是一段重要引用内容。</blockquote>
+        <ul>
+          <li>无序列表项一</li>
+          <li>无序列表项二</li>
+        </ul>
+        <ol>
+          <li>有序列表项一</li>
+          <li>有序列表项二</li>
+        </ol>
+        <hr/>
+      ''';
+
+      final xhtml = EpubBuilder.sanitizeToXHtml(
+        title: '样式增强章节',
+        rawHtml: richHtml,
+        rawText: '',
+        imageUrlToLocalPath: const {},
+      );
+
+      // 验证副标题
+      expect(xhtml.contains('<h'), isTrue);
+      expect(xhtml.contains('章节副标题'), isTrue);
+      // 验证加粗、斜体、下划线、删除线
+      expect(xhtml.contains('<strong>加粗文本</strong>'), isTrue);
+      expect(xhtml.contains('<em>斜体文本</em>'), isTrue);
+      expect(xhtml.contains('text-decoration: underline'), isTrue);
+      expect(xhtml.contains('<del>删除线文本</del>'), isTrue);
+      // 验证注音与脚注
+      expect(xhtml.contains('<ruby>漢子<rp>(</rp><rt>かんじ</rt><rp>)</rp></ruby>'), isTrue);
+      expect(xhtml.contains('<sup>[1]</sup>'), isTrue);
+      // 验证对齐方式
+      expect(xhtml.contains('text-align: center'), isTrue);
+      expect(xhtml.contains('text-align: right'), isTrue);
+      // 验证颜色与链接
+      expect(xhtml.contains('color: #ff5500'), isTrue);
+      expect(xhtml.contains('<a href="https://lightnovel.fun">参考链接</a>'), isTrue);
+      // 验证引用
+      expect(xhtml.contains('<blockquote>'), isTrue);
+      expect(xhtml.contains('这是一段重要引用内容。'), isTrue);
+      // 验证列表
+      expect(xhtml.contains('<ul>'), isTrue);
+      expect(xhtml.contains('<li>无序列表项一</li>'), isTrue);
+      expect(xhtml.contains('<ol>'), isTrue);
+      expect(xhtml.contains('<li>有序列表项一</li>'), isTrue);
+      // 验证分割线
+      expect(xhtml.contains('<hr/>'), isTrue);
+      // 验证标准 XML 闭合
+      expect(xhtml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), isTrue);
+      expect(xhtml.contains('</html>'), isTrue);
+    });
+
     test('sanitizeToXHtml converts plain text into legal XHTML paragraphs', () {
       const plainText = '第一行内容。\n\n第二行内容含有 < 与 >。\n第三行。';
       final xhtml = EpubBuilder.sanitizeToXHtml(

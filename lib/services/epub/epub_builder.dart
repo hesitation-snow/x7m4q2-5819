@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 
+import '../../reader/structured_content.dart';
 import 'epub_models.dart';
 import 'epub_zip_writer.dart';
 
@@ -81,7 +83,7 @@ body {
   line-height: 1.75;
   font-size: 1em;
 }
-h1, h2, h3 {
+h1, h2, h3, h4, h5, h6 {
   margin: 1.4em 0 0.8em 0;
   font-weight: bold;
   text-align: center;
@@ -93,10 +95,45 @@ h1 {
 h2 {
   font-size: 1.3em;
 }
+h3 {
+  font-size: 1.15em;
+}
+h4 {
+  font-size: 1.05em;
+}
 p {
   margin: 0.5em 0;
   text-indent: 2em;
   text-align: justify;
+}
+blockquote {
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  border-left: 3px solid gray;
+  opacity: 0.9;
+}
+blockquote p {
+  text-indent: 0;
+}
+ul, ol {
+  margin: 0.5em 0;
+  padding-left: 2em;
+}
+li {
+  margin: 0.25em 0;
+}
+ruby rt {
+  font-size: 0.6em;
+}
+sup {
+  font-size: 0.75em;
+  line-height: 0;
+  vertical-align: super;
+}
+hr {
+  border: none;
+  border-top: 1px solid gray;
+  margin: 1.5em 0;
 }
 .illustration {
   text-align: center;
@@ -176,19 +213,6 @@ nav#toc li {
     return buffer.toString();
   }
 
-  static final RegExp _imageTagRe = RegExp(
-      r'''<img[^>]*\bsrc\s*=\s*["']?([^"'>\s]+)["']?[^>]*>''',
-      caseSensitive: false);
-  static final RegExp _scriptTagRe = RegExp(
-      r'''<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>''',
-      caseSensitive: false);
-  static final RegExp _styleTagRe = RegExp(
-      r'''<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>''',
-      caseSensitive: false);
-  static final RegExp _paragraphSplitRe =
-      RegExp(r'</p>|<br\s*/?>', caseSensitive: false);
-  static final RegExp _stripTagsRe = RegExp(r'<[^>]+>');
-  static final RegExp _resourceTagRe = RegExp(r'\[res\][^[]+\[/res\]');
 
   /// 多级检索插画的本地相对路径（支持原始 URL、去实体 URL、安全文件名与基名）
   static String? _resolveImageLocalPath(
@@ -216,53 +240,166 @@ nav#toc li {
     StringBuffer buffer,
     Map<String, String> imageUrlToLocalPath,
   ) {
-    // 1. 移除 script 与 style 危险标签
-    var cleaned = html.replaceAll(_scriptTagRe, '').replaceAll(_styleTagRe, '');
-
-    // 2. 将段落和断行按顺序解析，同时查找插画标签
-    final initialLength = buffer.length;
-    var pos = 0;
-    for (final match in _imageTagRe.allMatches(cleaned)) {
-      final textBefore = cleaned.substring(pos, match.start);
-      _emitTextParagraphs(textBefore, buffer);
-
-      final src = match.group(1)?.trim() ?? '';
-      final localRel = _resolveImageLocalPath(src, imageUrlToLocalPath);
-      if (localRel != null && localRel.isNotEmpty) {
-        buffer.writeln('    <div class="illustration">');
-        buffer.writeln('      <img src="$localRel" alt=""/>');
-        buffer.writeln('    </div>');
-      }
-      pos = match.end;
+    final blocks =
+        StructuredContentParser.parseHtml(html, firstLineIndent: false);
+    if (blocks.isEmpty) {
+      _convertTextToXHtml(html, buffer);
+      return;
     }
-    final remainingText = cleaned.substring(pos);
-    _emitTextParagraphs(remainingText, buffer);
+
+    final initialLength = buffer.length;
+    var inList = false;
+    var isOrderedList = false;
+
+    for (final block in blocks) {
+      if (block.isListItem) {
+        final currentIsOrdered = block.listNumber != null;
+        if (!inList) {
+          inList = true;
+          isOrderedList = currentIsOrdered;
+          buffer.writeln(isOrderedList ? '    <ol>' : '    <ul>');
+        } else if (isOrderedList != currentIsOrdered) {
+          buffer.writeln(isOrderedList ? '    </ol>' : '    </ul>');
+          isOrderedList = currentIsOrdered;
+          buffer.writeln(isOrderedList ? '    <ol>' : '    <ul>');
+        }
+        final itemContent = _renderRunsToXHtml(block.runs, isListItem: true);
+        if (itemContent.isNotEmpty) {
+          buffer.writeln('      <li>$itemContent</li>');
+        }
+        continue;
+      }
+
+      if (inList) {
+        buffer.writeln(isOrderedList ? '    </ol>' : '    </ul>');
+        inList = false;
+      }
+
+      if (block.isImage) {
+        if (block.imageUrl != null) {
+          final localRel =
+              _resolveImageLocalPath(block.imageUrl!, imageUrlToLocalPath);
+          if (localRel != null && localRel.isNotEmpty) {
+            buffer.writeln('    <div class="illustration">');
+            buffer.writeln('      <img src="$localRel" alt=""/>');
+            buffer.writeln('    </div>');
+          }
+        }
+      } else if (block.isDivider) {
+        buffer.writeln('    <hr/>');
+      } else if (block.isHeading) {
+        final lvl = math.min(6, math.max(3, block.headingLevel + 2));
+        final alignStyle = _alignStyleAttr(block.align);
+        final content = _renderRunsToXHtml(block.runs);
+        if (content.isNotEmpty) {
+          buffer.writeln('    <h$lvl$alignStyle>$content</h$lvl>');
+        }
+      } else if (block.isBlockquote) {
+        final alignStyle = _alignStyleAttr(block.align);
+        final content = _renderRunsToXHtml(block.runs);
+        if (content.isNotEmpty) {
+          buffer.writeln(
+              '    <blockquote><p$alignStyle>$content</p></blockquote>');
+        }
+      } else {
+        // 段落
+        final alignStyle = _alignStyleAttr(block.align);
+        final content = _renderRunsToXHtml(block.runs);
+        if (content.isNotEmpty) {
+          buffer.writeln('    <p$alignStyle>$content</p>');
+        }
+      }
+    }
+
+    if (inList) {
+      buffer.writeln(isOrderedList ? '    </ol>' : '    </ul>');
+    }
 
     if (buffer.length == initialLength) {
       buffer.writeln('    <p>(本章暂无内容)</p>');
     }
   }
 
-  static void _emitTextParagraphs(String seg, StringBuffer buffer) {
-    if (seg.trim().isEmpty) return;
-    var decoded = seg
-        .replaceAll(_resourceTagRe, '')
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#39;', "'")
-        .replaceAll('&apos;', "'")
-        .replaceAll('&amp;', '&');
+  static String _alignStyleAttr(TextAlign? align) {
+    if (align == TextAlign.center) {
+      return ' style="text-align: center; text-indent: 0;"';
+    } else if (align == TextAlign.right) {
+      return ' style="text-align: right; text-indent: 0;"';
+    } else if (align == TextAlign.left) {
+      return ' style="text-align: left;"';
+    } else if (align == TextAlign.justify) {
+      return ' style="text-align: justify;"';
+    }
+    return '';
+  }
 
-    final lines = decoded.split(_paragraphSplitRe);
-    for (var line in lines) {
-      // 剔除遗留的 HTML 标签，如 <span>, <div>, <a> 等，保留文字
-      line = line.replaceAll(_stripTagsRe, '').trim();
-      if (line.isNotEmpty) {
-        buffer.writeln('    <p>${xmlEscape(line)}</p>');
+  static String _renderRunsToXHtml(List<StructuredInlineRun> runs,
+      {bool isListItem = false}) {
+    if (runs.isEmpty) return '';
+    final sb = StringBuffer();
+    var startIndex = 0;
+    if (isListItem && runs.isNotEmpty) {
+      final firstText = runs.first.text.trim();
+      if (firstText == '•' || RegExp(r'^\d+\.?$').hasMatch(firstText)) {
+        startIndex = 1;
       }
     }
+
+    for (var i = startIndex; i < runs.length; i++) {
+      final run = runs[i];
+      String textHtml;
+      if (run.rubyText != null && run.rubyText!.isNotEmpty) {
+        final paren = '(${run.rubyText!})';
+        var baseText = run.text;
+        if (baseText.endsWith(paren)) {
+          baseText = baseText.substring(0, baseText.length - paren.length);
+        }
+        textHtml =
+            '<ruby>${xmlEscape(baseText)}<rp>(</rp><rt>${xmlEscape(run.rubyText!)}</rt><rp>)</rp></ruby>';
+      } else {
+        textHtml = xmlEscape(run.text);
+      }
+
+      if (run.isFootnote) {
+        textHtml = '<sup>$textHtml</sup>';
+      }
+
+      if (run.fontSizeMultiplier != null && run.fontSizeMultiplier != 1.0) {
+        final em = run.fontSizeMultiplier!.toStringAsFixed(2);
+        textHtml = '<span style="font-size: ${em}em;">$textHtml</span>';
+      }
+
+      if (run.isBold) {
+        textHtml = '<strong>$textHtml</strong>';
+      }
+
+      if (run.isItalic) {
+        textHtml = '<em>$textHtml</em>';
+      }
+
+      if (run.isUnderline && run.isStrikethrough) {
+        textHtml =
+            '<span style="text-decoration: underline line-through;">$textHtml</span>';
+      } else if (run.isUnderline) {
+        textHtml = '<span style="text-decoration: underline;">$textHtml</span>';
+      } else if (run.isStrikethrough) {
+        textHtml = '<del>$textHtml</del>';
+      }
+
+      if (run.color != null) {
+        final hex = (run.color!.toARGB32() & 0x00FFFFFF)
+            .toRadixString(16)
+            .padLeft(6, '0');
+        textHtml = '<span style="color: #$hex;">$textHtml</span>';
+      }
+
+      if (run.linkUrl != null && run.linkUrl!.isNotEmpty) {
+        textHtml = '<a href="${xmlEscape(run.linkUrl!)}">$textHtml</a>';
+      }
+
+      sb.write(textHtml);
+    }
+    return sb.toString();
   }
 
   static void _convertTextToXHtml(String text, StringBuffer buffer) {

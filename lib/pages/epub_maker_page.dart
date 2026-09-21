@@ -359,7 +359,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
               ),
               const SizedBox(height: 16),
 
-              // 插画选项卡片
+              // 导出格式（EPUB / TXT 二选一）
               Card(
                 margin: EdgeInsets.zero,
                 shape: RoundedRectangleBorder(
@@ -368,105 +368,90 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                     color: scheme.outlineVariant.withValues(alpha: 0.3),
                   ),
                 ),
-                child: SwitchListTile(
-                  secondary: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: _exportAsTxt
-                          ? scheme.onSurface.withValues(alpha: 0.08)
-                          : scheme.primary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    alignment: Alignment.center,
-                    child: Icon(
-                      Icons.image_outlined,
-                      color: _exportAsTxt
-                          ? scheme.onSurfaceVariant.withValues(alpha: 0.5)
-                          : scheme.primary,
-                      size: 20,
-                    ),
-                  ),
-                  title: Text(
-                    '包含封面与插画',
-                    style: TextStyle(
-                      color: _exportAsTxt
-                          ? scheme.onSurfaceVariant.withValues(alpha: 0.5)
-                          : null,
-                    ),
-                  ),
-                  subtitle: Text(
-                    _exportAsTxt
-                        ? 'TXT 纯文本格式不支持图片与插画'
-                        : '下载书中插画并在 EPUB 中排版',
-                  ),
-                  value: _exportAsTxt ? false : _includeIllustrations,
-                  onChanged: _exportAsTxt ? null : _toggleIncludeIllustrations,
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // 仅文本（保存为 TXT）选项卡片
-              Card(
-                margin: EdgeInsets.zero,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  side: BorderSide(
-                    color: scheme.outlineVariant.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: SwitchListTile(
-                  secondary: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: scheme.primary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    alignment: Alignment.center,
-                    child: Icon(Icons.description_outlined,
-                        color: scheme.primary, size: 20),
-                  ),
-                  title: const Text('仅文本（保存为 TXT）'),
-                  subtitle: const Text('导出为纯文本文件，不包含插画与复杂排版'),
-                  value: _exportAsTxt,
-                  onChanged: (v) {
-                    setState(() {
-                      _exportAsTxt = v;
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // 导出账号标识提示卡片
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: scheme.outlineVariant.withValues(alpha: 0.25),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline_rounded,
-                        size: 18, color: scheme.primary),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '导出文件包含可还原的发布者与当前导出账号 UID 标识',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: scheme.onSurfaceVariant,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.tune_rounded, size: 18, color: scheme.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            '导出格式',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment<bool>(
+                              value: false,
+                              icon: Icon(Icons.menu_book_rounded),
+                              label: Text('EPUB 电子书'),
+                            ),
+                            ButtonSegment<bool>(
+                              value: true,
+                              icon: Icon(Icons.description_outlined),
+                              label: Text('TXT 纯文本'),
+                            ),
+                          ],
+                          selected: {_exportAsTxt},
+                          onSelectionChanged: (newSelection) {
+                            setState(() {
+                              _exportAsTxt = newSelection.first;
+                            });
+                          },
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
+
+              // 当格式为 EPUB 时，展示插画排版选项
+              if (!_exportAsTxt) ...[
+                Card(
+                  margin: EdgeInsets.zero,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(
+                      color: scheme.outlineVariant.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: SwitchListTile(
+                    secondary: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.image_outlined,
+                        color: scheme.primary,
+                        size: 20,
+                      ),
+                    ),
+                    title: const Text('包含封面与插画'),
+                    subtitle: Text(
+                      _includeIllustrations
+                          ? '下载书中插画并在 EPUB 中排版'
+                          : '仅纯文本正文',
+                    ),
+                    value: _includeIllustrations,
+                    onChanged: _toggleIncludeIllustrations,
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
 
               // 卷选择标题与快捷按钮
               Row(
@@ -1476,7 +1461,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                 }
               },
               icon: const Icon(Icons.save_alt_rounded),
-              label: const Text('另存为文件'),
+              label: const Text('保存'),
             ),
           ),
           const SizedBox(height: 12),
@@ -1485,7 +1470,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
           SizedBox(
             width: double.infinity,
             height: 48,
-            child: FilledButton.tonalIcon(
+            child: FilledButton.icon(
               key: _shareButtonKey,
               onPressed: () {
                 if (task.outputPath != null) {

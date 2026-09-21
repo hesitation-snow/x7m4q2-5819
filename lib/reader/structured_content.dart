@@ -653,7 +653,7 @@ class StructuredContentParser {
         flushCurrentBlock();
         final src = (node.attributes['src'] ?? '').trim();
         final uri = Uri.tryParse(src);
-        if (uri != null && uri.scheme == 'https' && uri.host.isNotEmpty) {
+        if (uri != null && (uri.scheme == 'https' || uri.scheme == 'http') && uri.host.isNotEmpty) {
           final wAttr = node.attributes['img-width'] ??
               node.attributes['width'] ??
               _imageWidthRe.firstMatch(node.outerHtml)?.group(1);
