@@ -46,9 +46,6 @@ class LKStore {
   /// 实验性功能：EPUB 下载制作开关
   static final ValueNotifier<bool> epubDownloadEnabled = ValueNotifier(false);
 
-  /// 实验性功能：书籍导入开关
-  static final ValueNotifier<bool> bookImportEnabled = ValueNotifier(false);
-
   /// 实验性功能：正文样式增强开关
   static final ValueNotifier<bool> enhancedContentStyleEnabled =
       ValueNotifier(false);
@@ -140,7 +137,6 @@ class LKStore {
     hideBraveBooks.value = p.getBool('hide_brave_books') ?? true;
     gridColumnCount.value = p.getInt('grid_column_count') ?? 0;
     epubDownloadEnabled.value = p.getBool('epub_download_enabled') ?? false;
-    bookImportEnabled.value = p.getBool('book_import_enabled') ?? false;
     enhancedContentStyleEnabled.value =
         p.getBool('reader_enhanced_content_style') ?? false;
     setBraveBookChecker(isBraveBook);
@@ -224,13 +220,6 @@ class LKStore {
     epubDownloadEnabled.value = enable;
     final p = await SharedPreferences.getInstance();
     await p.setBool('epub_download_enabled', enable);
-  }
-
-  static Future<void> setBookImportEnabled(bool enable) async {
-    if (bookImportEnabled.value == enable) return;
-    bookImportEnabled.value = enable;
-    final p = await SharedPreferences.getInstance();
-    await p.setBool('book_import_enabled', enable);
   }
 
   static Future<void> setEnhancedContentStyleEnabled(bool enable) async {

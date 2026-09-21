@@ -60,9 +60,9 @@ class ExperimentalSettingsPage extends StatelessWidget {
     );
   }
 
-  Future<void> _handleBookImportToggle(BuildContext context, bool enable) async {
+  Future<void> _handleBookExportToggle(BuildContext context, bool enable) async {
     if (!enable) {
-      await LKStore.setBookImportEnabled(false);
+      await LKStore.setEpubDownloadEnabled(false);
       return;
     }
     final confirmed = await showDialog<bool>(
@@ -85,7 +85,7 @@ class ExperimentalSettingsPage extends StatelessWidget {
       ),
     );
     if (confirmed == true) {
-      await LKStore.setBookImportEnabled(true);
+      await LKStore.setEpubDownloadEnabled(true);
     }
   }
 
@@ -118,23 +118,7 @@ class ExperimentalSettingsPage extends StatelessWidget {
                 ),
                 isThreeLine: true,
                 value: enabled,
-                onChanged: (v) => LKStore.setEpubDownloadEnabled(v),
-              ),
-            ),
-            ValueListenableBuilder<bool>(
-              valueListenable: LKStore.bookImportEnabled,
-              builder: (context, enabled, _) => SwitchListTile(
-                secondary: _settingsIcon(
-                  context,
-                  Icons.upload_file_outlined,
-                ),
-                title: const Text('书籍导入'),
-                subtitle: const Text(
-                  '开启本地书籍导入功能，支持导入自定义 EPUB 或 TXT 格式书籍。',
-                ),
-                isThreeLine: true,
-                value: enabled,
-                onChanged: (v) => _handleBookImportToggle(context, v),
+                onChanged: (v) => _handleBookExportToggle(context, v),
               ),
             ),
             ValueListenableBuilder<bool>(
