@@ -84,13 +84,13 @@ jobs:
           EOF
 
       - name: Build release APK (ARM64 only)
-        run: flutter build apk --release --target-platform android-arm64
+        run: flutter build apk --release --target-platform android-arm64 --split-per-abi
 
       - name: Verify APK contains only ARM64 native libraries
         run: |
           python3 - <<'PY'
           import zipfile
-          with zipfile.ZipFile('build/app/outputs/flutter-apk/app-release.apk') as apk:
+          with zipfile.ZipFile('build/app/outputs/flutter-apk/app-arm64-v8a-release.apk') as apk:
               abis = {name.split('/')[1] for name in apk.namelist()
                       if name.startswith('lib/') and name.endswith('.so')}
           if abis != {'arm64-v8a'}:
@@ -99,7 +99,7 @@ jobs:
           PY
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk "yomiru-android-arm64-$RELEASE_TAG.apk"
+        run: cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "yomiru-android-arm64-$RELEASE_TAG.apk"
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v6
