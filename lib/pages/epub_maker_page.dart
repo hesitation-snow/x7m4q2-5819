@@ -393,12 +393,12 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                             ButtonSegment<bool>(
                               value: false,
                               icon: Icon(Icons.menu_book_rounded),
-                              label: Text('EPUB 电子书'),
+                              label: Text('EPUB'),
                             ),
                             ButtonSegment<bool>(
                               value: true,
                               icon: Icon(Icons.description_outlined),
-                              label: Text('TXT 纯文本'),
+                              label: Text('TXT'),
                             ),
                           ],
                           selected: {_exportAsTxt},
@@ -962,8 +962,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                             },
                           ),
                           helperText: task.options.exportAsTxt
-                              ? '预设格式：书名  [卷名]，作为导出文本标题及文件名'
-                              : '预设格式：书名  [卷名]，作为电子书内标题及导出文件名',
+                              ? '预设格式：书名  [卷名]，作为导出小说标题及文件名'
+                              : '预设格式：书名  [卷名]，作为 EPUB 标题及导出文件名',
                           helperMaxLines: 2,
                         ),
                       ),
@@ -972,36 +972,6 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // 导出账号标识提示卡片
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: scheme.outlineVariant.withValues(alpha: 0.25),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline_rounded,
-                        size: 18, color: scheme.primary),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        task.options.exportAsTxt
-                            ? '导出的文件包含可还原的账号 UID 标识'
-                            : '导出的 EPUB 元数据中包含可还原的发布者与当前导出账号 UID 标识',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
 
               // 封面自选卡片（TXT 纯文本模式无封面，直接隐藏）
               if (!task.options.exportAsTxt) ...[
@@ -1025,7 +995,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                 size: 20, color: scheme.primary),
                             const SizedBox(width: 8),
                             Text(
-                              '电子书封面',
+                              'EPUB 封面',
                               style: theme.textTheme.titleSmall?.copyWith(
                                 fontWeight: FontWeight.bold,
                               ),
