@@ -684,7 +684,7 @@ nav#toc li {
     final pubB64 = encodeUidToBase64(ctx.publisherUid);
     final expB64 = encodeUidToBase64(ctx.exporterUid);
     final generatorContent =
-        'Yomiru EPUB; publisher_uid_b64=$pubB64; exporter_uid_b64=$expB64';
+        'Yomiru EPUB; publisher_=$pubB64; exporter_=$expB64';
 
     final buffer = StringBuffer();
     buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
