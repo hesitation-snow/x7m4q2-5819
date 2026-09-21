@@ -10,6 +10,7 @@ import 'models.dart';
 import 'reader_cache.dart';
 import 'reading_session.dart';
 import '../reader/reading_position.dart';
+import '../reader/reader_typography.dart';
 
 /// 封面模糊模式
 enum CoverBlurMode {
@@ -688,25 +689,62 @@ class ReaderPrefs {
 
   static Future<ReaderSettings> loadAll() async {
     final prefs = await _p();
+    final autoMargin = prefs.getBool('r_auto_margin') ?? true;
+    final customMargins = prefs.getBool('r_custom_margins') ?? (!autoMargin);
+    final typography = ReaderTypography(
+      lineHeight: prefs.getDouble('r_lh') ?? 1.7,
+      paragraphSpacing: prefs.getDouble('r_para_spacing') ?? 12.0,
+      letterSpacing: prefs.getDouble('r_letter_spacing') ?? 0.3,
+      wordSpacing: prefs.getDouble('r_word_spacing') ?? 0.0,
+      firstLineIndentChars: prefs.getDouble('r_indent') ?? 0.0,
+      justify: prefs.getBool('r_justify') ?? false,
+      autoMargin: autoMargin,
+      marginHorizontal:
+          prefs.getDouble('r_margin_h') ?? (prefs.getDouble('r_ml') ?? 20.0),
+      customMargins: customMargins,
+      marginTop: prefs.getDouble('r_mt') ?? 56.0,
+      marginBottom: prefs.getDouble('r_mb') ?? 70.0,
+      marginLeft: prefs.getDouble('r_ml') ?? 20.0,
+      marginRight: prefs.getDouble('r_mr') ?? 20.0,
+      columnMode: ReaderColumnMode.values.firstWhere(
+        (m) => m.name == prefs.getString('r_col_mode'),
+        orElse: () => ReaderColumnMode.auto,
+      ),
+    );
     return ReaderSettings(
       fontSize: prefs.getDouble('r_font') ?? 17,
-      lineHeight: prefs.getDouble('r_lh') ?? 1.7,
+      typography: typography,
       bgPreset: prefs.getInt('r_bg') ?? -1,
       bgFollowSystem: prefs.getBool('r_bg_sys') ?? false,
       keepScreenOn: prefs.getBool('r_keep_on') ?? false,
       hideStatusBar: prefs.getBool('r_hide_bar') ?? false,
       tapTurnPage: prefs.getBool('r_tap_turn') ?? false,
       volumeTurnPage: prefs.getBool('r_vol_turn') ?? false,
-      autoMargin: prefs.getBool('r_auto_margin') ?? true,
-      marginTop: prefs.getDouble('r_mt') ?? 56,
-      marginBottom: prefs.getDouble('r_mb') ?? 70,
-      marginLeft: prefs.getDouble('r_ml') ?? 20,
-      marginRight: prefs.getDouble('r_mr') ?? 20,
       showIndicators: prefs.getBool('r_ind') ?? true,
       traditional: prefs.getBool('r_trad') ?? false,
       simplified: prefs.getBool('r_simp') ?? false,
       pagedMode: prefs.getBool('r_paged') ?? false,
     );
+  }
+
+  static Future<void> saveTypography(ReaderTypography t) async {
+    final prefs = await _p();
+    await Future.wait([
+      prefs.setDouble('r_lh', t.lineHeight),
+      prefs.setDouble('r_para_spacing', t.paragraphSpacing),
+      prefs.setDouble('r_letter_spacing', t.letterSpacing),
+      prefs.setDouble('r_word_spacing', t.wordSpacing),
+      prefs.setDouble('r_indent', t.firstLineIndentChars),
+      prefs.setBool('r_justify', t.justify),
+      prefs.setBool('r_auto_margin', t.autoMargin),
+      prefs.setDouble('r_margin_h', t.marginHorizontal),
+      prefs.setBool('r_custom_margins', t.customMargins),
+      prefs.setDouble('r_mt', t.marginTop),
+      prefs.setDouble('r_mb', t.marginBottom),
+      prefs.setDouble('r_ml', t.marginLeft),
+      prefs.setDouble('r_mr', t.marginRight),
+      prefs.setString('r_col_mode', t.columnMode.name),
+    ]);
   }
 
   static Future<double> fontSize() async =>
@@ -826,40 +864,51 @@ class ReaderPrefs {
 
 class ReaderSettings {
   final double fontSize;
-  final double lineHeight;
+  final ReaderTypography typography;
   final int bgPreset;
   final bool bgFollowSystem;
   final bool keepScreenOn;
   final bool hideStatusBar;
   final bool tapTurnPage;
-  final bool autoMargin;
-  final double marginTop;
-  final double marginBottom;
-  final double marginLeft;
-  final double marginRight;
   final bool showIndicators;
   final bool traditional;
   final bool simplified;
   final bool pagedMode;
   final bool volumeTurnPage;
 
-  const ReaderSettings({
+  double get lineHeight => typography.lineHeight;
+  bool get autoMargin => typography.autoMargin;
+  double get marginTop => typography.marginTop;
+  double get marginBottom => typography.marginBottom;
+  double get marginLeft => typography.marginLeft;
+  double get marginRight => typography.marginRight;
+
+  ReaderSettings({
     this.volumeTurnPage = false,
     required this.fontSize,
-    required this.lineHeight,
+    ReaderTypography? typography,
+    double? lineHeight,
+    bool? autoMargin,
+    double? marginTop,
+    double? marginBottom,
+    double? marginLeft,
+    double? marginRight,
     required this.bgPreset,
     required this.bgFollowSystem,
     required this.keepScreenOn,
     required this.hideStatusBar,
     required this.tapTurnPage,
-    required this.autoMargin,
-    required this.marginTop,
-    required this.marginBottom,
-    required this.marginLeft,
-    required this.marginRight,
     required this.showIndicators,
     required this.traditional,
     required this.simplified,
     required this.pagedMode,
-  });
+  }) : typography = typography ??
+            ReaderTypography(
+              lineHeight: lineHeight ?? 1.70,
+              autoMargin: autoMargin ?? true,
+              marginTop: marginTop ?? 56.0,
+              marginBottom: marginBottom ?? 70.0,
+              marginLeft: marginLeft ?? 20.0,
+              marginRight: marginRight ?? 20.0,
+            );
 }

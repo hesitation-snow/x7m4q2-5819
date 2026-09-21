@@ -14,6 +14,7 @@ import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/reader_page.dart';
 import 'package:yomiru/services/app_motion.dart';
 import 'package:yomiru/services/reader_volume_keys.dart';
+import 'package:yomiru/widgets/reader_typography_sheet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -96,6 +97,96 @@ void main() {
       expect(calls, isEmpty);
       Navigator.of(tester.element(find.text('操作'))).pop();
       await tester.pumpAndSettle();
+    });
+  });
+
+  testWidgets(
+      'Reader settings sheet has tabs: 外观 / 排版 / 操作 with correct contents',
+      (tester) async {
+    await withReader(tester, paged: true, platform: TargetPlatform.android,
+        run: (calls, key) async {
+      await tester.tap(find.byTooltip('阅读设置'));
+      await tester.pumpAndSettle();
+
+      // Verify TabBar has 外观, 排版, 操作, and NO 边距
+      expect(find.text('外观'), findsOneWidget);
+      expect(find.text('排版'), findsOneWidget);
+      expect(find.text('操作'), findsOneWidget);
+      expect(find.text('边距'), findsNothing);
+
+      // Tab 0 (外观) contains 字号, does NOT contain 行距 slider
+      expect(find.text('字号'), findsOneWidget);
+      expect(find.text('行距'), findsNothing);
+
+      // Switch to Tab 1 (排版)
+      await tester.tap(find.text('排版'));
+      await tester.pumpAndSettle();
+      expect(find.text('排版预览'), findsOneWidget);
+      expect(find.text('行间距'), findsOneWidget);
+      expect(find.text('段落间距'), findsOneWidget);
+      expect(find.text('字符间距'), findsOneWidget);
+      expect(find.text('页边留白'), findsOneWidget);
+      expect(find.text('两端对齐'), findsOneWidget);
+      expect(find.text('分栏模式'), findsOneWidget);
+
+      // Switch to Tab 2 (操作)
+      await tester.tap(find.text('操作'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('点击翻页'), findsOneWidget);
+      expect(find.textContaining('翻页模式'), findsOneWidget);
+
+      Navigator.of(tester.element(find.text('操作'))).pop();
+      await tester.pumpAndSettle();
+    });
+  });
+
+  testWidgets(
+      'Reader typography sheet switches between single and double column mode dynamically',
+      (tester) async {
+    await withReader(tester, paged: true, platform: TargetPlatform.android,
+        run: (calls, key) async {
+      // By default in phone width (400), it's single column: no column gap SizedBox(width: 32)
+      final colGapFinder =
+          find.byWidgetPredicate((w) => w is SizedBox && w.width == 32);
+      expect(colGapFinder, findsNothing);
+
+      // Open settings and switch to double column
+      await tester.tap(find.byTooltip('阅读设置'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('排版'));
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.byType(ReaderTypographySheet), const Offset(0, -300));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('双栏'));
+      await tester.pumpAndSettle();
+
+      // Dismiss modal
+      Navigator.of(tester.element(find.text('排版'))).pop();
+      await tester.pumpAndSettle();
+
+      // In double column mode, colGapFinder is now found
+      expect(colGapFinder, findsWidgets);
+
+      // Switch back to single column
+      if (!find.byTooltip('阅读设置').hitTestable().evaluate().isNotEmpty) {
+        await tester.tapAt(const Offset(200, 350));
+        await tester.pump();
+      }
+      await tester.tap(find.byTooltip('阅读设置'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('排版'));
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.byType(ReaderTypographySheet), const Offset(0, -300));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('单栏'));
+      await tester.pumpAndSettle();
+
+      Navigator.of(tester.element(find.text('排版'))).pop();
+      await tester.pumpAndSettle();
+
+      expect(colGapFinder, findsNothing);
     });
   });
 }

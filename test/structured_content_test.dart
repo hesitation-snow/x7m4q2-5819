@@ -318,6 +318,22 @@ void main() {
       expect(strikeSpan.style?.decorationColor, Colors.white);
       expect(strikeSpan.style?.decorationThickness, 1.5);
     });
+
+    test('firstLineIndent flag adds two full-width spaces when true and strips when false', () {
+      const html = '<p>没有缩进的正文段落。</p><p>　　已有缩进的正文段落。</p><h1>标题不缩进</h1>';
+      final indentedBlocks =
+          StructuredContentParser.parseHtml(html, firstLineIndent: true);
+      expect(indentedBlocks[0].text.startsWith('　　'), isTrue);
+      expect(indentedBlocks[1].text.startsWith('　　'), isTrue);
+      expect(indentedBlocks[1].text.startsWith('　　　　'), isFalse);
+      expect(indentedBlocks[2].isHeading, isTrue);
+      expect(indentedBlocks[2].text.startsWith('　'), isFalse);
+
+      final unindentedBlocks =
+          StructuredContentParser.parseHtml(html, firstLineIndent: false);
+      expect(unindentedBlocks[0].text.startsWith('没有缩进'), isTrue);
+      expect(unindentedBlocks[1].text.startsWith('已有缩进'), isTrue);
+    });
   });
 }
 

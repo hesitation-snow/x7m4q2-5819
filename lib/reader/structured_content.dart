@@ -495,7 +495,8 @@ class StructuredContentParser {
       RegExp(r'(?:img-height|height)\s*=\s*["\x27]?(\d+)["\x27]?', caseSensitive: false);
 
   /// 解析 HTML 章节内容为结构化正文块列表
-  static List<StructuredBlock> parseHtml(String html) {
+  static List<StructuredBlock> parseHtml(String html,
+      {bool firstLineIndent = false}) {
     if (html.trim().isEmpty) return const [];
 
     final cleanHtml = html.replaceAll(_resPlaceholderRe, '');
@@ -508,7 +509,7 @@ class StructuredContentParser {
 
     void flushCurrentBlock() {
       if (currentRuns.isEmpty) return;
-      final fullText = currentRuns.map((r) => r.text).join();
+      var fullText = currentRuns.map((r) => r.text).join();
       final trimmed = fullText.trim();
       if (trimmed.isEmpty) {
         currentRuns.clear();
@@ -522,6 +523,48 @@ class StructuredContentParser {
         bType = StructuredBlockType.blockquote;
       } else if (activeScope.isListItem) {
         bType = StructuredBlockType.listItem;
+      }
+
+      if (bType == StructuredBlockType.paragraph) {
+        if (firstLineIndent) {
+          if (!fullText.startsWith('\u3000') && !fullText.startsWith('  ')) {
+            currentRuns[0] = currentRuns[0].copyWith(
+              text: '\u3000\u3000${currentRuns[0].text}',
+            );
+            fullText = '\u3000\u3000$fullText';
+          }
+        } else {
+          // 不缩进：若正文开头有全角空格或普通空格，移除之以顶格显示
+          if (fullText.startsWith('\u3000') || fullText.startsWith(' ')) {
+            var stripCount = 0;
+            while (stripCount < fullText.length &&
+                (fullText[stripCount] == '\u3000' || fullText[stripCount] == ' ')) {
+              stripCount++;
+            }
+            if (stripCount > 0) {
+              var remainingStrip = stripCount;
+              var runIndex = 0;
+              while (remainingStrip > 0 && runIndex < currentRuns.length) {
+                final run = currentRuns[runIndex];
+                if (run.text.length <= remainingStrip) {
+                  remainingStrip -= run.text.length;
+                  currentRuns.removeAt(runIndex);
+                } else {
+                  currentRuns[runIndex] = run.copyWith(
+                    text: run.text.substring(remainingStrip),
+                  );
+                  remainingStrip = 0;
+                  break;
+                }
+              }
+              fullText = fullText.substring(stripCount);
+              if (fullText.trim().isEmpty || currentRuns.isEmpty) {
+                currentRuns.clear();
+                return;
+              }
+            }
+          }
+        }
       }
 
       final block = StructuredBlock(
@@ -819,18 +862,29 @@ class StructuredContentParser {
   }
 
   /// 纯文本回退解析（无 HTML 结构时）
-  static List<StructuredBlock> parseText(String text) {
+  static List<StructuredBlock> parseText(String text,
+      {bool firstLineIndent = false}) {
     if (text.trim().isEmpty) return const [];
-    final lines = text
+    final rawLines = text
         .replaceAll('\r\n', '\n')
         .replaceAll('\r', '\n')
         .replaceAll(_resPlaceholderRe, '')
-        .split('\n')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty);
+        .split('\n');
 
     final blocks = <StructuredBlock>[];
-    for (final line in lines) {
+    for (final rawLine in rawLines) {
+      var line = rawLine.trim();
+      if (line.isEmpty) continue;
+      if (firstLineIndent) {
+        if (!line.startsWith('\u3000') && !line.startsWith('  ')) {
+          line = '\u3000\u3000$line';
+        }
+      } else {
+        while (line.startsWith('\u3000') || line.startsWith(' ')) {
+          line = line.substring(1);
+        }
+        if (line.trim().isEmpty) continue;
+      }
       final block = StructuredBlock(
         type: StructuredBlockType.paragraph,
         text: line,
