@@ -58,121 +58,117 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-      children: [
-        // 1. 顶部排版实时预览卡片
-        _buildPreviewCard(scheme),
-        const SizedBox(height: 16),
+    return ListTileTheme(
+      data: const ListTileThemeData(
+        tileColor: Colors.transparent,
+        shape: RoundedRectangleBorder(),
+        contentPadding: EdgeInsets.zero,
+      ),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        children: [
+          // 1. 顶部排版实时预览卡片
+          _buildPreviewCard(scheme),
+          const SizedBox(height: 16),
 
-        // 2. 快捷预设胶囊
-        _buildPresetBar(scheme),
-        const SizedBox(height: 16),
+          // 2. 快捷预设胶囊
+          _buildPresetBar(scheme),
+          const SizedBox(height: 16),
 
-        // 3. 常用排版滑杆分组
-        Card(
-          margin: EdgeInsets.zero,
-          elevation: 0,
-          color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(
-              color: scheme.outlineVariant.withValues(alpha: 0.25),
+          // 3. 常用排版滑杆分组
+          Card(
+            margin: EdgeInsets.zero,
+            elevation: 0,
+            color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: 0.25),
+              ),
             ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 行间距
-                _buildSliderRow(
-                  label: '行间距',
-                  value: _current.lineHeight,
-                  min: 1.20,
-                  max: 2.40,
-                  divisions: 24,
-                  valueText: _current.lineHeight.toStringAsFixed(2),
-                  defaultValue: 1.70,
-                  onChanged: (v) =>
-                      _updatePreview(_current.copyWith(lineHeight: v)),
-                  onChangeEnd: (v) =>
-                      _commitChange(_current.copyWith(lineHeight: v)),
-                ),
-                const Divider(height: 16, thickness: 0.5),
-
-                // 段落间距
-                _buildSliderRow(
-                  label: '段落间距',
-                  value: _current.paragraphSpacing,
-                  min: 0.0,
-                  max: 32.0,
-                  divisions: 16,
-                  valueText: '${_current.paragraphSpacing.round()} px',
-                  defaultValue: 12.0,
-                  onChanged: (v) =>
-                      _updatePreview(_current.copyWith(paragraphSpacing: v)),
-                  onChangeEnd: (v) =>
-                      _commitChange(_current.copyWith(paragraphSpacing: v)),
-                ),
-                const Divider(height: 16, thickness: 0.5),
-
-                // 字符间距
-                _buildSliderRow(
-                  label: '字符间距',
-                  value: _current.letterSpacing,
-                  min: -0.5,
-                  max: 2.5,
-                  divisions: 30,
-                  valueText:
-                      '${_current.letterSpacing >= 0 ? '+' : ''}${_current.letterSpacing.toStringAsFixed(1)} pt',
-                  defaultValue: 0.3,
-                  onChanged: (v) =>
-                      _updatePreview(_current.copyWith(letterSpacing: v)),
-                  onChangeEnd: (v) =>
-                      _commitChange(_current.copyWith(letterSpacing: v)),
-                ),
-                const Divider(height: 16, thickness: 0.5),
-
-                // 页边留白（左右联动）
-                _buildSliderRow(
-                  label: '页边留白',
-                  value: _current.marginHorizontal,
-                  min: 8.0,
-                  max: 48.0,
-                  divisions: 20,
-                  valueText: '${_current.marginHorizontal.round()} dp',
-                  defaultValue: 20.0,
-                  enabled: !_current.customMargins,
-                  onChanged: (v) =>
-                      _updatePreview(_current.copyWith(marginHorizontal: v)),
-                  onChangeEnd: (v) =>
-                      _commitChange(_current.copyWith(marginHorizontal: v)),
-                ),
-                const Divider(height: 16, thickness: 0.5),
-
-                // 两端对齐开关
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: const Text(
-                    '两端对齐',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 行间距
+                  _buildSliderRow(
+                    label: '行间距',
+                    value: _current.lineHeight,
+                    min: 1.20,
+                    max: 2.40,
+                    divisions: 24,
+                    valueText: _current.lineHeight.toStringAsFixed(2),
+                    defaultValue: 1.70,
+                    onChanged: (v) =>
+                        _updatePreview(_current.copyWith(lineHeight: v)),
+                    onChangeEnd: (v) =>
+                        _commitChange(_current.copyWith(lineHeight: v)),
                   ),
-                  subtitle: Text(
-                    '段内文字平整铺满，段末行保持自然',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
-                    ),
+                  const Divider(height: 16, thickness: 0.5),
+
+                  // 段落间距
+                  _buildSliderRow(
+                    label: '段落间距',
+                    value: _current.paragraphSpacing,
+                    min: 0.0,
+                    max: 32.0,
+                    divisions: 16,
+                    valueText: '${_current.paragraphSpacing.round()} px',
+                    defaultValue: 12.0,
+                    onChanged: (v) =>
+                        _updatePreview(_current.copyWith(paragraphSpacing: v)),
+                    onChangeEnd: (v) =>
+                        _commitChange(_current.copyWith(paragraphSpacing: v)),
                   ),
-                  value: _current.justify,
-                  onChanged: (v) {
-                    final updated = _current.copyWith(justify: v);
-                    _commitChange(updated);
-                  },
-                ),
-                const Divider(height: 16, thickness: 0.5),
+                  const Divider(height: 16, thickness: 0.5),
+
+                  // 字符间距
+                  _buildSliderRow(
+                    label: '字符间距',
+                    value: _current.letterSpacing,
+                    min: -0.5,
+                    max: 2.5,
+                    divisions: 30,
+                    valueText:
+                        '${_current.letterSpacing >= 0 ? '+' : ''}${_current.letterSpacing.toStringAsFixed(1)} pt',
+                    defaultValue: 0.3,
+                    onChanged: (v) =>
+                        _updatePreview(_current.copyWith(letterSpacing: v)),
+                    onChangeEnd: (v) =>
+                        _commitChange(_current.copyWith(letterSpacing: v)),
+                  ),
+                  const Divider(height: 16, thickness: 0.5),
+
+                  // 页边留白（左右联动）
+                  _buildSliderRow(
+                    label: '页边留白',
+                    value: _current.marginHorizontal,
+                    min: 8.0,
+                    max: 48.0,
+                    divisions: 20,
+                    valueText: '${_current.marginHorizontal.round()} dp',
+                    defaultValue: 20.0,
+                    enabled: !_current.customMargins,
+                    onChanged: (v) =>
+                        _updatePreview(_current.copyWith(marginHorizontal: v)),
+                    onChangeEnd: (v) =>
+                        _commitChange(_current.copyWith(marginHorizontal: v)),
+                  ),
+                  const Divider(height: 16, thickness: 0.5),
+
+                  // 两端对齐开关
+                  _buildSwitchTile(
+                    title: '两端对齐',
+                    subtitle: '段内文字平整铺满，段末行保持自然',
+                    value: _current.justify,
+                    onChanged: (v) {
+                      final updated = _current.copyWith(justify: v);
+                      _commitChange(updated);
+                    },
+                    scheme: scheme,
+                  ),
+                  const Divider(height: 16, thickness: 0.5),
 
                 // 分栏模式
                 Row(
@@ -302,26 +298,22 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                         onChangeEnd: (v) =>
                             _commitChange(_current.copyWith(wordSpacing: v)),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, bottom: 4),
+                        child: Text(
+                          '仅对空格分隔的外文/数字单词生效，纯中文无空格不影响',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ),
                       const Divider(height: 16, thickness: 0.5),
 
                       // 首行缩进
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        title: const Text(
-                          '首行缩进',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '普通正文段落首行缩进两字符宽',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
-                          ),
-                        ),
+                      _buildSwitchTile(
+                        title: '首行缩进',
+                        subtitle: '普通正文段落首行缩进两字符宽',
                         value: _current.firstLineIndentChars > 0,
                         onChanged: (v) {
                           final updated = _current.copyWith(
@@ -329,34 +321,22 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                           );
                           _commitChange(updated);
                         },
+                        scheme: scheme,
                       ),
                       const Divider(height: 16, thickness: 0.5),
 
                       // 独立调整四周边距开关
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        title: const Text(
-                          '独立四周边距',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        subtitle: Text(
-                          _current.customMargins
-                              ? '当前使用下方独立边距'
-                              : '开启后可独立微调上、下、左、右边距',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
-                          ),
-                        ),
+                      _buildSwitchTile(
+                        title: '独立四周边距',
+                        subtitle: _current.customMargins
+                            ? '当前使用下方独立边距'
+                            : '开启后可独立微调上、下、左、右边距',
                         value: _current.customMargins,
                         onChanged: (v) {
                           final updated = _current.copyWith(customMargins: v);
                           _commitChange(updated);
                         },
+                        scheme: scheme,
                       ),
 
                       if (_current.customMargins) ...[
@@ -438,6 +418,39 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
           ),
         ),
       ],
+    ),
+  );
+}
+
+  /// 统一的开关行（去除深色独立卡片底色，与排版卡片无缝融合）
+  Widget _buildSwitchTile({
+    required String title,
+    String? subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+    required ColorScheme scheme,
+  }) {
+    return SwitchListTile(
+      tileColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(),
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+      ),
+      subtitle: subtitle != null
+          ? Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 12,
+                color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
+              ),
+            )
+          : null,
+      value: value,
+      onChanged: onChanged,
     );
   }
 
@@ -529,7 +542,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                     child: SizedBox(width: previewIndent, height: 1.0),
                   ),
                 const TextSpan(
-                  text: '文字如涟漪般在纸页间舒展，留驻下时光最深邃的印记。',
+                  text: '文字如涟漪般在纸页间舒展（Light Novel），留驻下时光最深邃的印记。',
                 ),
               ],
               style: textStyle,

@@ -186,5 +186,54 @@ void main() {
       expect(current.firstLineIndentChars, equals(0.0));
       expect(current.columnMode, equals(ReaderColumnMode.auto));
     });
+
+    testWidgets(
+        'SwitchListTiles have transparent tileColor even under dark theme with custom listTileTheme',
+        (tester) async {
+      tester.view.physicalSize = const Size(500, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      ReaderTypography current = const ReaderTypography();
+      await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.dark,
+          listTileTheme: ListTileThemeData(
+            tileColor: const Color(0xFF1E2025),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+        home: Scaffold(
+          body: ReaderTypographySheet(
+            initialTypography: current,
+            fontSize: 17.0,
+            textColor: const Color(0xFFFFFFFF),
+            backgroundColor: const Color(0xFF1E2025),
+            linkColor: const Color(0xFF5C6BC0),
+            isDark: true,
+            onPreviewChange: (t) => current = t,
+            onCommit: (t) => current = t,
+          ),
+        ),
+      ));
+
+      // 展开「更多排版设置」
+      await tester.ensureVisible(find.text('更多排版设置'));
+      await tester.tap(find.text('更多排版设置'));
+      await tester.pumpAndSettle();
+
+      final switchTiles =
+          tester.widgetList<SwitchListTile>(find.byType(SwitchListTile)).toList();
+      expect(switchTiles.length, greaterThanOrEqualTo(3));
+      for (final tile in switchTiles) {
+        expect(tile.tileColor, equals(Colors.transparent));
+      }
+    });
   });
 }
