@@ -139,6 +139,12 @@ class _HomePageState extends State<HomePage> {
       showDragHandle: true,
       builder: (sheetContext) {
         final theme = Theme.of(sheetContext);
+        const categoryIcons = [
+          Icons.auto_stories_rounded,
+          Icons.edit_note_rounded,
+          Icons.auto_awesome_rounded,
+          Icons.menu_book_rounded,
+        ];
         return SafeArea(
           top: false,
           child: Padding(
@@ -150,25 +156,91 @@ class _HomePageState extends State<HomePage> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
                   child: Text(
-                    '内容分类',
+                    '按分类浏览',
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
-                for (var i = 3; i < _channels.length; i++)
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    title: Text(_channels[i].$2),
-                    trailing: _channel == i
-                        ? Icon(Icons.check_rounded,
-                            color: theme.colorScheme.primary)
-                        : null,
-                    onTap: () => Navigator.of(sheetContext).pop(i),
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _channels.length - 3,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: 2.25,
                   ),
+                  itemBuilder: (context, index) {
+                    final channelIndex = index + 3;
+                    final selected = channelIndex == _channel;
+                    final scheme = theme.colorScheme;
+                    return Material(
+                      color: selected
+                          ? scheme.primaryContainer.withValues(alpha: 0.55)
+                          : scheme.surfaceContainerLow,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(
+                          color: selected
+                              ? scheme.primary.withValues(alpha: 0.45)
+                              : scheme.outlineVariant.withValues(alpha: 0.22),
+                        ),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () =>
+                            Navigator.of(sheetContext).pop(channelIndex),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 34,
+                                height: 34,
+                                decoration: BoxDecoration(
+                                  color: selected
+                                      ? scheme.primary.withValues(alpha: 0.13)
+                                      : scheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(11),
+                                ),
+                                child: Icon(
+                                  categoryIcons[index],
+                                  size: 18,
+                                  color: selected
+                                      ? scheme.primary
+                                      : scheme.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(width: 9),
+                              Expanded(
+                                child: Text(
+                                  _channels[channelIndex].$2,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontWeight: selected
+                                        ? FontWeight.w600
+                                        : FontWeight.w500,
+                                    color: selected
+                                        ? scheme.primary
+                                        : scheme.onSurface,
+                                  ),
+                                ),
+                              ),
+                              if (selected) ...[
+                                const SizedBox(width: 4),
+                                Icon(Icons.check_circle_rounded,
+                                    size: 17, color: scheme.primary),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ],
             ),
           ),
@@ -210,7 +282,7 @@ class _HomePageState extends State<HomePage> {
       child: Scaffold(
         body: Column(
           children: [
-            // 顶栏:状态栏条固定,搜索框+头像+频道胶囊随滚动向上滑出
+            // 顶栏:状态栏条固定,搜索区与频道导航随滚动向上滑出
             // 采用让渡式收合;其它 Tab 只留状态栏背景
             SizedBox(
               height: padTop,
@@ -262,9 +334,18 @@ class _HomePageState extends State<HomePage> {
                                                 Theme.of(context).brightness ==
                                                         Brightness.dark
                                                     ? const Color(0xFF1E2025)
-                                                    : Colors.grey.shade100,
+                                                    : Theme.of(context)
+                                                            .cardTheme
+                                                            .color ??
+                                                        Colors.white,
                                             borderRadius:
-                                                BorderRadius.circular(20),
+                                                BorderRadius.circular(16),
+                                            border: Border.all(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .outlineVariant
+                                                  .withValues(alpha: 0.25),
+                                            ),
                                           ),
                                           child: Row(
                                             mainAxisSize: MainAxisSize.min,
@@ -275,7 +356,7 @@ class _HomePageState extends State<HomePage> {
                                               const SizedBox(width: 8),
                                               Flexible(
                                                 child: Text(
-                                                  '搜索书名 / 作者',
+                                                  '搜索书名或作者',
                                                   maxLines: 1,
                                                   overflow:
                                                       TextOverflow.ellipsis,
@@ -1024,16 +1105,39 @@ class _HomeRecommendCard extends StatelessWidget {
         children: [
           SizedBox(
             height: 22,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '好书推荐',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Theme.of(context).colorScheme.onSurface,
+            child: Row(
+              children: [
+                Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 12,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Text(
+                  '好书推荐',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${books.length} 本',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 8),
