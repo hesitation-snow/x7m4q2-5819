@@ -17,7 +17,7 @@ on:
       send_telegram:
         description: 'Send APK / IPA to my Telegram bot private chat'
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: write

@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui show BoxHeightStyle, BoxWidthStyle;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
@@ -28,6 +29,7 @@ class StructuredInlineRun {
     this.fontSizeMultiplier,
     this.linkUrl,
     this.rubyText,
+    this.rubyBaseText,
     this.isFootnote = false,
   });
 
@@ -40,6 +42,7 @@ class StructuredInlineRun {
   final double? fontSizeMultiplier;
   final String? linkUrl;
   final String? rubyText;
+  final String? rubyBaseText;
   final bool isFootnote;
 
   StructuredInlineRun copyWith({
@@ -52,6 +55,7 @@ class StructuredInlineRun {
     double? fontSizeMultiplier,
     String? linkUrl,
     String? rubyText,
+    String? rubyBaseText,
     bool? isFootnote,
   }) {
     return StructuredInlineRun(
@@ -64,6 +68,7 @@ class StructuredInlineRun {
       fontSizeMultiplier: fontSizeMultiplier ?? this.fontSizeMultiplier,
       linkUrl: linkUrl ?? this.linkUrl,
       rubyText: rubyText ?? this.rubyText,
+      rubyBaseText: rubyBaseText ?? this.rubyBaseText,
       isFootnote: isFootnote ?? this.isFootnote,
     );
   }
@@ -82,6 +87,7 @@ class StructuredInlineRun {
           fontSizeMultiplier == other.fontSizeMultiplier &&
           linkUrl == other.linkUrl &&
           rubyText == other.rubyText &&
+          rubyBaseText == other.rubyBaseText &&
           isFootnote == other.isFootnote;
 
   @override
@@ -95,6 +101,7 @@ class StructuredInlineRun {
         fontSizeMultiplier,
         linkUrl,
         rubyText,
+        rubyBaseText,
         isFootnote,
       );
 }
@@ -155,6 +162,92 @@ class StructuredBlock {
   bool get isHeading => type == StructuredBlockType.heading;
   bool get isBlockquote => type == StructuredBlockType.blockquote;
   bool get isListItem => type == StructuredBlockType.listItem;
+
+  /// 注音的正文字符范围。区间沿用 [text] 的 UTF-16 偏移，和分页、选区一致。
+  List<StructuredRubyAnnotation> rubyAnnotations({
+    required TextStyle baseStyle,
+    required Color linkColor,
+    required Color backgroundColor,
+  }) {
+    if (runs.isEmpty) return const [];
+    final result = <StructuredRubyAnnotation>[];
+    var offset = 0;
+    for (final run in runs) {
+      final ruby = run.rubyText;
+      if (ruby != null && ruby.isNotEmpty) {
+        final suffix = '($ruby)';
+        if (run.text.endsWith(suffix)) {
+          final baseText =
+              run.text.substring(0, run.text.length - suffix.length);
+          final isCompleteRuby = baseText.isNotEmpty &&
+              (run.rubyBaseText == null || run.rubyBaseText == baseText);
+          if (isCompleteRuby) {
+            final style = _styleForRun(
+              run,
+              baseStyle: baseStyle,
+              linkColor: linkColor,
+              backgroundColor: backgroundColor,
+            );
+            final fontSize = style.fontSize ?? baseStyle.fontSize ?? 16.0;
+            final annotationColor = style.color ?? baseStyle.color ?? Colors.black;
+            result.add(StructuredRubyAnnotation(
+              start: offset,
+              end: offset + baseText.length,
+              text: ruby,
+              fontSize: fontSize,
+              style: style.copyWith(
+                fontSize: fontSize * 0.42,
+                height: 1,
+                letterSpacing: 0,
+                wordSpacing: 0,
+                color: annotationColor.withValues(
+                  alpha: annotationColor.a * 0.92,
+                ),
+                decoration: TextDecoration.none,
+              ),
+            ));
+          }
+        }
+      }
+      offset += run.text.length;
+    }
+    return List.unmodifiable(result);
+  }
+
+  TextStyle _styleForRun(
+    StructuredInlineRun run, {
+    required TextStyle baseStyle,
+    required Color linkColor,
+    required Color backgroundColor,
+  }) {
+    TextStyle style = baseStyle;
+    if (headingLevel > 0) {
+      final mult = headingScale(headingLevel);
+      style = style.copyWith(
+        fontSize: (baseStyle.fontSize ?? 16.0) * mult,
+        fontWeight: FontWeight.bold,
+        height: 1.35,
+      );
+    } else if (isBlockquote) {
+      style = style.copyWith(color: baseStyle.color?.withValues(alpha: 0.88));
+    }
+    if (run.isBold) style = style.copyWith(fontWeight: FontWeight.bold);
+    if (run.isItalic) style = style.copyWith(fontStyle: FontStyle.italic);
+    if (run.linkUrl != null) {
+      style = style.copyWith(color: linkColor);
+    } else if (run.color != null) {
+      style = style.copyWith(
+        color: ensureLegibleColor(run.color!, backgroundColor),
+      );
+    }
+    if (run.fontSizeMultiplier != null) {
+      style = style.copyWith(
+        fontSize: (style.fontSize ?? baseStyle.fontSize ?? 16.0) *
+            run.fontSizeMultiplier!,
+      );
+    }
+    return style;
+  }
 
   /// 从当前正文块的字符区间 [start, end) 裁剪生成新的结构化块。
   ///
@@ -343,31 +436,39 @@ class StructuredBlock {
           ..onTap = () => onLinkTap(run.linkUrl!);
       }
 
-      // 注音附注展示：将 "汉字(注音)" 中的 "(注音)" 采用附注样式呈现
+      // 注音保留在 TextSpan 的文本中，维持 UTF-16 偏移与选中复制内容；
+      // 实际字形由 StructuredRubyText 绘制到正文上方，不挤占正文行宽。
       if (run.rubyText != null && run.rubyText!.isNotEmpty) {
         final rt = run.rubyText!;
         final parenNote = '($rt)';
         if (run.text.endsWith(parenNote)) {
           final baseTextPart =
               run.text.substring(0, run.text.length - parenNote.length);
-          if (baseTextPart.isNotEmpty) {
+          final isCompleteRuby = baseTextPart.isNotEmpty &&
+              (run.rubyBaseText == null || run.rubyBaseText == baseTextPart);
+          if (isCompleteRuby) {
             spans.add(TextSpan(
               text: baseTextPart,
-              style: runStyle,
+              style: runStyle.copyWith(
+                height: math.max(runStyle.height ?? 1.0, 2.30),
+              ),
               recognizer: recognizer,
             ));
+            final hiddenNoteStyle = runStyle.copyWith(
+              fontSize: 0.01,
+              height: 1.0,
+              letterSpacing: 0,
+              wordSpacing: 0,
+              color: Colors.transparent,
+              decoration: TextDecoration.none,
+            );
+            spans.add(TextSpan(
+              text: parenNote,
+              style: hiddenNoteStyle,
+              recognizer: recognizer,
+            ));
+            continue;
           }
-          final noteStyle = runStyle.copyWith(
-            fontSize: (runStyle.fontSize ?? 16.0) * 0.80,
-            color: (runStyle.color ?? baseStyle.color)
-                ?.withValues(alpha: 0.82),
-          );
-          spans.add(TextSpan(
-            text: parenNote,
-            style: noteStyle,
-            recognizer: recognizer,
-          ));
-          continue;
         }
       }
 
@@ -394,6 +495,185 @@ class StructuredBlock {
     }
     return links;
   }
+}
+
+@immutable
+class StructuredRubyAnnotation {
+  const StructuredRubyAnnotation({
+    required this.start,
+    required this.end,
+    required this.text,
+    required this.fontSize,
+    required this.style,
+  });
+
+  final int start;
+  final int end;
+  final String text;
+  final double fontSize;
+  final TextStyle style;
+}
+
+/// 在不改变正文字符索引的前提下，把 ruby 注音绘制在正文上方。
+/// Text.rich 仍负责换行、选择与复制；前景画笔复用相同 TextSpan 布局。
+class StructuredRubyText extends StatelessWidget {
+  const StructuredRubyText({
+    super.key,
+    this.textKey,
+    required this.block,
+    required this.span,
+    required this.baseStyle,
+    required this.linkColor,
+    required this.backgroundColor,
+    required this.textDirection,
+    required this.textScaler,
+    required this.locale,
+    required this.textAlign,
+  });
+
+  final Key? textKey;
+  final StructuredBlock block;
+  final TextSpan span;
+  final TextStyle baseStyle;
+  final Color linkColor;
+  final Color backgroundColor;
+  final TextDirection textDirection;
+  final TextScaler textScaler;
+  final Locale? locale;
+  final TextAlign textAlign;
+
+  @override
+  Widget build(BuildContext context) {
+    final annotations = block.rubyAnnotations(
+      baseStyle: baseStyle,
+      linkColor: linkColor,
+      backgroundColor: backgroundColor,
+    );
+    final text = Text.rich(
+      key: textKey,
+      span,
+      textScaler: textScaler,
+      locale: locale,
+      textAlign: textAlign,
+      textWidthBasis: TextWidthBasis.parent,
+    );
+    if (annotations.isEmpty) return text;
+    return CustomPaint(
+      foregroundPainter: _StructuredRubyPainter(
+        span: span,
+        annotations: annotations,
+        textDirection: textDirection,
+        textScaler: textScaler,
+        locale: locale,
+        textAlign: textAlign,
+      ),
+      child: text,
+    );
+  }
+}
+
+class _StructuredRubyPainter extends CustomPainter {
+  const _StructuredRubyPainter({
+    required this.span,
+    required this.annotations,
+    required this.textDirection,
+    required this.textScaler,
+    required this.locale,
+    required this.textAlign,
+  });
+
+  final TextSpan span;
+  final List<StructuredRubyAnnotation> annotations;
+  final TextDirection textDirection;
+  final TextScaler textScaler;
+  final Locale? locale;
+  final TextAlign textAlign;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || annotations.isEmpty) return;
+    final paragraph = TextPainter(
+      text: span,
+      textDirection: textDirection,
+      textScaler: textScaler,
+      locale: locale,
+      textAlign: textAlign,
+      textWidthBasis: TextWidthBasis.parent,
+    )..layout(maxWidth: size.width);
+    final lineMetrics = paragraph.computeLineMetrics();
+    final notePainter = TextPainter(
+      textDirection: textDirection,
+      textScaler: textScaler,
+      locale: locale,
+      textAlign: TextAlign.center,
+    );
+
+    for (final annotation in annotations) {
+      if (annotation.start < 0 ||
+          annotation.end <= annotation.start ||
+          annotation.end > paragraph.plainText.length) {
+        continue;
+      }
+      final boxes = paragraph.getBoxesForSelection(
+        TextSelection(
+          baseOffset: annotation.start,
+          extentOffset: annotation.end,
+        ),
+        boxHeightStyle: ui.BoxHeightStyle.tight,
+        boxWidthStyle: ui.BoxWidthStyle.tight,
+      );
+      if (boxes.isEmpty) continue;
+
+      final left = boxes.map((box) => box.left).reduce(math.min);
+      final right = boxes.map((box) => box.right).reduce(math.max);
+      final firstTop = boxes.first.top;
+      final baseline = _baselineFor(firstTop, lineMetrics);
+      if (baseline == null) continue;
+
+      notePainter.text = TextSpan(
+        text: annotation.text,
+        style: annotation.style,
+      );
+      notePainter.layout();
+      final center = (left + right) / 2;
+      final dx = (center - notePainter.width / 2)
+          .clamp(0.0, math.max(0.0, size.width - notePainter.width))
+          .toDouble();
+      final dy = baseline - annotation.fontSize * 0.99 - notePainter.height;
+      notePainter.paint(canvas, Offset(dx, dy));
+    }
+    notePainter.dispose();
+    paragraph.dispose();
+  }
+
+  double? _baselineFor(double boxTop, List<LineMetrics> metrics) {
+    if (metrics.isEmpty) return null;
+    LineMetrics? closest;
+    var distance = double.infinity;
+    for (final line in metrics) {
+      final lineTop = line.baseline - line.height;
+      final lineBottom = line.baseline;
+      final currentDistance = boxTop < lineTop
+          ? lineTop - boxTop
+          : boxTop > lineBottom
+              ? boxTop - lineBottom
+              : 0.0;
+      if (currentDistance < distance) {
+        closest = line;
+        distance = currentDistance;
+      }
+    }
+    return closest?.baseline;
+  }
+
+  @override
+  bool shouldRepaint(covariant _StructuredRubyPainter oldDelegate) =>
+      !identical(oldDelegate.span, span) ||
+      oldDelegate.annotations != annotations ||
+      oldDelegate.textDirection != textDirection ||
+      oldDelegate.textScaler != textScaler ||
+      oldDelegate.locale != locale ||
+      oldDelegate.textAlign != textAlign;
 }
 
 /// 列表环境上下文跟踪
@@ -703,6 +983,7 @@ class StructuredContentParser {
             fontSizeMultiplier: scope.fontSizeMultiplier,
             linkUrl: scope.linkUrl,
             rubyText: rubyAnnotation.isNotEmpty ? rubyAnnotation : null,
+            rubyBaseText: rubyAnnotation.isNotEmpty ? baseText : null,
           ));
         }
         return;
@@ -1087,14 +1368,22 @@ class StructuredContentParser {
             ? await ChineseConverter.convert(run.text, S2T())
             : await ChineseConverter.convert(run.text, T2S());
         String? convRuby;
+        String? convRubyBase;
         if (run.rubyText != null && run.rubyText!.isNotEmpty) {
           convRuby = mode == 1
               ? await ChineseConverter.convert(run.rubyText!, S2T())
               : await ChineseConverter.convert(run.rubyText!, T2S());
+          final rubyBase = run.rubyBaseText;
+          if (rubyBase != null) {
+            convRubyBase = mode == 1
+                ? await ChineseConverter.convert(rubyBase, S2T())
+                : await ChineseConverter.convert(rubyBase, T2S());
+          }
         }
         newRuns.add(run.copyWith(
           text: convText,
           rubyText: convRuby,
+          rubyBaseText: convRubyBase,
         ));
       }
 

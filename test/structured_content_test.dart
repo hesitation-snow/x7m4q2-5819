@@ -110,7 +110,17 @@ void main() {
       expect(b.text, '主角是勇者(ゆうしゃ)。');
       final rubyRun = b.runs.firstWhere((r) => r.rubyText != null);
       expect(rubyRun.rubyText, 'ゆうしゃ');
+      expect(rubyRun.rubyBaseText, '勇者');
       expect(rubyRun.text, '勇者(ゆうしゃ)');
+      final annotations = b.rubyAnnotations(
+        baseStyle: const TextStyle(fontSize: 18, height: 1.7),
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+      );
+      expect(annotations, hasLength(1));
+      expect(annotations.single.start, 3);
+      expect(annotations.single.end, 5);
+      expect(annotations.single.text, 'ゆうしゃ');
     });
 
     test('parses hyperlinks correctly', () {
@@ -135,6 +145,76 @@ void main() {
   });
 
   group('StructuredBlock slicing and TextSpan building', () {
+    test('ruby rendering keeps the original text offsets and copy text', () {
+      const html = '<p>主角是<ruby>勇者<rt>ゆうしゃ</rt></ruby>。</p>';
+      final block = StructuredContentParser.parseHtml(html).single;
+      final span = block.buildTextSpan(
+        baseStyle: const TextStyle(fontSize: 18, height: 1.7),
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+        forMeasurement: true,
+      );
+
+      expect(span.toPlainText(), block.text);
+      expect(span.toPlainText(), '主角是勇者(ゆうしゃ)。');
+
+      final partialSlice = block.slice(0, 5);
+      expect(
+        partialSlice.rubyAnnotations(
+          baseStyle: const TextStyle(fontSize: 18, height: 1.7),
+          linkColor: Colors.blue,
+          backgroundColor: Colors.white,
+        ),
+        isEmpty,
+      );
+      expect(
+        partialSlice
+            .buildTextSpan(
+              baseStyle: const TextStyle(fontSize: 18, height: 1.7),
+              linkColor: Colors.blue,
+              backgroundColor: Colors.white,
+              forMeasurement: true,
+            )
+            .toPlainText(),
+        partialSlice.text,
+      );
+    });
+
+    testWidgets('ruby annotation paints above the base text', (tester) async {
+      const html = '<p>主角是<ruby>勇者<rt>ゆうしゃ</rt></ruby>。</p>';
+      final block = StructuredContentParser.parseHtml(html).single;
+      const style = TextStyle(fontSize: 18, height: 1.7);
+      final span = block.buildTextSpan(
+        baseStyle: style,
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 320,
+            child: StructuredRubyText(
+              block: block,
+              span: span,
+              baseStyle: style,
+              linkColor: Colors.blue,
+              backgroundColor: Colors.white,
+              textDirection: TextDirection.ltr,
+              textScaler: TextScaler.noScaling,
+              locale: const Locale('zh', 'CN'),
+              textAlign: TextAlign.start,
+            ),
+          ),
+        ),
+      ));
+
+      final text = tester.widget<Text>(find.byType(Text));
+      expect(text.textSpan!.toPlainText(), block.text);
+      expect(find.byType(StructuredRubyText), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
     test('slice preserves run styles and character boundaries', () {
       const block = StructuredBlock(
         type: StructuredBlockType.paragraph,

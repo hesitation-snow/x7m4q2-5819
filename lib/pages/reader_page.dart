@@ -466,6 +466,25 @@ class _ReaderPageState extends State<ReaderPage>
     );
   }
 
+  Widget _structuredTextWidget(
+    StructuredBlock block,
+    TextSpan span, {
+    Key? textKey,
+    required TextAlign textAlign,
+  }) =>
+      StructuredRubyText(
+        textKey: textKey,
+        block: block,
+        span: span,
+        baseStyle: _bodyTextStyle,
+        linkColor: _linkColor,
+        backgroundColor: _bgColor,
+        textDirection: TextDirection.ltr,
+        textScaler: _readerTextScaler,
+        locale: _readerLocale,
+        textAlign: textAlign,
+      );
+
   TextPainter _scrollTextPainter(int index,
       {double? viewportWidth, bool? lockedBody}) {
     final block = _blocks[index];
@@ -1242,6 +1261,7 @@ class _ReaderPageState extends State<ReaderPage>
     _syncVolumeKeys();
     _applyImmersive();
   }
+
   @override
   void didPop() => _syncVolumeKeys();
 
@@ -2729,14 +2749,24 @@ class _ReaderPageState extends State<ReaderPage>
       );
     }
 
-    Widget content = Text.rich(
-      key: _scrollTextKeys[index],
-      _scrollTextSpan(block, lockedBody: lockedBody),
-      textScaler: _readerTextScaler,
-      locale: _readerLocale,
-      textAlign:
-          _effectiveTextAlign(block.textAlign, isHeading: block.isHeading),
-    );
+    final textSpan = _scrollTextSpan(block, lockedBody: lockedBody);
+    final textAlign =
+        _effectiveTextAlign(block.textAlign, isHeading: block.isHeading);
+    final structured = block.structured;
+    Widget content = structured != null && !_isLockedText(block, lockedBody)
+        ? _structuredTextWidget(
+            structured,
+            textSpan,
+            textKey: _scrollTextKeys[index],
+            textAlign: textAlign,
+          )
+        : Text.rich(
+            key: _scrollTextKeys[index],
+            textSpan,
+            textScaler: _readerTextScaler,
+            locale: _readerLocale,
+            textAlign: textAlign,
+          );
 
     if (block.structured?.isBlockquote == true) {
       content = Container(
@@ -3161,13 +3191,20 @@ class _ReaderPageState extends State<ReaderPage>
                 );
               }
 
-              Widget textWidget = Text.rich(
-                span,
-                textScaler: _readerTextScaler,
-                locale: _readerLocale,
-                textAlign: _effectiveTextAlign(it.structured?.align,
-                    isHeading: it.structured?.isHeading ?? false),
-              );
+              final textAlign = _effectiveTextAlign(it.structured?.align,
+                  isHeading: it.structured?.isHeading ?? false);
+              Widget textWidget = it.structured != null && !isLocked
+                  ? _structuredTextWidget(
+                      it.structured!,
+                      span,
+                      textAlign: textAlign,
+                    )
+                  : Text.rich(
+                      span,
+                      textScaler: _readerTextScaler,
+                      locale: _readerLocale,
+                      textAlign: textAlign,
+                    );
 
               if (it.structured?.isBlockquote == true) {
                 textWidget = Container(
