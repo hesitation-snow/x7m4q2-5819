@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yomiru/reader/structured_content.dart';
@@ -246,6 +247,45 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('superscript and subscript annotations paint without errors',
+        (tester) async {
+      const html = '<p>H<sup>2</sup>O 与 H<sub>2</sub>O</p>';
+      final block = StructuredContentParser.parseHtml(html).single;
+      const style = TextStyle(fontSize: 20, height: 1.5, color: Colors.black);
+      final span = block.buildTextSpan(
+        baseStyle: style,
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 300,
+            child: StructuredRubyText(
+              block: block,
+              span: span,
+              baseStyle: style,
+              linkColor: Colors.blue,
+              backgroundColor: Colors.white,
+              textDirection: TextDirection.ltr,
+              textScaler: TextScaler.noScaling,
+              locale: const Locale('zh', 'CN'),
+              textAlign: TextAlign.start,
+            ),
+          ),
+        ),
+      ));
+
+      expect(span.toPlainText(), 'H2O 与 H2O');
+      expect(block.verticalAnnotations(
+        baseStyle: style,
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+      ), hasLength(2));
+      expect(tester.takeException(), isNull);
+    });
+
     test('slice preserves run styles and character boundaries', () {
       const block = StructuredBlock(
         type: StructuredBlockType.paragraph,
@@ -403,6 +443,53 @@ void main() {
       final supRun = b.runs.firstWhere((r) => r.text == '[1]');
       expect(supRun.fontSizeMultiplier, 0.75);
       expect(supRun.isFootnote, isTrue);
+      expect(supRun.verticalAlignment, StructuredVerticalAlignment.superscript);
+      final annotations = b.verticalAnnotations(
+        baseStyle: const TextStyle(fontSize: 18),
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+      );
+      expect(annotations, hasLength(1));
+      expect(annotations.single.start, 5);
+      expect(annotations.single.end, 8);
+    });
+
+    test('inline CSS font size, weight, and vertical alignment are parsed', () {
+      const html = '<p><span style="font-size: 20px; font-weight: 500">中</span>'
+          '<span style="font-size: 120%; font-weight: 600">A</span>'
+          '<span style="vertical-align: sub">2</span></p>';
+      final block = StructuredContentParser.parseHtml(html).single;
+      final medium = block.runs.firstWhere((run) => run.text == '中');
+      final semibold = block.runs.firstWhere((run) => run.text == 'A');
+      final subscript = block.runs.firstWhere((run) => run.text == '2');
+
+      expect(medium.fontSizeMultiplier, closeTo(1.25, 0.001));
+      expect(medium.fontWeight, FontWeight.w500);
+      expect(semibold.fontSizeMultiplier, closeTo(1.2, 0.001));
+      expect(semibold.fontWeight, FontWeight.w600);
+      expect(subscript.verticalAlignment, StructuredVerticalAlignment.subscript);
+    });
+
+    test('footnote marker stays copyable and invokes its reference callback', () {
+      const html = '<p>正文<sup class="ln-footnote-ref">[1]</sup>后文</p>';
+      final block = StructuredContentParser.parseHtml(html).single;
+      String? tappedReference;
+      final span = block.buildTextSpan(
+        baseStyle: const TextStyle(fontSize: 18),
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+        onFootnoteTap: (reference) => tappedReference = reference,
+      );
+      final marker = span.children!.whereType<TextSpan>().firstWhere(
+            (child) => child.text == '[1]',
+          );
+
+      expect(span.toPlainText(), block.text);
+      expect(marker.style?.color, Colors.transparent);
+      final recognizer = marker.recognizer! as TapGestureRecognizer;
+      recognizer.onTap!.call();
+      recognizer.dispose();
+      expect(tappedReference, '1');
     });
 
     test('buildTextSpan provides explicit decorationColor and thickness for strikethrough', () {

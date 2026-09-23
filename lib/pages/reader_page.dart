@@ -39,6 +39,11 @@ import '../reader/structured_content.dart';
 import '../reader/reader_typography.dart';
 import '../widgets/reader_typography_sheet.dart';
 
+final RegExp _readerFootnoteDefinitionPattern =
+    RegExp(r'^[\s\u3000]*\[\s*([^\]]+?)\s*\]\s*(.*)$', dotAll: true);
+final RegExp _readerFootnoteReferencePattern =
+    RegExp(r'\[\s*([^\]]+?)\s*\]');
+
 /// 正文块:文本(可含链接区间)或插画
 class _BodyBlock {
   final String? image;
@@ -184,6 +189,7 @@ class _ReaderPageState extends State<ReaderPage>
   static int _parsedCacheGeneration = ReaderContentCache.generation;
   String _title = '';
   List<_BodyBlock> _blocks = [_BodyBlock.text('加载中…')];
+  Map<String, String> _footnoteDefinitions = const {};
   int? _prevId;
   String? _prevTitle;
   int? _prevVolumeId;
@@ -457,6 +463,7 @@ class _ReaderPageState extends State<ReaderPage>
                 _suppressNextTextTap = true;
                 _openLink(url);
               },
+        onFootnoteTap: _showFootnote,
         forMeasurement: false,
       );
     }
@@ -653,6 +660,19 @@ class _ReaderPageState extends State<ReaderPage>
 
   void _applyBlocks(List<_BodyBlock> blocks) {
     _blocks = blocks;
+    final footnotes = <String, String>{};
+    for (final block in blocks) {
+      final match = _readerFootnoteDefinitionPattern.firstMatch(block.text);
+      final reference = match?.group(1)?.trim();
+      final definition = match?.group(2)?.trim();
+      if (reference != null &&
+          reference.isNotEmpty &&
+          definition != null &&
+          definition.isNotEmpty) {
+        footnotes.putIfAbsent(reference, () => definition);
+      }
+    }
+    _footnoteDefinitions = Map.unmodifiable(footnotes);
     _pageLayouts.clear();
     _scrollLayouts.clear();
     _scrollLayoutIndexKey = '';
@@ -2054,6 +2074,109 @@ class _ReaderPageState extends State<ReaderPage>
   Color get _linkColor =>
       _isDarkBg ? const Color(0xFF7EB6FF) : const Color(0xFF2F6FBF);
 
+  String? _footnoteDefinition(String reference) {
+    return _footnoteDefinitions[reference.trim()];
+  }
+
+  void _showFootnote(String reference) {
+    _suppressNextTextTap = true;
+    final note = _footnoteDefinition(reference);
+    if (note == null || note.isEmpty) {
+      showLkError(context, '没有找到对应注释');
+      return;
+    }
+    final noteText = note;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      sheetAnimationStyle: AppMotion.style(context),
+      backgroundColor: _bgColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (sheetContext) {
+        final screenHeight = MediaQuery.sizeOf(sheetContext).height;
+        return SafeArea(
+          top: false,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: screenHeight * 0.62),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 34,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: _textColor.withValues(alpha: 0.26),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Text(
+                        '注释',
+                        style: TextStyle(
+                          color: _textColor,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 9, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _linkColor.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '[$reference]',
+                          style: TextStyle(
+                            color: _linkColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: '关闭',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => Navigator.pop(sheetContext),
+                        icon: Icon(Icons.close_rounded,
+                            color: _textColor.withValues(alpha: 0.68)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Text(
+                        noteText,
+                        style: TextStyle(
+                          color: _textColor.withValues(alpha: 0.92),
+                          fontSize: 16,
+                          height: 1.65,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   /// 正文内链接:系统浏览器打开
   Future<void> _openLink(String url) async {
     var u = url.trim();
@@ -3182,6 +3305,7 @@ class _ReaderPageState extends State<ReaderPage>
                   baseStyle: _bodyTextStyle,
                   linkColor: _linkColor,
                   backgroundColor: _bgColor,
+                  onFootnoteTap: _showFootnote,
                   forMeasurement: false,
                 );
               } else {
@@ -3421,17 +3545,49 @@ class _ReaderPageState extends State<ReaderPage>
   List<InlineSpan> _spansFor(_BodyBlock b) => _spans(b.text, b.links);
 
   List<InlineSpan> _spans(String text, List<(int, int, String)> links) {
-    if (links.isEmpty) return [TextSpan(text: text)];
+    final tokens = <(int, int, String?, String?)>[];
+    for (final (start, end, url) in links) {
+      tokens.add((start, end, url, null));
+    }
+    for (final match in _readerFootnoteReferencePattern.allMatches(text)) {
+      final reference = match.group(1)?.trim();
+      final isDefinitionLine = match.start == 0 &&
+          reference != null &&
+          _footnoteDefinition(reference) == text.substring(match.end).trim();
+      if (reference != null &&
+          reference.isNotEmpty &&
+          !isDefinitionLine &&
+          _footnoteDefinition(reference) != null) {
+        tokens.add((match.start, match.end, null, reference));
+      }
+    }
+    if (tokens.isEmpty) return [TextSpan(text: text)];
+    tokens.sort((a, b) {
+      final startOrder = a.$1.compareTo(b.$1);
+      if (startOrder != 0) return startOrder;
+      // If malformed source overlaps a URL and a note marker, preserve the URL.
+      return (a.$3 == null ? 1 : 0).compareTo(b.$3 == null ? 1 : 0);
+    });
+
     final out = <InlineSpan>[];
     final linkStyle = TextStyle(
         color: _linkColor,
         decoration: TextDecoration.underline,
         decorationColor: _linkColor);
     var pos = 0;
-    for (final (s, e, url) in links) {
-      if (s > pos) out.add(TextSpan(text: text.substring(pos, s)));
-      out.add(TextSpan(
-          text: text.substring(s, e),
+    for (final (start, end, url, reference) in tokens) {
+      if (start < pos || end <= start || end > text.length) continue;
+      if (start > pos) out.add(TextSpan(text: text.substring(pos, start)));
+      if (reference != null) {
+        out.add(TextSpan(
+          text: text.substring(start, end),
+          style: linkStyle.copyWith(fontSize: _fontSize * 0.75),
+          recognizer: TapGestureRecognizer()
+            ..onTap = () => _showFootnote(reference),
+        ));
+      } else if (url != null) {
+        out.add(TextSpan(
+          text: text.substring(start, end),
           style: linkStyle,
           // 翻页模式短按优先翻页；滚动模式仍可直接打开正文链接。
           recognizer: _paged
@@ -3441,7 +3597,8 @@ class _ReaderPageState extends State<ReaderPage>
                   _suppressNextTextTap = true;
                   _openLink(url);
                 })));
-      pos = e;
+      }
+      pos = end;
     }
     if (pos < text.length) out.add(TextSpan(text: text.substring(pos)));
     return out;

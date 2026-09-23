@@ -9,6 +9,19 @@ import 'package:html/parser.dart' as html_parser;
 const double _rubyAnnotationFontSizeScale = 0.58;
 const double _rubyMinimumLineHeight = 2.30;
 const double _rubyAnnotationGapScale = 0.08;
+final RegExp _footnoteMarkerPattern = RegExp(r'\[\s*([^\]]+?)\s*\]');
+final RegExp _bareFootnoteReferencePattern = RegExp(r'^[A-Za-z0-9_.:-]+$');
+final RegExp _cssFontSizePattern =
+    RegExp(r'^([+-]?(?:\d+\.?\d*|\.\d+))\s*(px|pt|em|rem|%)?$');
+
+String? _footnoteReference(String text, {bool allowBare = false}) {
+  final bracketed = _footnoteMarkerPattern.firstMatch(text)?.group(1)?.trim();
+  if (bracketed != null && bracketed.isNotEmpty) return bracketed;
+  final bare = text.trim();
+  return allowBare && _bareFootnoteReferencePattern.hasMatch(bare)
+      ? bare
+      : null;
+}
 
 /// 结构化正文块类型
 enum StructuredBlockType {
@@ -19,6 +32,8 @@ enum StructuredBlockType {
   divider,
   image,
 }
+
+enum StructuredVerticalAlignment { superscript, subscript }
 
 /// 结构化行内样式片段
 @immutable
@@ -31,6 +46,8 @@ class StructuredInlineRun {
     this.isStrikethrough = false,
     this.color,
     this.fontSizeMultiplier,
+    this.fontWeight,
+    this.verticalAlignment,
     this.linkUrl,
     this.rubyText,
     this.rubyBaseText,
@@ -44,6 +61,8 @@ class StructuredInlineRun {
   final bool isStrikethrough;
   final Color? color;
   final double? fontSizeMultiplier;
+  final FontWeight? fontWeight;
+  final StructuredVerticalAlignment? verticalAlignment;
   final String? linkUrl;
   final String? rubyText;
   final String? rubyBaseText;
@@ -57,6 +76,8 @@ class StructuredInlineRun {
     bool? isStrikethrough,
     Color? color,
     double? fontSizeMultiplier,
+    FontWeight? fontWeight,
+    StructuredVerticalAlignment? verticalAlignment,
     String? linkUrl,
     String? rubyText,
     String? rubyBaseText,
@@ -70,6 +91,8 @@ class StructuredInlineRun {
       isStrikethrough: isStrikethrough ?? this.isStrikethrough,
       color: color ?? this.color,
       fontSizeMultiplier: fontSizeMultiplier ?? this.fontSizeMultiplier,
+      fontWeight: fontWeight ?? this.fontWeight,
+      verticalAlignment: verticalAlignment ?? this.verticalAlignment,
       linkUrl: linkUrl ?? this.linkUrl,
       rubyText: rubyText ?? this.rubyText,
       rubyBaseText: rubyBaseText ?? this.rubyBaseText,
@@ -90,6 +113,8 @@ class StructuredInlineRun {
           color == other.color &&
           fontSizeMultiplier == other.fontSizeMultiplier &&
           linkUrl == other.linkUrl &&
+          fontWeight == other.fontWeight &&
+          verticalAlignment == other.verticalAlignment &&
           rubyText == other.rubyText &&
           rubyBaseText == other.rubyBaseText &&
           isFootnote == other.isFootnote;
@@ -104,6 +129,8 @@ class StructuredInlineRun {
         color,
         fontSizeMultiplier,
         linkUrl,
+        fontWeight,
+        verticalAlignment,
         rubyText,
         rubyBaseText,
         isFootnote,
@@ -218,6 +245,46 @@ class StructuredBlock {
     return List.unmodifiable(result);
   }
 
+  /// 上标、下标复用正文字符区间，分页、选择和复制仍使用原始文本偏移。
+  List<StructuredVerticalAnnotation> verticalAnnotations({
+    required TextStyle baseStyle,
+    required Color linkColor,
+    required Color backgroundColor,
+  }) {
+    if (runs.isEmpty) return const [];
+    final result = <StructuredVerticalAnnotation>[];
+    var offset = 0;
+    for (final run in runs) {
+      final alignment = run.verticalAlignment;
+      if (alignment != null && run.text.isNotEmpty) {
+        final isClickableFootnote = run.isFootnote &&
+            _footnoteReference(run.text, allowBare: true) != null;
+        final style = _styleForRun(
+          run,
+          baseStyle: baseStyle,
+          linkColor: linkColor,
+          backgroundColor: backgroundColor,
+        );
+        result.add(StructuredVerticalAnnotation(
+          start: offset,
+          end: offset + run.text.length,
+          text: run.text,
+          alignment: alignment,
+          style: style.copyWith(
+            color: isClickableFootnote ? linkColor : style.color,
+            decoration: isClickableFootnote
+                ? TextDecoration.underline
+                : TextDecoration.none,
+            decorationColor: isClickableFootnote ? linkColor : null,
+            height: 1.0,
+          ),
+        ));
+      }
+      offset += run.text.length;
+    }
+    return List.unmodifiable(result);
+  }
+
   TextStyle _styleForRun(
     StructuredInlineRun run, {
     required TextStyle baseStyle,
@@ -236,6 +303,9 @@ class StructuredBlock {
       style = style.copyWith(color: baseStyle.color?.withValues(alpha: 0.88));
     }
     if (run.isBold) style = style.copyWith(fontWeight: FontWeight.bold);
+    if (run.fontWeight != null) {
+      style = style.copyWith(fontWeight: run.fontWeight);
+    }
     if (run.isItalic) style = style.copyWith(fontStyle: FontStyle.italic);
     if (run.linkUrl != null) {
       style = style.copyWith(color: linkColor);
@@ -357,6 +427,7 @@ class StructuredBlock {
     required Color linkColor,
     required Color backgroundColor,
     void Function(String url)? onLinkTap,
+    void Function(String reference)? onFootnoteTap,
     bool forMeasurement = false,
   }) {
     TextStyle blockStyle = baseStyle;
@@ -383,6 +454,9 @@ class StructuredBlock {
 
       if (run.isBold) {
         runStyle = runStyle.copyWith(fontWeight: FontWeight.bold);
+      }
+      if (run.fontWeight != null) {
+        runStyle = runStyle.copyWith(fontWeight: run.fontWeight);
       }
       if (run.isItalic) {
         runStyle = runStyle.copyWith(fontStyle: FontStyle.italic);
@@ -434,8 +508,23 @@ class StructuredBlock {
         );
       }
 
+      final footnoteReference = run.isFootnote && onFootnoteTap != null
+          ? _footnoteReference(run.text, allowBare: true)
+          : null;
+      if (footnoteReference != null && footnoteReference.isNotEmpty) {
+        runStyle = runStyle.copyWith(
+          color: linkColor,
+          decoration: TextDecoration.underline,
+          decorationColor: linkColor.withValues(alpha: 0.72),
+          decorationThickness: 0.8,
+        );
+      }
+
       GestureRecognizer? recognizer;
-      if (!forMeasurement && run.linkUrl != null && onLinkTap != null) {
+      if (!forMeasurement && footnoteReference != null) {
+        recognizer = TapGestureRecognizer()
+          ..onTap = () => onFootnoteTap!(footnoteReference);
+      } else if (!forMeasurement && run.linkUrl != null && onLinkTap != null) {
         recognizer = TapGestureRecognizer()
           ..onTap = () => onLinkTap(run.linkUrl!);
       }
@@ -480,9 +569,20 @@ class StructuredBlock {
         }
       }
 
+      final renderedStyle = run.verticalAlignment == null
+          ? runStyle
+          : runStyle.copyWith(
+              color: Colors.transparent,
+              decoration: TextDecoration.none,
+              decorationColor: Colors.transparent,
+              height: run.verticalAlignment ==
+                      StructuredVerticalAlignment.superscript
+                  ? math.max(runStyle.height ?? 1.0, 1.18)
+                  : runStyle.height,
+            );
       spans.add(TextSpan(
         text: run.text,
-        style: runStyle,
+        style: renderedStyle,
         recognizer: recognizer,
       ));
     }
@@ -522,7 +622,24 @@ class StructuredRubyAnnotation {
   final TextStyle style;
 }
 
-/// 在不改变正文字符索引的前提下，把 ruby 注音绘制在正文上方。
+@immutable
+class StructuredVerticalAnnotation {
+  const StructuredVerticalAnnotation({
+    required this.start,
+    required this.end,
+    required this.text,
+    required this.alignment,
+    required this.style,
+  });
+
+  final int start;
+  final int end;
+  final String text;
+  final StructuredVerticalAlignment alignment;
+  final TextStyle style;
+}
+
+/// 在不改变正文字符索引的前提下，把 ruby 注音及上/下标绘制在正文上。
 /// Text.rich 仍负责换行、选择与复制；前景画笔复用相同 TextSpan 布局。
 class StructuredRubyText extends StatelessWidget {
   const StructuredRubyText({
@@ -557,6 +674,11 @@ class StructuredRubyText extends StatelessWidget {
       linkColor: linkColor,
       backgroundColor: backgroundColor,
     );
+    final verticalAnnotations = block.verticalAnnotations(
+      baseStyle: baseStyle,
+      linkColor: linkColor,
+      backgroundColor: backgroundColor,
+    );
     final text = Text.rich(
       key: textKey,
       span,
@@ -565,11 +687,12 @@ class StructuredRubyText extends StatelessWidget {
       textAlign: textAlign,
       textWidthBasis: TextWidthBasis.parent,
     );
-    if (annotations.isEmpty) return text;
+    if (annotations.isEmpty && verticalAnnotations.isEmpty) return text;
     return CustomPaint(
       foregroundPainter: _StructuredRubyPainter(
         span: span,
         annotations: annotations,
+        verticalAnnotations: verticalAnnotations,
         textDirection: textDirection,
         textScaler: textScaler,
         locale: locale,
@@ -584,6 +707,7 @@ class _StructuredRubyPainter extends CustomPainter {
   const _StructuredRubyPainter({
     required this.span,
     required this.annotations,
+    required this.verticalAnnotations,
     required this.textDirection,
     required this.textScaler,
     required this.locale,
@@ -592,6 +716,7 @@ class _StructuredRubyPainter extends CustomPainter {
 
   final TextSpan span;
   final List<StructuredRubyAnnotation> annotations;
+  final List<StructuredVerticalAnnotation> verticalAnnotations;
   final TextDirection textDirection;
   final TextScaler textScaler;
   final Locale? locale;
@@ -599,7 +724,10 @@ class _StructuredRubyPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (size.width <= 0 || annotations.isEmpty) return;
+    if (size.width <= 0 ||
+        (annotations.isEmpty && verticalAnnotations.isEmpty)) {
+      return;
+    }
     final paragraph = TextPainter(
       text: span,
       textDirection: textDirection,
@@ -650,6 +778,40 @@ class _StructuredRubyPainter extends CustomPainter {
       final dy = firstTop - notePainter.height - rubyGap;
       notePainter.paint(canvas, Offset(dx, dy));
     }
+    for (final annotation in verticalAnnotations) {
+      if (annotation.start < 0 ||
+          annotation.end <= annotation.start ||
+          annotation.end > paragraph.plainText.length) {
+        continue;
+      }
+      final boxes = paragraph.getBoxesForSelection(
+        TextSelection(
+          baseOffset: annotation.start,
+          extentOffset: annotation.end,
+        ),
+        boxHeightStyle: ui.BoxHeightStyle.tight,
+        boxWidthStyle: ui.BoxWidthStyle.tight,
+      );
+      if (boxes.isEmpty) continue;
+
+      final left = boxes.map((box) => box.left).reduce(math.min);
+      final right = boxes.map((box) => box.right).reduce(math.max);
+      final box = boxes.first;
+      notePainter.text = TextSpan(
+        text: annotation.text,
+        style: annotation.style,
+      );
+      notePainter.layout();
+      final center = (left + right) / 2;
+      final dx = (center - notePainter.width / 2)
+          .clamp(0.0, math.max(0.0, size.width - notePainter.width))
+          .toDouble();
+      final dy = annotation.alignment == StructuredVerticalAlignment.superscript
+          ? box.top -
+              textScaler.scale((annotation.style.fontSize ?? 16.0) * 0.16)
+          : box.bottom - notePainter.height * 0.78;
+      notePainter.paint(canvas, Offset(dx, dy));
+    }
     notePainter.dispose();
     paragraph.dispose();
   }
@@ -658,6 +820,7 @@ class _StructuredRubyPainter extends CustomPainter {
   bool shouldRepaint(covariant _StructuredRubyPainter oldDelegate) =>
       !identical(oldDelegate.span, span) ||
       oldDelegate.annotations != annotations ||
+      oldDelegate.verticalAnnotations != verticalAnnotations ||
       oldDelegate.textDirection != textDirection ||
       oldDelegate.textScaler != textScaler ||
       oldDelegate.locale != locale ||
@@ -686,6 +849,8 @@ class _StyleScope {
     this.isStrikethrough = false,
     this.color,
     this.fontSizeMultiplier,
+    this.fontWeight,
+    this.verticalAlignment,
     this.linkUrl,
     this.headingLevel = 0,
     this.isBlockquote = false,
@@ -703,6 +868,8 @@ class _StyleScope {
   final bool isStrikethrough;
   final Color? color;
   final double? fontSizeMultiplier;
+  final FontWeight? fontWeight;
+  final StructuredVerticalAlignment? verticalAlignment;
   final String? linkUrl;
   final int headingLevel;
   final bool isBlockquote;
@@ -720,6 +887,8 @@ class _StyleScope {
     bool? isStrikethrough,
     Color? color,
     double? fontSizeMultiplier,
+    FontWeight? fontWeight,
+    StructuredVerticalAlignment? verticalAlignment,
     String? linkUrl,
     int? headingLevel,
     bool? isBlockquote,
@@ -737,6 +906,8 @@ class _StyleScope {
       isStrikethrough: isStrikethrough ?? this.isStrikethrough,
       color: color ?? this.color,
       fontSizeMultiplier: fontSizeMultiplier ?? this.fontSizeMultiplier,
+      fontWeight: fontWeight ?? this.fontWeight,
+      verticalAlignment: verticalAlignment ?? this.verticalAlignment,
       linkUrl: linkUrl ?? this.linkUrl,
       headingLevel: headingLevel ?? this.headingLevel,
       isBlockquote: isBlockquote ?? this.isBlockquote,
@@ -881,6 +1052,8 @@ class StructuredContentParser {
                 isStrikethrough: scope.isStrikethrough,
                 color: scope.color,
                 fontSizeMultiplier: scope.fontSizeMultiplier,
+                fontWeight: scope.fontWeight,
+                verticalAlignment: scope.verticalAlignment,
                 linkUrl: scope.linkUrl,
                 isFootnote: scope.isFootnote,
               ));
@@ -969,6 +1142,8 @@ class StructuredContentParser {
             isStrikethrough: scope.isStrikethrough,
             color: scope.color,
             fontSizeMultiplier: scope.fontSizeMultiplier,
+            fontWeight: scope.fontWeight,
+            verticalAlignment: scope.verticalAlignment,
             linkUrl: scope.linkUrl,
             rubyText: rubyAnnotation.isNotEmpty ? rubyAnnotation : null,
             rubyBaseText: rubyAnnotation.isNotEmpty ? baseText : null,
@@ -989,6 +1164,7 @@ class StructuredContentParser {
         childScope = childScope.copyWith(
           headingLevel: lvl,
           isBold: true,
+          fontWeight: FontWeight.bold,
         );
       }
 
@@ -1030,7 +1206,10 @@ class StructuredContentParser {
 
       // 行内样式标签
       if (tagName == 'b' || tagName == 'strong') {
-        childScope = childScope.copyWith(isBold: true);
+        childScope = childScope.copyWith(
+          isBold: true,
+          fontWeight: FontWeight.bold,
+        );
       }
       if (tagName == 'i' || tagName == 'em') {
         childScope = childScope.copyWith(isItalic: true);
@@ -1046,6 +1225,11 @@ class StructuredContentParser {
           fontSizeMultiplier: (childScope.fontSizeMultiplier ?? 1.0) * 0.82,
         );
       }
+      if (tagName == 'sub') {
+        childScope = childScope.copyWith(
+          verticalAlignment: StructuredVerticalAlignment.subscript,
+        );
+      }
       if (tagName == 'big') {
         childScope = childScope.copyWith(
           fontSizeMultiplier: (childScope.fontSizeMultiplier ?? 1.0) * 1.15,
@@ -1054,7 +1238,10 @@ class StructuredContentParser {
       if (tagName == 'sup' || node.classes.contains('ln-footnote-ref')) {
         childScope = childScope.copyWith(
           fontSizeMultiplier: (childScope.fontSizeMultiplier ?? 1.0) * 0.75,
-          isFootnote: true,
+          isFootnote: childScope.isFootnote ||
+              node.classes.contains('ln-footnote-ref') ||
+              (tagName == 'sup' && _footnoteMarkerPattern.hasMatch(node.text)),
+          verticalAlignment: StructuredVerticalAlignment.superscript,
         );
       }
 
@@ -1091,6 +1278,11 @@ class StructuredContentParser {
       final styleAttr = node.attributes['style'];
       if (styleAttr != null && styleAttr.isNotEmpty) {
         childScope = _applyInlineStyle(styleAttr, childScope);
+      }
+      if (childScope.verticalAlignment ==
+              StructuredVerticalAlignment.superscript &&
+          _footnoteMarkerPattern.hasMatch(node.text)) {
+        childScope = childScope.copyWith(isFootnote: true);
       }
 
       final isBlockElement = tagName == 'p' ||
@@ -1175,14 +1367,36 @@ class StructuredContentParser {
       final val = kv.sublist(1).join(':').trim().toLowerCase();
 
       if (key == 'font-weight') {
-        if (val == 'bold' ||
-            val == 'bolder' ||
-            val == '700' ||
-            val == '800' ||
-            val == '900') {
-          updated = updated.copyWith(isBold: true);
-        } else if (val == 'normal' || val == '400') {
-          updated = updated.copyWith(isBold: false);
+        final weight = _parseCssFontWeight(val);
+        if (weight != null) {
+          updated = updated.copyWith(
+            isBold: weight.value >= FontWeight.w600.value,
+            fontWeight: weight,
+          );
+        }
+      } else if (key == 'font-size') {
+        final multiplier = _parseCssFontSizeMultiplier(val);
+        if (multiplier != null) {
+          final isRelative = val == 'smaller' ||
+              val == 'larger' ||
+              (val.endsWith('em') && !val.endsWith('rem')) ||
+              val.endsWith('%');
+          updated = updated.copyWith(
+            fontSizeMultiplier:
+                isRelative
+                    ? (updated.fontSizeMultiplier ?? 1.0) * multiplier
+                    : multiplier,
+          );
+        }
+      } else if (key == 'vertical-align') {
+        if (val == 'super') {
+          updated = updated.copyWith(
+            verticalAlignment: StructuredVerticalAlignment.superscript,
+          );
+        } else if (val == 'sub') {
+          updated = updated.copyWith(
+            verticalAlignment: StructuredVerticalAlignment.subscript,
+          );
         }
       } else if (key == 'font-style') {
         if (val == 'italic' || val == 'oblique') {
@@ -1215,6 +1429,71 @@ class StructuredContentParser {
       }
     }
     return updated;
+  }
+
+  static FontWeight? _parseCssFontWeight(String value) {
+    switch (value) {
+      case 'normal':
+      case 'lighter':
+      case '400':
+        return FontWeight.w400;
+      case 'bold':
+      case 'bolder':
+      case '700':
+        return FontWeight.w700;
+      case '100':
+        return FontWeight.w100;
+      case '200':
+        return FontWeight.w200;
+      case '300':
+        return FontWeight.w300;
+      case '500':
+        return FontWeight.w500;
+      case '600':
+        return FontWeight.w600;
+      case '800':
+        return FontWeight.w800;
+      case '900':
+        return FontWeight.w900;
+      default:
+        return null;
+    }
+  }
+
+  static double? _parseCssFontSizeMultiplier(String value) {
+    switch (value) {
+      case 'xx-small':
+        return 0.60;
+      case 'x-small':
+        return 0.75;
+      case 'small':
+      case 'smaller':
+        return 0.83;
+      case 'medium':
+        return 1.0;
+      case 'large':
+      case 'larger':
+        return 1.2;
+      case 'x-large':
+        return 1.5;
+      case 'xx-large':
+        return 2.0;
+    }
+
+    final match = _cssFontSizePattern.firstMatch(value);
+    if (match == null) return null;
+    final amount = double.tryParse(match.group(1)!);
+    if (amount == null || amount <= 0) return null;
+    final unit = match.group(2) ?? 'px';
+    final multiplier = switch (unit) {
+      'px' => amount / 16.0,
+      'pt' => amount * (4.0 / 3.0) / 16.0,
+      'em' || 'rem' => amount,
+      '%' => amount / 100.0,
+      _ => null,
+    };
+    if (multiplier == null || !multiplier.isFinite) return null;
+    return multiplier.clamp(0.25, 4.0).toDouble();
   }
 
   /// 支持 #RGB, #RRGGBB, #AARRGGBB, rgb(r, g, b), rgba(r, g, b, a) 以及标准颜色名
