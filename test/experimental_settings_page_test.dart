@@ -31,8 +31,8 @@ void main() {
     await tester.tap(find.widgetWithText(SwitchListTile, '书籍导出'));
     await tester.pumpAndSettle();
 
-    // 应弹出版权与使用须知对话框
-    expect(find.text('版权与使用须知'), findsOneWidget);
+    // 应弹出使用须知对话框
+    expect(find.text('使用须知'), findsOneWidget);
     expect(
       find.text('作品版权归原作者或相应权利人所有。请遵守站点规则及作品授权要求，未经许可，请勿上传、分享、售卖或用于其他商业用途。'),
       findsOneWidget,
@@ -61,6 +61,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(LKStore.epubDownloadEnabled.value, isFalse);
-    expect(find.text('版权与使用须知'), findsNothing);
+    expect(find.text('使用须知'), findsNothing);
   });
 }

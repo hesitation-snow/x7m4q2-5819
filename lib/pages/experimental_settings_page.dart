@@ -50,6 +50,7 @@ class ExperimentalSettingsPage extends StatelessWidget {
       ),
       child: ListTileTheme(
         data: ListTileThemeData(
+          titleAlignment: ListTileTitleAlignment.center,
           tileColor: Colors.transparent,
           iconColor: scheme.onSurfaceVariant,
           contentPadding: const EdgeInsets.symmetric(horizontal: 16),
@@ -114,9 +115,8 @@ class ExperimentalSettingsPage extends StatelessWidget {
                 ),
                 title: const Text('书籍导出'),
                 subtitle: const Text(
-                  '开启后，在书籍详情页菜单中提供「书籍导出」功能，支持选择导出为 EPUB 或 TXT 。',
+                  '在书籍详情页支持导出为 EPUB 或 TXT',
                 ),
-                isThreeLine: true,
                 value: enabled,
                 onChanged: (v) => _handleBookExportToggle(context, v),
               ),
@@ -130,9 +130,8 @@ class ExperimentalSettingsPage extends StatelessWidget {
                 ),
                 title: const Text('正文样式增强'),
                 subtitle: const Text(
-                  '保留作者设置的标题、强调与注释样式。',
+                  '保留正文的标题、强调与注释样式',
                 ),
-                isThreeLine: true,
                 value: enabled,
                 onChanged: (v) => LKStore.setEnhancedContentStyleEnabled(v),
               ),
