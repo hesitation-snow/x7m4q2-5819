@@ -83,7 +83,28 @@ class LKApi {
     return _bookList(d);
   }
 
-  /// 官网首页「最新」频道的专用信息流。
+  /// 官网「新书」分类使用 home-feed-v1 的默认 new_books 场景，不能传 channel。
+  static Future<List<LKBook>> homeNewBooks(int page,
+      {int pageSize = 20, bool forceRefresh = false}) async {
+    final size = LKClient.clampPageSize(pageSize);
+    final d = await client.post(
+      '/api/bff/home-feed-v1',
+      client.authed({
+        'page': page,
+        'pageSize': size,
+        'page_size': size,
+        'read_filter': 'all',
+        'status_filter': 'all',
+        'category_filter': 'all',
+      }),
+      cacheKey: 'home_new_books-${client.session.uid}-$page-$size',
+      allowCachedFallback: false,
+      forceRefresh: forceRefresh,
+    );
+    return _bookList(d);
+  }
+
+  /// 官网首页「最近更新」频道的专用信息流。
   static Future<List<LKBook>> homeRecentUpdatesFeed(int page,
       {int pageSize = 20, bool forceRefresh = false}) async {
     final size = LKClient.clampPageSize(pageSize);
@@ -108,10 +129,19 @@ class LKApi {
   }
 
   static Future<List<LKBook>> rank(int page,
-      {int pageSize = 20, bool forceRefresh = false}) async {
+      {int pageSize = 20,
+      String rankScene = 'weekly_hot',
+      bool forceRefresh = false}) async {
+    final size = LKClient.clampPageSize(pageSize);
     final d = await client.post(
-        '/api/bff/book-rank-list-v1', {'page': page, 'pageSize': pageSize},
-        cacheKey: 'book_rank-$page-$pageSize',
+        '/api/bff/book-rank-list-v1',
+        client.authed({
+          'rank_scene': rankScene,
+          'page': page,
+          'pageSize': size,
+          'page_size': size,
+        }),
+        cacheKey: 'book_rank_${client.session.uid}_$rankScene-$page-$size',
         allowCachedFallback: false,
         forceRefresh: forceRefresh);
     return _bookList(d);
@@ -257,9 +287,8 @@ class LKApi {
   static Future<LKChapterDetail> _fetchChapterDetail(
       int bookId, int chapterId) async {
     final loggedIn = client.session.isLoggedIn;
-    final accessMessage = loggedIn
-        ? '无法阅读\n没有权限访问或者内容已删除'
-        : '该正文可能需要登录才能访问,请先登录。';
+    final accessMessage =
+        loggedIn ? '无法阅读\n没有权限访问或者内容已删除' : '该正文可能需要登录才能访问,请先登录。';
     late final Map<String, dynamic> data;
     try {
       data = await client.post(

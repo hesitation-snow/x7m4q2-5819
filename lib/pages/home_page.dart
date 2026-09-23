@@ -48,9 +48,10 @@ class _HomePageState extends State<HomePage> {
   static const double _barFlex = 104.0;
 
   static const _channels = [
-    ('hot', '热门', '/api/bff/home-feed-v1'),
-    ('new', '最新', '/api/bff/home-recent-updates-feed-v1'),
-    ('rank', '排行榜', 'rank'),
+    ('hot', '热度', '/api/bff/home-feed-v1'),
+    ('recent', '最近更新', '/api/bff/home-recent-updates-feed-v1'),
+    ('rank', '排行', 'rank'),
+    ('new_books', '新书', '/api/bff/home-feed-v1'),
     ('lightnovel', '轻小说', '/api/bff/home-lightnovel-feed-v1'),
     ('original', '原创', '/api/bff/home-original-feed-v1'),
     ('fanfic', '同人', '/api/bff/home-fanfic-feed-v1'),
@@ -165,7 +166,7 @@ class _HomePageState extends State<HomePage> {
                 GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _channels.length - 3,
+                  itemCount: _channels.length - 4,
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
                     crossAxisSpacing: 10,
@@ -173,7 +174,7 @@ class _HomePageState extends State<HomePage> {
                     childAspectRatio: 2.25,
                   ),
                   itemBuilder: (context, index) {
-                    final channelIndex = index + 3;
+                    final channelIndex = index + 4;
                     final selected = channelIndex == _channel;
                     final scheme = theme.colorScheme;
                     return Material(
@@ -406,7 +407,7 @@ class _HomePageState extends State<HomePage> {
                                       const EdgeInsets.fromLTRB(12, 0, 12, 4),
                                   child: Row(
                                     children: [
-                                      for (var i = 0; i < 3; i++)
+                                      for (var i = 0; i < 4; i++)
                                         Expanded(
                                           child: InkWell(
                                             borderRadius:
@@ -465,7 +466,7 @@ class _HomePageState extends State<HomePage> {
                                       TextButton(
                                         onPressed: _showCategoryPicker,
                                         style: TextButton.styleFrom(
-                                          foregroundColor: _channel >= 3
+                                          foregroundColor: _channel >= 4
                                               ? Theme.of(context)
                                                   .colorScheme
                                                   .primary
@@ -483,7 +484,7 @@ class _HomePageState extends State<HomePage> {
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             Text(
-                                              _channel >= 3
+                                              _channel >= 4
                                                   ? _channels[_channel].$2
                                                   : '分类',
                                               maxLines: 1,
@@ -596,12 +597,18 @@ class _FeedTabState extends State<FeedTab> {
   int _anchorBookIndex = 0;
   double _anchorFraction = 0.0;
   final ScrollController _gridScrollController = ScrollController();
+  final ScrollController _listScrollController = ScrollController();
+  String _rankScene = 'weekly_hot';
 
   bool get _listMode => widget.listMode;
   bool get _showRecommend =>
       widget.channelCode == 'hot' ||
-      widget.channelCode == 'new' ||
+      widget.channelCode == 'recent' ||
       widget.channelCode == 'rank';
+
+  bool get _showRankSelector => widget.path == 'rank';
+
+  static const double _rankSelectorHeight = 46;
 
   @override
   void initState() {
@@ -619,6 +626,7 @@ class _FeedTabState extends State<FeedTab> {
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
     LKStore.gridColumnCount.removeListener(_onGridColumnsChanged);
     _gridScrollController.dispose();
+    _listScrollController.dispose();
     super.dispose();
   }
 
@@ -629,12 +637,15 @@ class _FeedTabState extends State<FeedTab> {
   void _updateGridAnchor({
     required List<LKBook> visibleItems,
     required bool showRecommend,
+    required bool showRankSelector,
   }) {
     if (!_gridScrollController.hasClients || visibleItems.isEmpty) return;
     final offset = _gridScrollController.offset;
-    final headerH = showRecommend
-        ? _HomeRecommendCard.heightForWidth(MediaQuery.sizeOf(context).width)
-        : 0.0;
+    final headerH = (showRankSelector ? _rankSelectorHeight : 0) +
+        (showRecommend
+            ? _HomeRecommendCard.heightForWidth(
+                MediaQuery.sizeOf(context).width)
+            : 0.0);
     const topPad = 6.0;
     if (offset <= headerH) {
       _anchorBookIndex = 0;
@@ -668,8 +679,13 @@ class _FeedTabState extends State<FeedTab> {
         ? _recommendBooks.where((b) => !b.isBrave).toList()
         : _recommendBooks;
     final showRecommend = _showRecommend && visibleRecommend.isNotEmpty;
+    final showRankSelector = _showRankSelector;
 
-    _updateGridAnchor(visibleItems: visibleItems, showRecommend: showRecommend);
+    _updateGridAnchor(
+      visibleItems: visibleItems,
+      showRecommend: showRecommend,
+      showRankSelector: showRankSelector,
+    );
     _lastGridColumnCount = newCount;
     setState(() {});
 
@@ -679,9 +695,11 @@ class _FeedTabState extends State<FeedTab> {
           visibleItems.isEmpty) {
         return;
       }
-      final headerH = showRecommend
-          ? _HomeRecommendCard.heightForWidth(MediaQuery.sizeOf(context).width)
-          : 0.0;
+      final headerH = (showRankSelector ? _rankSelectorHeight : 0) +
+          (showRecommend
+              ? _HomeRecommendCard.heightForWidth(
+                  MediaQuery.sizeOf(context).width)
+              : 0.0);
       const topPad = 6.0;
       final width = MediaQuery.sizeOf(context).width - 24;
       final newMetrics = BookGridDelegate.computeMetrics(
@@ -707,7 +725,8 @@ class _FeedTabState extends State<FeedTab> {
     return LKStore.pageCacheKey(
       kind: 'home_feed',
       uid: uid ?? LKClient.shared.session.uid,
-      variant: '${channelCode ?? widget.channelCode}|${path ?? widget.path}',
+      variant:
+          '${channelCode ?? widget.channelCode}|${path ?? widget.path}${(path ?? widget.path) == 'rank' ? '|$_rankScene' : ''}',
     );
   }
 
@@ -810,6 +829,7 @@ class _FeedTabState extends State<FeedTab> {
     final channelCode = widget.channelCode;
     final cacheKey = _feedCacheKey();
     final isRank = path == 'rank';
+    final rankScene = _rankScene;
     setState(() {
       _loading = true;
       _error = null;
@@ -817,15 +837,18 @@ class _FeedTabState extends State<FeedTab> {
     try {
       Future<LoadedPage<LKBook>> fetchPage(int number, String cursor) async {
         final items = isRank
-            ? await LKApi.rank(number, pageSize: 20, forceRefresh: forceRefresh)
-            : path == '/api/bff/home-feed-v1'
-                ? await LKApi.homeFeed(channelCode, number,
-                    forceRefresh: forceRefresh)
-                : path == '/api/bff/home-recent-updates-feed-v1'
-                    ? await LKApi.homeRecentUpdatesFeed(number,
+            ? await LKApi.rank(number,
+                pageSize: 20, rankScene: rankScene, forceRefresh: forceRefresh)
+            : channelCode == 'new_books'
+                ? await LKApi.homeNewBooks(number, forceRefresh: forceRefresh)
+                : path == '/api/bff/home-feed-v1'
+                    ? await LKApi.homeFeed(channelCode, number,
                         forceRefresh: forceRefresh)
-                    : await LKApi.channelFeed(path, number,
-                        forceRefresh: forceRefresh);
+                    : path == '/api/bff/home-recent-updates-feed-v1'
+                        ? await LKApi.homeRecentUpdatesFeed(number,
+                            forceRefresh: forceRefresh)
+                        : await LKApi.channelFeed(path, number,
+                            forceRefresh: forceRefresh);
         return LoadedPage(
             items: items, page: number, hasMore: items.length >= 20);
       }
@@ -873,6 +896,69 @@ class _FeedTabState extends State<FeedTab> {
 
   // 主页排行榜不显示名次,正常展示
   int? _rankOf(int i) => null;
+
+  void _selectRankScene(String scene) {
+    if (scene == _rankScene || !_showRankSelector) return;
+    _requestSerial++;
+    if (!_listMode && _gridScrollController.hasClients) {
+      _gridScrollController.jumpTo(0);
+    }
+    if (_listMode && _listScrollController.hasClients) {
+      _listScrollController.jumpTo(0);
+    }
+    setState(() {
+      _rankScene = scene;
+      _items.clear();
+      _page = 0;
+      _hasMore = true;
+      _error = null;
+    });
+    unawaited(_startLoad());
+  }
+
+  Widget _rankSelector() {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: _rankSelectorHeight,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 4, 4, 6),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: SegmentedButton<String>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: 'weekly_hot', label: Text('综合热度')),
+              ButtonSegment(value: 'daily_fresh', label: Text('新书')),
+            ],
+            selected: {_rankScene},
+            onSelectionChanged: (selection) {
+              if (selection.isNotEmpty) _selectRankScene(selection.first);
+            },
+            style: ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              textStyle: const WidgetStatePropertyAll(
+                TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+              ),
+              foregroundColor: WidgetStateProperty.resolveWith((states) =>
+                  states.contains(WidgetState.selected)
+                      ? scheme.onSecondaryContainer
+                      : scheme.onSurfaceVariant),
+              backgroundColor: WidgetStateProperty.resolveWith((states) =>
+                  states.contains(WidgetState.selected)
+                      ? scheme.secondaryContainer.withValues(alpha: 0.72)
+                      : scheme.surfaceContainerLow),
+              side: WidgetStatePropertyAll(
+                BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.4)),
+              ),
+              padding: const WidgetStatePropertyAll(
+                EdgeInsets.symmetric(horizontal: 13),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   void _showRefreshError() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -922,6 +1008,7 @@ class _FeedTabState extends State<FeedTab> {
         ? _recommendBooks.where((b) => !b.isBrave).toList()
         : _recommendBooks;
     final showRecommend = _showRecommend && visibleRecommend.isNotEmpty;
+    final showRankSelector = _showRankSelector;
 
     if (visibleItems.isEmpty) {
       return MotionRefreshIndicator(
@@ -929,6 +1016,7 @@ class _FeedTabState extends State<FeedTab> {
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: [
+            if (showRankSelector) _rankSelector(),
             if (showRecommend) _HomeRecommendCard(books: visibleRecommend),
             FilteredListContinuation(
               message: '当前列表作品已根据“隐藏勇者书籍”设置过滤',
@@ -943,20 +1031,26 @@ class _FeedTabState extends State<FeedTab> {
       );
     }
 
+    final rankSelectorCount = showRankSelector ? 1 : 0;
     final recommendCount = showRecommend ? 1 : 0;
     final listView = ListView.builder(
+      controller: _listScrollController,
       scrollCacheExtent: const ScrollCacheExtent.viewport(1.0),
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 12),
-      itemCount: visibleItems.length + recommendCount + (_hasMore ? 1 : 0),
+      itemCount: visibleItems.length +
+          rankSelectorCount +
+          recommendCount +
+          (_hasMore ? 1 : 0),
       itemBuilder: (_, i) {
-        if (showRecommend && i == 0) {
+        if (showRankSelector && i == 0) return _rankSelector();
+        if (showRecommend && i == rankSelectorCount) {
           return _HomeRecommendCard(
             books: visibleRecommend,
             padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
           );
         }
-        final j = i - recommendCount;
+        final j = i - rankSelectorCount - recommendCount;
         if (j >= visibleItems.length) {
           return _loadMoreFooter();
         }
@@ -977,7 +1071,10 @@ class _FeedTabState extends State<FeedTab> {
       onNotification: (n) {
         if (n is ScrollUpdateNotification) {
           _updateGridAnchor(
-              visibleItems: visibleItems, showRecommend: showRecommend);
+            visibleItems: visibleItems,
+            showRecommend: showRecommend,
+            showRankSelector: showRankSelector,
+          );
         }
         return false;
       },
@@ -986,6 +1083,7 @@ class _FeedTabState extends State<FeedTab> {
         scrollCacheExtent: const ScrollCacheExtent.viewport(1.0),
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
+          if (showRankSelector) SliverToBoxAdapter(child: _rankSelector()),
           if (showRecommend)
             SliverToBoxAdapter(
                 child: _HomeRecommendCard(books: visibleRecommend)),
@@ -1429,7 +1527,7 @@ class _SectionTabState extends State<SectionTab> {
               ),
             );
           }),
-          // (排行榜已移到首页频道:热门 / 最新 / 排行榜)
+          // （排行榜已移到首页频道）
         ],
       ),
     );
