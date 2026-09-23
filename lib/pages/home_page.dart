@@ -128,6 +128,59 @@ class _HomePageState extends State<HomePage> {
     _barFrac.value = 1.0;
   }
 
+  Future<void> _showCategoryPicker() async {
+    final selectedChannel = await showModalBottomSheet<int>(
+      context: context,
+      sheetAnimationStyle: AppMotion.style(context),
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+                  child: Text(
+                    '内容分类',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                for (var i = 3; i < _channels.length; i++)
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    title: Text(_channels[i].$2),
+                    trailing: _channel == i
+                        ? Icon(Icons.check_rounded,
+                            color: theme.colorScheme.primary)
+                        : null,
+                    onTap: () => Navigator.of(sheetContext).pop(i),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || selectedChannel == null || selectedChannel == _channel) {
+      return;
+    }
+    setState(() => _channel = selectedChannel);
+  }
+
   Widget _tabBody(int index) {
     if (!_loadedTabs.contains(index)) return const SizedBox.shrink();
     return switch (index) {
@@ -238,42 +291,6 @@ class _HomePageState extends State<HomePage> {
                                       ),
                                     ),
                                     const SizedBox(width: 4),
-                                    // LK 用户头像:点击跳转"我的"
-                                    GestureDetector(
-                                      onTap: () => _selectTab(3),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(2),
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                              color: isDark
-                                                  ? Colors.white54
-                                                  : Colors.indigo.shade200,
-                                              width: 1.6),
-                                        ),
-                                        child: CircleAvatar(
-                                          radius: 15,
-                                          backgroundColor:
-                                              Colors.indigo.shade100,
-                                          backgroundImage:
-                                              YomiruAvatarCache.providerOrNull(
-                                                  LKClient
-                                                      .shared.session.avatar),
-                                          child:
-                                              YomiruAvatarCache.providerOrNull(
-                                                          LKClient
-                                                              .shared
-                                                              .session
-                                                              .avatar) ==
-                                                      null
-                                                  ? const Icon(Icons.person,
-                                                      size: 18,
-                                                      color: Colors.indigo)
-                                                  : null,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 2),
                                     // 首页排版切换(网格/单列，长按可快速选择网格列数)
                                     GestureDetector(
                                       onLongPress: () =>
@@ -300,70 +317,108 @@ class _HomePageState extends State<HomePage> {
                                   ],
                                 ),
                               ),
-                              // 频道胶囊(热门/最新),随顶栏一起滑出
+                              // 主要频道使用文字标签；内容分类收纳在选择面板中。
                               SizedBox(
                                 height: 40,
-                                child: ListView.separated(
-                                  scrollDirection: Axis.horizontal,
-                                  padding: const EdgeInsets.only(
-                                      left: 12, right: 12, bottom: 4),
-                                  itemCount: _channels.length,
-                                  separatorBuilder: (_, __) =>
-                                      const SizedBox(width: 8),
-                                  itemBuilder: (_, i) {
-                                    final sel = i == _channel;
-                                    final scheme =
-                                        Theme.of(context).colorScheme;
-                                    final isDark =
-                                        Theme.of(context).brightness ==
-                                            Brightness.dark;
-                                    return GestureDetector(
-                                      onTap: () {
-                                        setState(() => _channel = i);
-                                      },
-                                      child: AnimatedContainer(
-                                        duration:
-                                            AppMotion.duration(context, 180),
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 16, vertical: 5),
-                                        alignment: Alignment.center,
-                                        decoration: BoxDecoration(
-                                          color: sel
-                                              ? scheme.primary
-                                              : (isDark
-                                                  ? const Color(0xFF2A2C33)
-                                                  : Colors.grey.shade100),
-                                          borderRadius:
-                                              BorderRadius.circular(18),
-                                          boxShadow: sel
-                                              ? [
-                                                  BoxShadow(
-                                                      color: scheme.primary
-                                                          .withValues(
-                                                              alpha: 0.3),
-                                                      blurRadius: 6,
-                                                      offset:
-                                                          const Offset(0, 2)),
-                                                ]
-                                              : null,
-                                        ),
-                                        child: Text(
-                                          _channels[i].$2,
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: sel
-                                                ? FontWeight.w600
-                                                : FontWeight.w400,
-                                            color: sel
-                                                ? Colors.white
-                                                : (isDark
-                                                    ? Colors.grey.shade300
-                                                    : Colors.grey.shade700),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                                  child: Row(
+                                    children: [
+                                      for (var i = 0; i < 3; i++)
+                                        Expanded(
+                                          child: InkWell(
+                                            borderRadius:
+                                                BorderRadius.circular(10),
+                                            onTap: () =>
+                                                setState(() => _channel = i),
+                                            child: Column(
+                                              children: [
+                                                Expanded(
+                                                  child: Center(
+                                                    child:
+                                                        AnimatedDefaultTextStyle(
+                                                      duration:
+                                                          AppMotion.duration(
+                                                              context, 160),
+                                                      style: TextStyle(
+                                                        fontSize: 13.5,
+                                                        fontWeight: _channel ==
+                                                                i
+                                                            ? FontWeight.w600
+                                                            : FontWeight.w500,
+                                                        color: _channel == i
+                                                            ? Theme.of(context)
+                                                                .colorScheme
+                                                                .primary
+                                                            : Theme.of(context)
+                                                                .colorScheme
+                                                                .onSurfaceVariant,
+                                                      ),
+                                                      child: Text(
+                                                        _channels[i].$2,
+                                                        maxLines: 1,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                AnimatedContainer(
+                                                  duration: AppMotion.duration(
+                                                      context, 180),
+                                                  width: _channel == i ? 18 : 0,
+                                                  height: 2,
+                                                  decoration: BoxDecoration(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .primary,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            2),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ),
+                                      const SizedBox(width: 4),
+                                      TextButton(
+                                        onPressed: _showCategoryPicker,
+                                        style: TextButton.styleFrom(
+                                          foregroundColor: _channel >= 3
+                                              ? Theme.of(context)
+                                                  .colorScheme
+                                                  .primary
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant,
+                                          minimumSize: const Size(0, 32),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8),
+                                          tapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              _channel >= 3
+                                                  ? _channels[_channel].$2
+                                                  : '分类',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style:
+                                                  const TextStyle(fontSize: 13),
+                                            ),
+                                            const SizedBox(width: 2),
+                                            const Icon(
+                                                Icons.expand_more_rounded,
+                                                size: 18),
+                                          ],
+                                        ),
                                       ),
-                                    );
-                                  },
+                                    ],
+                                  ),
                                 ),
                               ),
                             ],
@@ -496,7 +551,9 @@ class _FeedTabState extends State<FeedTab> {
   }) {
     if (!_gridScrollController.hasClients || visibleItems.isEmpty) return;
     final offset = _gridScrollController.offset;
-    final headerH = showRecommend ? 260.0 : 0.0;
+    final headerH = showRecommend
+        ? _HomeRecommendCard.heightForWidth(MediaQuery.sizeOf(context).width)
+        : 0.0;
     const topPad = 6.0;
     if (offset <= headerH) {
       _anchorBookIndex = 0;
@@ -531,8 +588,7 @@ class _FeedTabState extends State<FeedTab> {
         : _recommendBooks;
     final showRecommend = _showRecommend && visibleRecommend.isNotEmpty;
 
-    _updateGridAnchor(
-        visibleItems: visibleItems, showRecommend: showRecommend);
+    _updateGridAnchor(visibleItems: visibleItems, showRecommend: showRecommend);
     _lastGridColumnCount = newCount;
     setState(() {});
 
@@ -542,7 +598,9 @@ class _FeedTabState extends State<FeedTab> {
           visibleItems.isEmpty) {
         return;
       }
-      final headerH = showRecommend ? 260.0 : 0.0;
+      final headerH = showRecommend
+          ? _HomeRecommendCard.heightForWidth(MediaQuery.sizeOf(context).width)
+          : 0.0;
       const topPad = 6.0;
       final width = MediaQuery.sizeOf(context).width - 24;
       final newMetrics = BookGridDelegate.computeMetrics(
@@ -808,7 +866,7 @@ class _FeedTabState extends State<FeedTab> {
     final listView = ListView.builder(
       scrollCacheExtent: const ScrollCacheExtent.viewport(1.0),
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 12),
       itemCount: visibleItems.length + recommendCount + (_hasMore ? 1 : 0),
       itemBuilder: (_, i) {
         if (showRecommend && i == 0) {
@@ -940,80 +998,80 @@ class _HomeRecommendCard extends StatelessWidget {
   final List<LKBook> books;
   final EdgeInsetsGeometry padding;
 
+  static double _coverWidthFor(double screenWidth) =>
+      screenWidth >= 600 ? 112 : 96;
+
+  /// Includes the default vertical padding and is also used to preserve the
+  /// grid scroll anchor when the user changes the number of columns.
+  static double heightForWidth(double screenWidth) =>
+      82 + _coverWidthFor(screenWidth) * (4 / 3);
+
   const _HomeRecommendCard({
     required this.books,
-    this.padding = const EdgeInsets.fromLTRB(12, 6, 12, 4),
+    this.padding = const EdgeInsets.fromLTRB(12, 8, 12, 8),
   });
 
   @override
   Widget build(BuildContext context) {
     if (books.isEmpty) return const SizedBox.shrink();
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final itemWidth = _coverWidthFor(MediaQuery.sizeOf(context).width);
+    final coverHeight = itemWidth * (4 / 3);
     return Padding(
       padding: padding,
-      child: Material(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(14),
-        clipBehavior: Clip.antiAlias,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [
-                    Colors.pink.shade300,
-                    Colors.deepPurple.shade400
-                  ]),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.auto_awesome_rounded,
-                    color: Colors.white, size: 24),
-              ),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Text('好书推荐',
-                    style:
-                        TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600)),
-              ),
-            ]),
-          ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           SizedBox(
-            height: 178,
+            height: 22,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '好书推荐',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: coverHeight + 36,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+              padding: EdgeInsets.zero,
               itemCount: books.length,
               separatorBuilder: (_, __) => const SizedBox(width: 12),
               itemBuilder: (_, i) {
-                final b = books[i];
+                final book = books[i];
                 return SizedBox(
-                  width: 96,
+                  width: itemWidth,
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(9),
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                          builder: (_) => BookDetailPage(bookId: b.bookId)),
+                          builder: (_) => BookDetailPage(bookId: book.bookId)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         CoverImage(
-                            url: b.coverUrl,
-                            width: 96,
-                            height: 128,
-                            radius: 10,
-                            isBrave: b.isBrave),
+                          url: book.coverUrl,
+                          width: itemWidth,
+                          height: coverHeight,
+                          radius: 8,
+                          isBrave: book.isBrave,
+                        ),
                         const SizedBox(height: 5),
                         Text(
-                          b.title,
+                          book.title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: itemWidth > 100 ? 12 : 11.5,
                             height: 1.25,
                             color: isDark
                                 ? Colors.white70
@@ -1027,7 +1085,7 @@ class _HomeRecommendCard extends StatelessWidget {
               },
             ),
           ),
-        ]),
+        ],
       ),
     );
   }
