@@ -108,10 +108,12 @@ class LKApi {
   static Future<List<LKBook>> homeRecentUpdatesFeed(int page,
       {int pageSize = 20, bool forceRefresh = false}) async {
     final size = LKClient.clampPageSize(pageSize);
+    // 官网该接口从 page=0 开始；客户端分页统一从 1 开始。
+    final apiPage = page > 0 ? page - 1 : 0;
     final d = await client.post(
       '/api/bff/home-recent-updates-feed-v1',
-      {'page': page, 'pageSize': size, 'page_size': size},
-      cacheKey: 'home_recent_updates-$page-$size',
+      {'page': apiPage, 'pageSize': size, 'page_size': size},
+      cacheKey: 'home_recent_updates-$apiPage-$size',
       allowCachedFallback: false,
       forceRefresh: forceRefresh,
     );
