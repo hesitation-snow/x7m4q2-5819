@@ -46,12 +46,12 @@ class _HomePageState extends State<HomePage> {
 
   /// 顶栏可伸缩部分的高度(不含状态栏区域)
   static const double _barFlex = 104.0;
+  static const int _primaryChannelCount = 3;
 
   static const _channels = [
     ('hot', '热度', '/api/bff/home-feed-v1'),
     ('recent', '最近更新', '/api/bff/home-recent-updates-feed-v1'),
     ('rank', '排行', 'rank'),
-    ('new_books', '新书', '/api/bff/home-feed-v1'),
     ('lightnovel', '轻小说', '/api/bff/home-lightnovel-feed-v1'),
     ('original', '原创', '/api/bff/home-original-feed-v1'),
     ('fanfic', '同人', '/api/bff/home-fanfic-feed-v1'),
@@ -166,7 +166,7 @@ class _HomePageState extends State<HomePage> {
                 GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _channels.length - 4,
+                  itemCount: _channels.length - _primaryChannelCount,
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
                     crossAxisSpacing: 10,
@@ -174,7 +174,7 @@ class _HomePageState extends State<HomePage> {
                     childAspectRatio: 2.25,
                   ),
                   itemBuilder: (context, index) {
-                    final channelIndex = index + 4;
+                    final channelIndex = index + _primaryChannelCount;
                     final selected = channelIndex == _channel;
                     final scheme = theme.colorScheme;
                     return Material(
@@ -407,7 +407,9 @@ class _HomePageState extends State<HomePage> {
                                       const EdgeInsets.fromLTRB(12, 0, 12, 4),
                                   child: Row(
                                     children: [
-                                      for (var i = 0; i < 4; i++)
+                                      for (var i = 0;
+                                          i < _primaryChannelCount;
+                                          i++)
                                         Expanded(
                                           child: InkWell(
                                             borderRadius:
@@ -466,13 +468,14 @@ class _HomePageState extends State<HomePage> {
                                       TextButton(
                                         onPressed: _showCategoryPicker,
                                         style: TextButton.styleFrom(
-                                          foregroundColor: _channel >= 4
-                                              ? Theme.of(context)
-                                                  .colorScheme
-                                                  .primary
-                                              : Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurfaceVariant,
+                                          foregroundColor:
+                                              _channel >= _primaryChannelCount
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .primary
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant,
                                           minimumSize: const Size(0, 32),
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 8),
@@ -484,7 +487,7 @@ class _HomePageState extends State<HomePage> {
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             Text(
-                                              _channel >= 4
+                                              _channel >= _primaryChannelCount
                                                   ? _channels[_channel].$2
                                                   : '分类',
                                               maxLines: 1,
@@ -601,10 +604,7 @@ class _FeedTabState extends State<FeedTab> {
   String _rankScene = 'weekly_hot';
 
   bool get _listMode => widget.listMode;
-  bool get _showRecommend =>
-      widget.channelCode == 'hot' ||
-      widget.channelCode == 'recent' ||
-      widget.channelCode == 'rank';
+  bool get _showRecommend => widget.channelCode == 'hot';
 
   bool get _showRankSelector => widget.path == 'rank';
 
@@ -839,16 +839,14 @@ class _FeedTabState extends State<FeedTab> {
         final items = isRank
             ? await LKApi.rank(number,
                 pageSize: 20, rankScene: rankScene, forceRefresh: forceRefresh)
-            : channelCode == 'new_books'
-                ? await LKApi.homeNewBooks(number, forceRefresh: forceRefresh)
-                : path == '/api/bff/home-feed-v1'
-                    ? await LKApi.homeFeed(channelCode, number,
+            : path == '/api/bff/home-feed-v1'
+                ? await LKApi.homeFeed(channelCode, number,
+                    forceRefresh: forceRefresh)
+                : path == '/api/bff/home-recent-updates-feed-v1'
+                    ? await LKApi.homeRecentUpdatesFeed(number,
                         forceRefresh: forceRefresh)
-                    : path == '/api/bff/home-recent-updates-feed-v1'
-                        ? await LKApi.homeRecentUpdatesFeed(number,
-                            forceRefresh: forceRefresh)
-                        : await LKApi.channelFeed(path, number,
-                            forceRefresh: forceRefresh);
+                    : await LKApi.channelFeed(path, number,
+                        forceRefresh: forceRefresh);
         return LoadedPage(
             items: items, page: number, hasMore: items.length >= 20);
       }

@@ -494,38 +494,6 @@ class _UserProfilePageState extends State<UserProfilePage>
                       const SizedBox(height: 4),
                       Text('UID: ${profile.uid > 0 ? profile.uid : widget.uid}',
                           style: TextStyle(color: scheme.onSurfaceVariant)),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          _heroChip(profile.levelName.isEmpty
-                              ? '用户'
-                              : profile.levelName),
-                          if (profile.isBrave) _heroChip('勇者'),
-                          ...medals.map((medal) => Tooltip(
-                                message: medal.name,
-                                child: GestureDetector(
-                                  onTap: () => _showMedalName(medal.name),
-                                  child: CircleAvatar(
-                                    radius: 16,
-                                    backgroundColor:
-                                        scheme.surfaceContainerHighest,
-                                    backgroundImage:
-                                        YomiruMedalCache.providerOrNull(
-                                            medal.image),
-                                    child: YomiruMedalCache.providerOrNull(
-                                                medal.image) ==
-                                            null
-                                        ? Icon(Icons.military_tech,
-                                            size: 18,
-                                            color: scheme.onSurfaceVariant)
-                                        : null,
-                                  ),
-                                ),
-                              )),
-                        ],
-                      ),
                     ],
                   ),
                 ),
@@ -565,6 +533,46 @@ class _UserProfilePageState extends State<UserProfilePage>
                   ),
                 ],
               ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _heroChip(
+                        profile.levelName.isEmpty ? '用户' : profile.levelName),
+                    if (profile.isBrave) ...[
+                      const SizedBox(width: 6),
+                      _heroChip('勇者'),
+                    ],
+                    for (final medal in medals) ...[
+                      const SizedBox(width: 6),
+                      Tooltip(
+                        message: medal.name,
+                        child: GestureDetector(
+                          onTap: () => _showMedalName(medal.name),
+                          child: CircleAvatar(
+                            radius: 16,
+                            backgroundColor: scheme.surfaceContainerHighest,
+                            backgroundImage:
+                                YomiruMedalCache.providerOrNull(medal.image),
+                            child:
+                                YomiruMedalCache.providerOrNull(medal.image) ==
+                                        null
+                                    ? Icon(Icons.military_tech,
+                                        size: 18,
+                                        color: scheme.onSurfaceVariant)
+                                    : null,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
             if (profile.signature.isNotEmpty) ...[
               const SizedBox(height: 12),

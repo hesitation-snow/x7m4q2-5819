@@ -83,27 +83,6 @@ class LKApi {
     return _bookList(d);
   }
 
-  /// 官网「新书」分类使用 home-feed-v1 的默认 new_books 场景，不能传 channel。
-  static Future<List<LKBook>> homeNewBooks(int page,
-      {int pageSize = 20, bool forceRefresh = false}) async {
-    final size = LKClient.clampPageSize(pageSize);
-    final d = await client.post(
-      '/api/bff/home-feed-v1',
-      client.authed({
-        'page': page,
-        'pageSize': size,
-        'page_size': size,
-        'read_filter': 'all',
-        'status_filter': 'all',
-        'category_filter': 'all',
-      }),
-      cacheKey: 'home_new_books-${client.session.uid}-$page-$size',
-      allowCachedFallback: false,
-      forceRefresh: forceRefresh,
-    );
-    return _bookList(d);
-  }
-
   /// 官网首页「最近更新」频道的专用信息流。
   static Future<List<LKBook>> homeRecentUpdatesFeed(int page,
       {int pageSize = 20, bool forceRefresh = false}) async {
