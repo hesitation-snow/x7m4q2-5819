@@ -6,6 +6,10 @@ import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 
+const double _rubyAnnotationFontSizeScale = 0.58;
+const double _rubyMinimumLineHeight = 2.30;
+const double _rubyAnnotationGapScale = 0.08;
+
 /// 结构化正文块类型
 enum StructuredBlockType {
   paragraph,
@@ -196,7 +200,7 @@ class StructuredBlock {
               text: ruby,
               fontSize: fontSize,
               style: style.copyWith(
-                fontSize: fontSize * 0.42,
+                fontSize: fontSize * _rubyAnnotationFontSizeScale,
                 height: 1,
                 letterSpacing: 0,
                 wordSpacing: 0,
@@ -438,6 +442,7 @@ class StructuredBlock {
 
       // 注音保留在 TextSpan 的文本中，维持 UTF-16 偏移与选中复制内容；
       // 实际字形由 StructuredRubyText 绘制到正文上方，不挤占正文行宽。
+      // Ruby 行单独保留顶部空间，避免用户缩小行距后注音挤到上一行。
       if (run.rubyText != null && run.rubyText!.isNotEmpty) {
         final rt = run.rubyText!;
         final parenNote = '($rt)';
@@ -450,7 +455,10 @@ class StructuredBlock {
             spans.add(TextSpan(
               text: baseTextPart,
               style: runStyle.copyWith(
-                height: math.max(runStyle.height ?? 1.0, 2.30),
+                height: math.max(
+                  runStyle.height ?? 1.0,
+                  _rubyMinimumLineHeight,
+                ),
               ),
               recognizer: recognizer,
             ));
@@ -600,7 +608,6 @@ class _StructuredRubyPainter extends CustomPainter {
       textAlign: textAlign,
       textWidthBasis: TextWidthBasis.parent,
     )..layout(maxWidth: size.width);
-    final lineMetrics = paragraph.computeLineMetrics();
     final notePainter = TextPainter(
       textDirection: textDirection,
       textScaler: textScaler,
@@ -627,8 +634,6 @@ class _StructuredRubyPainter extends CustomPainter {
       final left = boxes.map((box) => box.left).reduce(math.min);
       final right = boxes.map((box) => box.right).reduce(math.max);
       final firstTop = boxes.first.top;
-      final baseline = _baselineFor(firstTop, lineMetrics);
-      if (baseline == null) continue;
 
       notePainter.text = TextSpan(
         text: annotation.text,
@@ -639,31 +644,14 @@ class _StructuredRubyPainter extends CustomPainter {
       final dx = (center - notePainter.width / 2)
           .clamp(0.0, math.max(0.0, size.width - notePainter.width))
           .toDouble();
-      final dy = baseline - annotation.fontSize * 0.99 - notePainter.height;
+      final rubyGap = textScaler.scale(
+        annotation.fontSize * _rubyAnnotationGapScale,
+      );
+      final dy = firstTop - notePainter.height - rubyGap;
       notePainter.paint(canvas, Offset(dx, dy));
     }
     notePainter.dispose();
     paragraph.dispose();
-  }
-
-  double? _baselineFor(double boxTop, List<LineMetrics> metrics) {
-    if (metrics.isEmpty) return null;
-    LineMetrics? closest;
-    var distance = double.infinity;
-    for (final line in metrics) {
-      final lineTop = line.baseline - line.height;
-      final lineBottom = line.baseline;
-      final currentDistance = boxTop < lineTop
-          ? lineTop - boxTop
-          : boxTop > lineBottom
-              ? boxTop - lineBottom
-              : 0.0;
-      if (currentDistance < distance) {
-        closest = line;
-        distance = currentDistance;
-      }
-    }
-    return closest?.baseline;
   }
 
   @override

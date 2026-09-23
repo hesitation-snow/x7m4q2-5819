@@ -121,6 +121,37 @@ void main() {
       expect(annotations.single.start, 3);
       expect(annotations.single.end, 5);
       expect(annotations.single.text, 'ゆうしゃ');
+      expect(annotations.single.style.fontSize, closeTo(18 * 0.58, 0.01));
+    });
+
+    test('ruby remains readable and reserves space with tight line spacing',
+        () {
+      const html = '<p>上一行<ruby>漢字<rt>かんじ</rt></ruby>下一行</p>';
+      final block = StructuredContentParser.parseHtml(html).single;
+      const tightStyle = TextStyle(fontSize: 18, height: 0.9);
+      final span = block.buildTextSpan(
+        baseStyle: tightStyle,
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+        forMeasurement: true,
+      );
+      final rubyBase = span.children!
+          .whereType<TextSpan>()
+          .firstWhere((child) => child.text == '漢字');
+
+      expect(rubyBase.style?.height, greaterThanOrEqualTo(2.30));
+      expect(
+        block
+            .rubyAnnotations(
+              baseStyle: tightStyle,
+              linkColor: Colors.blue,
+              backgroundColor: Colors.white,
+            )
+            .single
+            .style
+            .fontSize,
+        closeTo(18 * 0.58, 0.01),
+      );
     });
 
     test('parses hyperlinks correctly', () {
@@ -416,4 +447,3 @@ void main() {
     });
   });
 }
-
