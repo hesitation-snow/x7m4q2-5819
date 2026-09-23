@@ -852,23 +852,33 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                                                 .shade600)),
                                                   ],
                                                   const SizedBox(height: 8),
-                                                  Row(children: [
-                                                    _miniBadge(
-                                                        scheme,
-                                                        b.isCompleted
-                                                            ? '完结'
-                                                            : '连载'),
-                                                    const SizedBox(width: 6),
-                                                    if (b.isBrave)
-                                                      _braveAccessBadge(
-                                                          context),
-                                                    Text(
-                                                        '${b.volumeCount}卷 · ${b.chapterCount}章',
-                                                        style: TextStyle(
-                                                            fontSize: 12,
-                                                            color: Colors.grey
-                                                                .shade500)),
-                                                  ]),
+                                                  Wrap(
+                                                      spacing: 6,
+                                                      runSpacing: 4,
+                                                      crossAxisAlignment:
+                                                          WrapCrossAlignment
+                                                              .center,
+                                                      children: [
+                                                        _miniBadge(
+                                                            scheme,
+                                                            b.isCompleted
+                                                                ? '完结'
+                                                                : '连载'),
+                                                        if (b.tags.any((tag) =>
+                                                            tag.trim() == '原创'))
+                                                          _miniBadge(
+                                                              scheme, '原创'),
+                                                        if (b.isBrave)
+                                                          _braveAccessBadge(
+                                                              context),
+                                                        Text(
+                                                            '${b.volumeCount}卷 · ${b.chapterCount}章',
+                                                            style: TextStyle(
+                                                                fontSize: 12,
+                                                                color: Colors
+                                                                    .grey
+                                                                    .shade500)),
+                                                      ]),
                                                   const SizedBox(height: 4),
                                                   Text(
                                                     b.wordCount >= 10000
