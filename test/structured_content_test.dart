@@ -492,6 +492,102 @@ void main() {
       expect(tappedReference, '1');
     });
 
+    testWidgets('footnote is a compact upper-right marker that remains tappable',
+        (tester) async {
+      const html = '<p>123456<sup class="ln-footnote-ref">[1]</sup>7890</p>';
+      final block = StructuredContentParser.parseHtml(html).single;
+      const style = TextStyle(
+        fontSize: 26,
+        height: 1.7,
+        letterSpacing: 0.6,
+        color: Colors.black,
+      );
+      const scaler = TextScaler.linear(1.1);
+      String? tappedReference;
+      final span = block.buildTextSpan(
+        baseStyle: style,
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+        onFootnoteTap: (reference) => tappedReference = reference,
+      );
+      final marker = span.children!.whereType<TextSpan>().firstWhere(
+            (child) => child.text == '[1]',
+          );
+      expect(marker.style?.letterSpacing, 0);
+      expect(marker.style?.height, 1);
+      expect(span.toPlainText(), block.text);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: SizedBox(
+              width: 320,
+              child: SelectionArea(
+                child: StructuredRubyText(
+                  block: block,
+                  span: span,
+                  baseStyle: style,
+                  linkColor: Colors.blue,
+                  backgroundColor: Colors.white,
+                  textDirection: TextDirection.ltr,
+                  textScaler: scaler,
+                  locale: const Locale('zh', 'CN'),
+                  textAlign: TextAlign.start,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ));
+
+      final paragraph = TextPainter(
+        text: span,
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+        locale: const Locale('zh', 'CN'),
+        textWidthBasis: TextWidthBasis.parent,
+      )..layout(maxWidth: 320);
+      final previousBox = paragraph.getBoxesForSelection(
+        const TextSelection(baseOffset: 5, extentOffset: 6),
+      ).single;
+      final markerBox = paragraph.getBoxesForSelection(
+        const TextSelection(baseOffset: 6, extentOffset: 9),
+      ).single;
+      final nextBox = paragraph.getBoxesForSelection(
+        const TextSelection(baseOffset: 9, extentOffset: 10),
+      ).single;
+      expect(markerBox.left, closeTo(previousBox.right, 2));
+      expect(nextBox.left, closeTo(markerBox.right, 2));
+
+      final noteStyle = block.verticalAnnotations(
+        baseStyle: style,
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+      ).single.style;
+      final notePainter = TextPainter(
+        text: TextSpan(text: '[1]', style: noteStyle),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+      )..layout();
+      expect(notePainter.width, closeTo(markerBox.right - markerBox.left, 2));
+      final paint = find.descendant(
+        of: find.byType(StructuredRubyText),
+        matching: find.byType(CustomPaint),
+      );
+      final renderBox = tester.renderObject<RenderBox>(paint);
+      final visibleMarkerCenter = renderBox.localToGlobal(Offset(
+        markerBox.left + notePainter.width / 2,
+        previousBox.top + notePainter.height / 2,
+      ));
+      await tester.tapAt(visibleMarkerCenter);
+      await tester.pump();
+      expect(tappedReference, '1');
+      expect(tester.takeException(), isNull);
+      notePainter.dispose();
+      paragraph.dispose();
+    });
+
     test('buildTextSpan provides explicit decorationColor and thickness for strikethrough', () {
       const block = StructuredBlock(
         type: StructuredBlockType.paragraph,

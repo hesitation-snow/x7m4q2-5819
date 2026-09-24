@@ -1,5 +1,6 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui show BoxHeightStyle, BoxWidthStyle;
+import 'dart:ui' as ui show BoxHeightStyle, BoxWidthStyle, TextBox;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
@@ -277,6 +278,8 @@ class StructuredBlock {
                 : TextDecoration.none,
             decorationColor: isClickableFootnote ? linkColor : null,
             height: 1.0,
+            letterSpacing: 0,
+            wordSpacing: 0,
           ),
         ));
       }
@@ -575,10 +578,10 @@ class StructuredBlock {
               color: Colors.transparent,
               decoration: TextDecoration.none,
               decorationColor: Colors.transparent,
-              height: run.verticalAlignment ==
-                      StructuredVerticalAlignment.superscript
-                  ? math.max(runStyle.height ?? 1.0, 1.18)
-                  : runStyle.height,
+              // 与前景注释使用同一字距，避免 iOS 把透明占位撑得比标记宽。
+              height: 1.0,
+              letterSpacing: 0,
+              wordSpacing: 0,
             );
       spans.add(TextSpan(
         text: run.text,
@@ -794,21 +797,38 @@ class _StructuredRubyPainter extends CustomPainter {
       );
       if (boxes.isEmpty) continue;
 
-      final left = boxes.map((box) => box.left).reduce(math.min);
-      final right = boxes.map((box) => box.right).reduce(math.max);
       final box = boxes.first;
       notePainter.text = TextSpan(
         text: annotation.text,
         style: annotation.style,
       );
       notePainter.layout();
-      final center = (left + right) / 2;
-      final dx = (center - notePainter.width / 2)
+      // 不以较小的标记字形框计算垂直位置；iOS 和 Android 的字形框
+      // 度量不同。与同一行前一个正文字符的顶端对齐，得到稳定的右上标。
+      ui.TextBox? precedingBox;
+      if (annotation.alignment == StructuredVerticalAlignment.superscript &&
+          annotation.start > 0 &&
+          paragraph
+                  .getLineBoundary(TextPosition(offset: annotation.start))
+                  .start <
+              annotation.start) {
+        final preceding = paragraph.getBoxesForSelection(
+          TextSelection(
+            baseOffset: annotation.start - 1,
+            extentOffset: annotation.start,
+          ),
+          boxHeightStyle: ui.BoxHeightStyle.tight,
+          boxWidthStyle: ui.BoxWidthStyle.tight,
+        );
+        if (preceding.isNotEmpty) precedingBox = preceding.last;
+      }
+      final dx = box.left
           .clamp(0.0, math.max(0.0, size.width - notePainter.width))
           .toDouble();
       final dy = annotation.alignment == StructuredVerticalAlignment.superscript
-          ? box.top -
-              textScaler.scale((annotation.style.fontSize ?? 16.0) * 0.16)
+          ? (precedingBox?.top ?? box.top)
+              .clamp(0.0, math.max(0.0, size.height - notePainter.height))
+              .toDouble()
           : box.bottom - notePainter.height * 0.78;
       notePainter.paint(canvas, Offset(dx, dy));
     }
