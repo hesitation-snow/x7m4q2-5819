@@ -7,7 +7,6 @@ import 'api/lk_client.dart';
 import 'api/store.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
-import 'services/anonymous_telemetry.dart';
 import 'services/app_motion.dart';
 import 'services/reader_volume_keys.dart';
 
@@ -42,8 +41,7 @@ void main() async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 128 * 1024 * 1024;
   runApp(const LKApp());
   unawaited(LKClient.shared.warmErrorCodeHints());
-  // 统计请求独立于界面初始化：网络异常不会影响应用正常打开。
-  unawaited(AnonymousTelemetry.reportFirstActivation());
+  unawaited(LKStore.removeLegacyTelemetryData());
 }
 
 class LKApp extends StatelessWidget {

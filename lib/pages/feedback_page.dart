@@ -1,7 +1,7 @@
 import '../services/app_motion.dart';
 import 'package:flutter/material.dart';
 
-import '../services/anonymous_telemetry.dart';
+import '../services/feedback_service.dart';
 import '../widgets/common.dart';
 
 class FeedbackPage extends StatefulWidget {
@@ -27,7 +27,7 @@ class _FeedbackPageState extends State<FeedbackPage> {
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _sending = true);
     try {
-      await AnonymousTelemetry.submitFeedback(_controller.text);
+      await FeedbackService.submit(_controller.text);
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {

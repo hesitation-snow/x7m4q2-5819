@@ -36,6 +36,7 @@ void main() {
     }
     expect(find.text('实验性功能'), findsNothing);
     expect(find.text('书籍导出'), findsNothing);
+    expect(find.text('反馈问题'), findsOneWidget);
     final style = find.widgetWithText(SwitchListTile, '原文格式');
     expect(tester.widget<SwitchListTile>(style).value, isTrue);
     expect(find.text('如原文支持，显示注音、文字样式与注释'), findsOneWidget);

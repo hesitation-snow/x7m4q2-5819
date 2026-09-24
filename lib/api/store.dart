@@ -88,6 +88,22 @@ class LKStore {
 
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
+  /// Remove identifiers left by versions that reported automatic usage data.
+  /// Run asynchronously after runApp so cleanup never delays startup.
+  static Future<void> removeLegacyTelemetryData() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.remove('anonymous_telemetry_reported_v1');
+    } catch (_) {
+      // Best effort: preferences may be temporarily unavailable.
+    }
+    try {
+      await _secure.delete(key: 'anonymous_telemetry_installation_id_v1');
+    } catch (_) {
+      // Retry on a future launch if secure storage is unavailable.
+    }
+  }
+
   static Future<void> load() async {
     // 两个独立存储并行打开,缩短启动首屏前的等待时间。
     final preferencesFuture = SharedPreferences.getInstance();
