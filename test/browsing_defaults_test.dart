@@ -21,6 +21,7 @@ void main() {
     expect(LKStore.hideBraveBooks.value, isTrue);
     expect(LKStore.coverBlurMode.value, CoverBlurMode.brave);
     expect(LKStore.nsfwBlurCover.value, isTrue);
+    expect(LKStore.enhancedContentStyleEnabled.value, isTrue);
   });
 
   test('explicit disabled preferences survive reload', () async {
@@ -28,9 +29,11 @@ void main() {
     await LKStore.load();
     await LKStore.setHideBraveBooks(false);
     await LKStore.setCoverBlurMode(CoverBlurMode.none);
+    await LKStore.setEnhancedContentStyleEnabled(false);
     await LKStore.load();
     expect(LKStore.hideBraveBooks.value, isFalse);
     expect(LKStore.coverBlurMode.value, CoverBlurMode.none);
+    expect(LKStore.enhancedContentStyleEnabled.value, isFalse);
   });
 
   test('legacy cover preference remains respected', () async {

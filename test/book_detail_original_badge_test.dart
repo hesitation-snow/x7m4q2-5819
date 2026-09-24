@@ -15,11 +15,15 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    LKClient.shared.session.clear();
     LKStore.dataSaverMode.value = true;
+    LKStore.epubDownloadEnabled.value = false;
   });
   tearDown(() {
     LKApi.client = LKClient.shared;
+    LKClient.shared.session.clear();
     LKStore.dataSaverMode.value = false;
+    LKStore.epubDownloadEnabled.value = false;
   });
 
   Future<void> pumpBook(WidgetTester tester,
@@ -76,4 +80,23 @@ void main() {
     expect(find.text('原创'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  for (final loggedIn in [false, true]) {
+    testWidgets('book export menu ${loggedIn ? 'shows' : 'hides'} by login',
+        (tester) async {
+      LKStore.epubDownloadEnabled.value = true;
+      if (loggedIn) {
+        LKClient.shared.session
+          ..securityKey = 'test-session'
+          ..uid = 42;
+      }
+      await pumpBook(tester, tags: const [], completed: false);
+
+      await tester.tap(find.byTooltip('更多操作'));
+      await tester.pumpAndSettle();
+      expect(find.text('分享书籍'), findsOneWidget);
+      expect(find.text('书籍导出'), loggedIn ? findsOneWidget : findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

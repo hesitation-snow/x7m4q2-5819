@@ -668,7 +668,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   void _openEpubMaker() {
     final b = _book;
-    if (b == null) return;
+    if (b == null ||
+        !LKClient.shared.session.isLoggedIn ||
+        !LKStore.epubDownloadEnabled.value) {
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -742,7 +746,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                       ],
                                     ),
                                   ),
-                                  if (enabled)
+                                  if (enabled &&
+                                      LKClient.shared.session.isLoggedIn)
                                     const PopupMenuItem(
                                       value: 'epub',
                                       child: Row(

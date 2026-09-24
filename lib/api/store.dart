@@ -43,12 +43,12 @@ class LKStore {
   /// 书籍网格列数偏好（0 表示“自动”，2/3/4/5 表示每行固定本数）
   static final ValueNotifier<int> gridColumnCount = ValueNotifier(0);
 
-  /// 实验性功能：EPUB 下载制作开关
+  /// 书籍导出开关（入口仍需登录）
   static final ValueNotifier<bool> epubDownloadEnabled = ValueNotifier(false);
 
-  /// 实验性功能：正文样式增强开关
+  /// 正文样式增强，首次安装默认开启，保留用户后续选择。
   static final ValueNotifier<bool> enhancedContentStyleEnabled =
-      ValueNotifier(false);
+      ValueNotifier(true);
 
   /// 已确认需勇者权限的小说 ID 缓存（内置预置 14162 标杆书籍）
   static final Set<int> _braveBookIds = {14162};
@@ -138,7 +138,7 @@ class LKStore {
     gridColumnCount.value = p.getInt('grid_column_count') ?? 0;
     epubDownloadEnabled.value = p.getBool('epub_download_enabled') ?? false;
     enhancedContentStyleEnabled.value =
-        p.getBool('reader_enhanced_content_style') ?? false;
+        p.getBool('reader_enhanced_content_style') ?? true;
     setBraveBookChecker(isBraveBook);
     final storedBraveIds = p.getStringList('known_brave_book_ids');
     if (storedBraveIds != null) {

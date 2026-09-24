@@ -11,7 +11,6 @@ import '../services/app_cache.dart';
 import '../services/app_update_service.dart';
 import '../widgets/common.dart';
 import 'feedback_page.dart';
-import 'experimental_settings_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -104,6 +103,37 @@ class _SettingsPageState extends State<SettingsPage> {
       if (mounted) showLkError(context, e);
     } finally {
       if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
+
+  Future<void> _handleBookExportToggle(bool enable) async {
+    if (!enable) {
+      await LKStore.setEpubDownloadEnabled(false);
+      return;
+    }
+    if (!LKClient.shared.session.isLoggedIn) return;
+    final confirmed = await showDialog<bool>(
+      animationStyle: AppMotion.style(context),
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('使用须知'),
+        content: const Text(
+          '作品版权归原作者或相应权利人所有。请遵守站点规则及作品授权要求，未经许可，请勿上传、分享、售卖或用于其他商业用途。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('拒绝'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted && LKClient.shared.session.isLoggedIn) {
+      await LKStore.setEpubDownloadEnabled(true);
     }
   }
 
@@ -411,6 +441,32 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ]),
           const SizedBox(height: 20),
+          _sectionTitle(context, '阅读'),
+          _settingsGroup(context, [
+            ValueListenableBuilder<bool>(
+              valueListenable: LKStore.enhancedContentStyleEnabled,
+              builder: (context, enabled, _) => SwitchListTile(
+                secondary: _settingsIcon(context, Icons.format_paint_outlined),
+                title: const Text('正文样式增强'),
+                subtitle: const Text('尽量还原正文中的注音、文字样式与注释'),
+                value: enabled,
+                onChanged: LKStore.setEnhancedContentStyleEnabled,
+              ),
+            ),
+            if (LKClient.shared.session.isLoggedIn)
+              ValueListenableBuilder<bool>(
+                valueListenable: LKStore.epubDownloadEnabled,
+                builder: (context, enabled, _) => SwitchListTile(
+                  secondary: _settingsIcon(
+                      context, Icons.download_for_offline_outlined),
+                  title: const Text('书籍导出'),
+                  subtitle: const Text('在书籍详情页导出 EPUB 或 TXT'),
+                  value: enabled,
+                  onChanged: _handleBookExportToggle,
+                ),
+              ),
+          ]),
+          const SizedBox(height: 20),
           _sectionTitle(context, '应用'),
           _settingsGroup(context, [
             ListTile(
@@ -454,20 +510,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 }
               },
             ),
-            if (LKClient.shared.session.isLoggedIn)
-              ListTile(
-                leading: _settingsIcon(context, Icons.science_outlined),
-                title: const Text('实验性功能'),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const ExperimentalSettingsPage(),
-                    ),
-                  );
-                },
-              ),
           ]),
           const SizedBox(height: 20),
           _sectionTitle(context, '账号与信息'),
