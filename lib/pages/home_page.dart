@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
+import '../api/home_channels.dart';
 import '../api/models.dart';
 import '../api/pagination.dart';
 import '../api/store.dart';
@@ -22,6 +23,7 @@ import 'channel_page.dart';
 import 'settings_page.dart';
 import 'dynamic_page.dart';
 import 'follow_list_page.dart';
+import 'home_channel_picker.dart';
 import 'login_page.dart';
 import 'medal_center_page.dart';
 import 'messages_page.dart';
@@ -46,23 +48,15 @@ class _HomePageState extends State<HomePage> {
 
   /// 顶栏可伸缩部分的高度(不含状态栏区域)
   static const double _barFlex = 104.0;
-  static const int _primaryChannelCount = 3;
-
-  static const _channels = [
-    ('hot', '热度', '/api/bff/home-feed-v1'),
-    ('recent', '最近更新', '/api/bff/home-recent-updates-feed-v1'),
-    ('rank', '排行', 'rank'),
-    ('lightnovel', '轻小说', '/api/bff/home-lightnovel-feed-v1'),
-    ('original', '原创', '/api/bff/home-original-feed-v1'),
-    ('fanfic', '同人', '/api/bff/home-fanfic-feed-v1'),
-    ('epub', 'EPUB', '/api/bff/home-epub-feed-v1'),
-  ];
-  int _channel = 0;
+  late List<String> _channelOrder;
+  late String _channelCode;
   bool _listMode = false;
 
   @override
   void initState() {
     super.initState();
+    _channelOrder = normalizeHomeChannelOrder(LKStore.homeChannelOrder.value);
+    _channelCode = _channelOrder.first;
     // 登录/登出后刷新顶栏头像等会话相关 UI
     LKClient.sessionRev.addListener(_onSessionRev);
     _loadListMode();
@@ -130,7 +124,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _showCategoryPicker() async {
-    final selectedChannel = await showModalBottomSheet<int>(
+    final result = await showModalBottomSheet<HomeChannelPickerResult>(
       context: context,
       sheetAnimationStyle: AppMotion.style(context),
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -138,128 +132,33 @@ class _HomePageState extends State<HomePage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
       showDragHandle: true,
-      builder: (sheetContext) {
-        final theme = Theme.of(sheetContext);
-        const categoryIcons = [
-          Icons.auto_stories_rounded,
-          Icons.edit_note_rounded,
-          Icons.auto_awesome_rounded,
-          Icons.menu_book_rounded,
-        ];
-        return SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
-                  child: Text(
-                    '按分类浏览',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _channels.length - _primaryChannelCount,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                    childAspectRatio: 2.25,
-                  ),
-                  itemBuilder: (context, index) {
-                    final channelIndex = index + _primaryChannelCount;
-                    final selected = channelIndex == _channel;
-                    final scheme = theme.colorScheme;
-                    return Material(
-                      color: selected
-                          ? scheme.primaryContainer.withValues(alpha: 0.55)
-                          : scheme.surfaceContainerLow,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        side: BorderSide(
-                          color: selected
-                              ? scheme.primary.withValues(alpha: 0.45)
-                              : scheme.outlineVariant.withValues(alpha: 0.22),
-                        ),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: InkWell(
-                        onTap: () =>
-                            Navigator.of(sheetContext).pop(channelIndex),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 34,
-                                height: 34,
-                                decoration: BoxDecoration(
-                                  color: selected
-                                      ? scheme.primary.withValues(alpha: 0.13)
-                                      : scheme.surfaceContainerHighest,
-                                  borderRadius: BorderRadius.circular(11),
-                                ),
-                                child: Icon(
-                                  categoryIcons[index],
-                                  size: 18,
-                                  color: selected
-                                      ? scheme.primary
-                                      : scheme.onSurfaceVariant,
-                                ),
-                              ),
-                              const SizedBox(width: 9),
-                              Expanded(
-                                child: Text(
-                                  _channels[channelIndex].$2,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    fontWeight: selected
-                                        ? FontWeight.w600
-                                        : FontWeight.w500,
-                                    color: selected
-                                        ? scheme.primary
-                                        : scheme.onSurface,
-                                  ),
-                                ),
-                              ),
-                              if (selected) ...[
-                                const SizedBox(width: 4),
-                                Icon(Icons.check_circle_rounded,
-                                    size: 17, color: scheme.primary),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      isScrollControlled: true,
+      builder: (_) => HomeChannelPicker(
+        order: _channelOrder,
+        selectedCode: _channelCode,
+      ),
     );
-    if (!mounted || selectedChannel == null || selectedChannel == _channel) {
-      return;
+    if (!mounted || result == null) return;
+    if (result.order != null) {
+      final order = normalizeHomeChannelOrder(result.order);
+      setState(() {
+        _channelOrder = order;
+        if (!order.take(homePrimaryChannelCount).contains(_channelCode)) {
+          _channelCode = order.first;
+        }
+      });
+      await LKStore.setHomeChannelOrder(order);
+    } else if (result.selectedCode != _channelCode) {
+      setState(() => _channelCode = result.selectedCode);
     }
-    setState(() => _channel = selectedChannel);
   }
 
   Widget _tabBody(int index) {
     if (!_loadedTabs.contains(index)) return const SizedBox.shrink();
     return switch (index) {
       0 => FeedTab(
-          channelCode: _channels[_channel].$1,
-          path: _channels[_channel].$3,
+          channelCode: _channelCode,
+          path: homeChannelByCode(_channelCode).path,
           listMode: _listMode,
         ),
       1 => ShelfPage(embedded: true, listMode: _listMode),
@@ -399,7 +298,7 @@ class _HomePageState extends State<HomePage> {
                                   ],
                                 ),
                               ),
-                              // 主要频道使用文字标签；内容分类收纳在选择面板中。
+                              // 前三个标签来自用户排序；分类入口可浏览所有频道。
                               SizedBox(
                                 height: 40,
                                 child: Padding(
@@ -407,15 +306,14 @@ class _HomePageState extends State<HomePage> {
                                       const EdgeInsets.fromLTRB(12, 0, 12, 4),
                                   child: Row(
                                     children: [
-                                      for (var i = 0;
-                                          i < _primaryChannelCount;
-                                          i++)
+                                      for (final code in _channelOrder.take(
+                                          homePrimaryChannelCount))
                                         Expanded(
                                           child: InkWell(
                                             borderRadius:
                                                 BorderRadius.circular(10),
-                                            onTap: () =>
-                                                setState(() => _channel = i),
+                                            onTap: () => setState(
+                                                () => _channelCode = code),
                                             child: Column(
                                               children: [
                                                 Expanded(
@@ -427,11 +325,11 @@ class _HomePageState extends State<HomePage> {
                                                               context, 160),
                                                       style: TextStyle(
                                                         fontSize: 13.5,
-                                                        fontWeight: _channel ==
-                                                                i
+                                                        fontWeight: _channelCode ==
+                                                                code
                                                             ? FontWeight.w600
                                                             : FontWeight.w500,
-                                                        color: _channel == i
+                                                        color: _channelCode == code
                                                             ? Theme.of(context)
                                                                 .colorScheme
                                                                 .primary
@@ -440,8 +338,11 @@ class _HomePageState extends State<HomePage> {
                                                                 .onSurfaceVariant,
                                                       ),
                                                       child: Text(
-                                                        _channels[i].$2,
+                                                        homeChannelByCode(code)
+                                                            .label,
                                                         maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
                                                       ),
                                                     ),
                                                   ),
@@ -449,7 +350,9 @@ class _HomePageState extends State<HomePage> {
                                                 AnimatedContainer(
                                                   duration: AppMotion.duration(
                                                       context, 180),
-                                                  width: _channel == i ? 18 : 0,
+                                                  width: _channelCode == code
+                                                      ? 18
+                                                      : 0,
                                                   height: 2,
                                                   decoration: BoxDecoration(
                                                     color: Theme.of(context)
@@ -466,20 +369,22 @@ class _HomePageState extends State<HomePage> {
                                         ),
                                       const SizedBox(width: 4),
                                       IconButton(
-                                        tooltip:
-                                            _channel >= _primaryChannelCount
-                                                ? '分类：${_channels[_channel].$2}'
-                                                : '选择分类',
+                                        tooltip: !_channelOrder
+                                                .take(homePrimaryChannelCount)
+                                                .contains(_channelCode)
+                                            ? '分类：${homeChannelByCode(_channelCode).label}'
+                                            : '选择分类',
                                         onPressed: _showCategoryPicker,
                                         style: IconButton.styleFrom(
-                                          foregroundColor:
-                                              _channel >= _primaryChannelCount
-                                                  ? Theme.of(context)
-                                                      .colorScheme
-                                                      .primary
-                                                  : Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurfaceVariant,
+                                          foregroundColor: !_channelOrder
+                                                  .take(homePrimaryChannelCount)
+                                                  .contains(_channelCode)
+                                              ? Theme.of(context)
+                                                  .colorScheme
+                                                  .primary
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant,
                                         ),
                                         constraints: const BoxConstraints(
                                             minWidth: 40, minHeight: 32),

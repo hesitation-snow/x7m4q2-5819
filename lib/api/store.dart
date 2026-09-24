@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'lk_client.dart';
+import 'home_channels.dart';
 import 'models.dart';
 import 'reader_cache.dart';
 import 'reading_session.dart';
@@ -42,6 +43,10 @@ class LKStore {
 
   /// 书籍网格列数偏好（0 表示“自动”，2/3/4/5 表示每行固定本数）
   static final ValueNotifier<int> gridColumnCount = ValueNotifier(0);
+
+  /// 首页频道顺序；前三项显示为顶栏标签，其余频道留在分类入口。
+  static final ValueNotifier<List<String>> homeChannelOrder =
+      ValueNotifier(defaultHomeChannelOrder);
 
   /// 书籍导出开关（入口仍需登录）
   static final ValueNotifier<bool> epubDownloadEnabled = ValueNotifier(false);
@@ -136,6 +141,8 @@ class LKStore {
     nsfwBlurCover.value = coverBlurMode.value != CoverBlurMode.none;
     hideBraveBooks.value = p.getBool('hide_brave_books') ?? true;
     gridColumnCount.value = p.getInt('grid_column_count') ?? 0;
+    homeChannelOrder.value =
+        normalizeHomeChannelOrder(p.getStringList('home_channel_order'));
     epubDownloadEnabled.value = p.getBool('epub_download_enabled') ?? false;
     enhancedContentStyleEnabled.value =
         p.getBool('reader_enhanced_content_style') ?? true;
@@ -213,6 +220,13 @@ class LKStore {
     gridColumnCount.value = sanitized;
     final p = await SharedPreferences.getInstance();
     await p.setInt('grid_column_count', sanitized);
+  }
+
+  static Future<void> setHomeChannelOrder(List<String> order) async {
+    final normalized = normalizeHomeChannelOrder(order);
+    homeChannelOrder.value = normalized;
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList('home_channel_order', normalized);
   }
 
   static Future<void> setEpubDownloadEnabled(bool enable) async {
