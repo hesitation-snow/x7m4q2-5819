@@ -780,9 +780,8 @@ class _UserProfilePageState extends State<UserProfilePage>
                       margin: const EdgeInsets.only(top: 8),
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
+                        color: activityBookReferenceColor(
+                            Theme.of(context).brightness),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(

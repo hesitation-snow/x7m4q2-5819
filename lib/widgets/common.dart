@@ -9,6 +9,12 @@ import '../services/app_motion.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 
+/// 动态中引用书籍的柔和底色，保持深浅主题下的辨识度。
+Color activityBookReferenceColor(Brightness brightness) =>
+    brightness == Brightness.dark
+        ? const Color(0xFF2B3239)
+        : const Color(0xFFF0F3F6);
+
 /// 选择退出范围。返回 true 表示同时退出其他设备，false 表示仅退出本机，
 /// null 表示取消。
 Future<bool?> showLogoutScopeDialog(BuildContext context) {

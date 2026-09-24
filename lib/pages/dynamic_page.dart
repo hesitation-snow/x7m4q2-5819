@@ -800,12 +800,10 @@ class _DynamicPageState extends State<DynamicPage> {
                                                   padding:
                                                       const EdgeInsets.all(8),
                                                   decoration: BoxDecoration(
-                                                    color: Theme.of(context)
-                                                                .brightness ==
-                                                            Brightness.dark
-                                                        ? const Color(
-                                                            0xFF2A2C33)
-                                                        : Colors.grey.shade100,
+                                                    color:
+                                                        activityBookReferenceColor(
+                                                            Theme.of(context)
+                                                                .brightness),
                                                     borderRadius:
                                                         BorderRadius.circular(
                                                             6),

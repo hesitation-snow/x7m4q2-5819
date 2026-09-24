@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yomiru/pages/dynamic_page.dart';
+import 'package:yomiru/widgets/common.dart';
 
 void main() {
   test('phone dynamic feed stays single-column', () {
@@ -22,5 +23,12 @@ void main() {
     expect(normalizedDynamicFeedTab('follow', loggedIn: false), 'mixed');
     expect(normalizedDynamicFeedTab('mixed', loggedIn: false), 'mixed');
     expect(normalizedDynamicFeedTab('follow', loggedIn: true), 'follow');
+  });
+
+  test('book reference surfaces stay subdued in both themes', () {
+    final light = activityBookReferenceColor(Brightness.light);
+    final dark = activityBookReferenceColor(Brightness.dark);
+    expect(light.computeLuminance(), greaterThan(0.85));
+    expect(dark.computeLuminance(), lessThan(0.05));
   });
 }
