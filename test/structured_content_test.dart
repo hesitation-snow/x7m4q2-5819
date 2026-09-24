@@ -591,9 +591,9 @@ void main() {
       )..layout();
       expect(noteStyle.decoration, TextDecoration.none);
       expect(markerBox.right - markerBox.left,
-          lessThan(notePainter.width * 0.5));
+          closeTo(notePainter.width * 0.94, 2));
       expect(nextBox.left - previousBox.right,
-          lessThan(notePainter.width * 0.5));
+          lessThan(notePainter.width * 1.1));
       final hitArea = find.descendant(
         of: find.byType(StructuredRubyText),
         matching: find.byType(GestureDetector),
@@ -605,6 +605,7 @@ void main() {
       ));
       expect(positioned.left!, lessThan(previousBox.right));
       expect(positioned.top!, lessThan(previousBox.top));
+      expect(positioned.left! + 4 + notePainter.width, lessThan(nextBox.left));
       await tester.tap(hitArea);
       await tester.pump();
       expect(tappedReference, '1');

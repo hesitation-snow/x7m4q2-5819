@@ -10,6 +10,9 @@ import 'package:html/parser.dart' as html_parser;
 const double _rubyAnnotationFontSizeScale = 0.58;
 const double _rubyMinimumLineHeight = 2.30;
 const double _rubyAnnotationGapScale = 0.08;
+const double _footnoteAnnotationScale = 0.8;
+const double _footnoteMarkerOverlapFraction = 0.18;
+const double _footnotePlaceholderScale = 0.94 * _footnoteAnnotationScale;
 final RegExp _footnoteMarkerPattern = RegExp(r'\[\s*([^\]]+?)\s*\]');
 final RegExp _bareFootnoteReferencePattern = RegExp(r'^[A-Za-z0-9_.:-]+$');
 final RegExp _cssFontSizePattern =
@@ -276,7 +279,8 @@ class StructuredBlock {
           footnoteReference: footnoteReference,
           style: style.copyWith(
             fontSize: isClickableFootnote
-                ? (style.fontSize ?? baseStyle.fontSize ?? 16.0) * 0.8
+                ? (style.fontSize ?? baseStyle.fontSize ?? 16.0) *
+                    _footnoteAnnotationScale
                 : style.fontSize,
             color: isClickableFootnote ? linkColor : style.color,
             decoration: TextDecoration.none,
@@ -581,12 +585,16 @@ class StructuredBlock {
               color: Colors.transparent,
               decoration: TextDecoration.none,
               decorationColor: Colors.transparent,
-              // 注释标记浮在前一个字符右上角；透明文本仅保留原文与字符索引。
-              // 缩小它占据的行宽，否则 [1] 仍会把后面的正文撑开。
+              // 注释浮在前一个字符右上角，透明文本保留原文与字符索引。
+              // 占位略宽于注释右侧的外伸量，避免后一个字压住标记。
               fontSize: run.isFootnote &&
                       run.verticalAlignment ==
                           StructuredVerticalAlignment.superscript
-                  ? math.max(1.0, (blockStyle.fontSize ?? 16.0) * 0.10)
+                  ? math.max(
+                      1.0,
+                      (runStyle.fontSize ?? blockStyle.fontSize ?? 16.0) *
+                          _footnotePlaceholderScale,
+                    )
                   : runStyle.fontSize,
               height: 1.0,
               letterSpacing: 0,
@@ -696,11 +704,11 @@ Offset? _verticalAnnotationPosition({
 
   final isFootnote = annotation.footnoteReference != null;
   final left = isFootnote && precedingBox != null
-      ? precedingBox.right - notePainter.width * 0.25
+      ? precedingBox.right - notePainter.width * _footnoteMarkerOverlapFraction
       : markerBox.left;
   final top = switch (annotation.alignment) {
     StructuredVerticalAlignment.superscript when isFootnote =>
-      (precedingBox?.top ?? markerBox.top) - notePainter.height * 0.60,
+      (precedingBox?.top ?? markerBox.top) - notePainter.height * 0.65,
     StructuredVerticalAlignment.superscript =>
       precedingBox?.top ?? markerBox.top,
     StructuredVerticalAlignment.subscript =>
