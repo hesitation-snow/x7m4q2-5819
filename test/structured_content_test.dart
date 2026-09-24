@@ -504,17 +504,32 @@ void main() {
       );
       const scaler = TextScaler.linear(1.1);
       String? tappedReference;
+      var tapCount = 0;
       final span = block.buildTextSpan(
         baseStyle: style,
         linkColor: Colors.blue,
         backgroundColor: Colors.white,
-        onFootnoteTap: (reference) => tappedReference = reference,
+        onFootnoteTap: (reference) {
+          tappedReference = reference;
+          tapCount++;
+        },
       );
       final marker = span.children!.whereType<TextSpan>().firstWhere(
             (child) => child.text == '[1]',
           );
+      final measuredSpan = block.buildTextSpan(
+        baseStyle: style,
+        linkColor: Colors.blue,
+        backgroundColor: Colors.white,
+        forMeasurement: true,
+      );
+      final measuredMarker =
+          measuredSpan.children!.whereType<TextSpan>().firstWhere(
+                (child) => child.text == '[1]',
+              );
       expect(marker.style?.letterSpacing, 0);
       expect(marker.style?.height, 1);
+      expect(marker.style?.fontSize, measuredMarker.style?.fontSize);
       expect(span.toPlainText(), block.text);
 
       await tester.pumpWidget(MaterialApp(
@@ -534,6 +549,10 @@ void main() {
                   textScaler: scaler,
                   locale: const Locale('zh', 'CN'),
                   textAlign: TextAlign.start,
+                  onFootnoteTap: (reference) {
+                    tappedReference = reference;
+                    tapCount++;
+                  },
                 ),
               ),
             ),
@@ -570,19 +589,26 @@ void main() {
         textDirection: TextDirection.ltr,
         textScaler: scaler,
       )..layout();
-      expect(notePainter.width, closeTo(markerBox.right - markerBox.left, 2));
-      final paint = find.descendant(
+      expect(noteStyle.decoration, TextDecoration.none);
+      expect(markerBox.right - markerBox.left,
+          lessThan(notePainter.width * 0.5));
+      expect(nextBox.left - previousBox.right,
+          lessThan(notePainter.width * 0.5));
+      final hitArea = find.descendant(
         of: find.byType(StructuredRubyText),
-        matching: find.byType(CustomPaint),
+        matching: find.byType(GestureDetector),
       );
-      final renderBox = tester.renderObject<RenderBox>(paint);
-      final visibleMarkerCenter = renderBox.localToGlobal(Offset(
-        markerBox.left + notePainter.width / 2,
-        previousBox.top + notePainter.height / 2,
+      expect(hitArea, findsOneWidget);
+      final positioned = tester.widget<Positioned>(find.ancestor(
+        of: hitArea,
+        matching: find.byType(Positioned),
       ));
-      await tester.tapAt(visibleMarkerCenter);
+      expect(positioned.left!, lessThan(previousBox.right));
+      expect(positioned.top!, lessThan(previousBox.top));
+      await tester.tap(hitArea);
       await tester.pump();
       expect(tappedReference, '1');
+      expect(tapCount, 1);
       expect(tester.takeException(), isNull);
       notePainter.dispose();
       paragraph.dispose();

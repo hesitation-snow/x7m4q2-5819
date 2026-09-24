@@ -258,8 +258,10 @@ class StructuredBlock {
     for (final run in runs) {
       final alignment = run.verticalAlignment;
       if (alignment != null && run.text.isNotEmpty) {
-        final isClickableFootnote = run.isFootnote &&
-            _footnoteReference(run.text, allowBare: true) != null;
+        final footnoteReference = run.isFootnote
+            ? _footnoteReference(run.text, allowBare: true)
+            : null;
+        final isClickableFootnote = footnoteReference != null;
         final style = _styleForRun(
           run,
           baseStyle: baseStyle,
@@ -271,12 +273,13 @@ class StructuredBlock {
           end: offset + run.text.length,
           text: run.text,
           alignment: alignment,
+          footnoteReference: footnoteReference,
           style: style.copyWith(
+            fontSize: isClickableFootnote
+                ? (style.fontSize ?? baseStyle.fontSize ?? 16.0) * 0.8
+                : style.fontSize,
             color: isClickableFootnote ? linkColor : style.color,
-            decoration: isClickableFootnote
-                ? TextDecoration.underline
-                : TextDecoration.none,
-            decorationColor: isClickableFootnote ? linkColor : null,
+            decoration: TextDecoration.none,
             height: 1.0,
             letterSpacing: 0,
             wordSpacing: 0,
@@ -578,7 +581,13 @@ class StructuredBlock {
               color: Colors.transparent,
               decoration: TextDecoration.none,
               decorationColor: Colors.transparent,
-              // 与前景注释使用同一字距，避免 iOS 把透明占位撑得比标记宽。
+              // 注释标记浮在前一个字符右上角；透明文本仅保留原文与字符索引。
+              // 缩小它占据的行宽，否则 [1] 仍会把后面的正文撑开。
+              fontSize: run.isFootnote &&
+                      run.verticalAlignment ==
+                          StructuredVerticalAlignment.superscript
+                  ? math.max(1.0, (blockStyle.fontSize ?? 16.0) * 0.10)
+                  : runStyle.fontSize,
               height: 1.0,
               letterSpacing: 0,
               wordSpacing: 0,
@@ -633,6 +642,7 @@ class StructuredVerticalAnnotation {
     required this.text,
     required this.alignment,
     required this.style,
+    this.footnoteReference,
   });
 
   final int start;
@@ -640,6 +650,66 @@ class StructuredVerticalAnnotation {
   final String text;
   final StructuredVerticalAlignment alignment;
   final TextStyle style;
+  final String? footnoteReference;
+}
+
+/// 绘制与点击热区共用同一坐标，避免小占位文本与可见脚注脱节。
+Offset? _verticalAnnotationPosition({
+  required TextPainter paragraph,
+  required TextPainter notePainter,
+  required StructuredVerticalAnnotation annotation,
+  required Size size,
+}) {
+  if (annotation.start < 0 ||
+      annotation.end <= annotation.start ||
+      annotation.end > paragraph.plainText.length) {
+    return null;
+  }
+  final boxes = paragraph.getBoxesForSelection(
+    TextSelection(
+      baseOffset: annotation.start,
+      extentOffset: annotation.end,
+    ),
+    boxHeightStyle: ui.BoxHeightStyle.tight,
+    boxWidthStyle: ui.BoxWidthStyle.tight,
+  );
+  if (boxes.isEmpty) return null;
+  final markerBox = boxes.first;
+
+  ui.TextBox? precedingBox;
+  if (annotation.alignment == StructuredVerticalAlignment.superscript &&
+      annotation.start > 0 &&
+      paragraph
+              .getLineBoundary(TextPosition(offset: annotation.start))
+              .start <
+          annotation.start) {
+    final preceding = paragraph.getBoxesForSelection(
+      TextSelection(
+        baseOffset: annotation.start - 1,
+        extentOffset: annotation.start,
+      ),
+      boxHeightStyle: ui.BoxHeightStyle.tight,
+      boxWidthStyle: ui.BoxWidthStyle.tight,
+    );
+    if (preceding.isNotEmpty) precedingBox = preceding.last;
+  }
+
+  final isFootnote = annotation.footnoteReference != null;
+  final left = isFootnote && precedingBox != null
+      ? precedingBox.right - notePainter.width * 0.25
+      : markerBox.left;
+  final top = switch (annotation.alignment) {
+    StructuredVerticalAlignment.superscript when isFootnote =>
+      (precedingBox?.top ?? markerBox.top) - notePainter.height * 0.60,
+    StructuredVerticalAlignment.superscript =>
+      precedingBox?.top ?? markerBox.top,
+    StructuredVerticalAlignment.subscript =>
+      markerBox.bottom - notePainter.height * 0.78,
+  };
+  return Offset(
+    left.clamp(0.0, math.max(0.0, size.width - notePainter.width)).toDouble(),
+    top.clamp(0.0, math.max(0.0, size.height - notePainter.height)).toDouble(),
+  );
 }
 
 /// 在不改变正文字符索引的前提下，把 ruby 注音及上/下标绘制在正文上。
@@ -657,6 +727,7 @@ class StructuredRubyText extends StatelessWidget {
     required this.textScaler,
     required this.locale,
     required this.textAlign,
+    this.onFootnoteTap,
   });
 
   final Key? textKey;
@@ -669,6 +740,7 @@ class StructuredRubyText extends StatelessWidget {
   final TextScaler textScaler;
   final Locale? locale;
   final TextAlign textAlign;
+  final void Function(String reference)? onFootnoteTap;
 
   @override
   Widget build(BuildContext context) {
@@ -691,7 +763,7 @@ class StructuredRubyText extends StatelessWidget {
       textWidthBasis: TextWidthBasis.parent,
     );
     if (annotations.isEmpty && verticalAnnotations.isEmpty) return text;
-    return CustomPaint(
+    final paintedText = CustomPaint(
       foregroundPainter: _StructuredRubyPainter(
         span: span,
         annotations: annotations,
@@ -703,6 +775,74 @@ class StructuredRubyText extends StatelessWidget {
       ),
       child: text,
     );
+    if (onFootnoteTap == null ||
+        !verticalAnnotations.any((annotation) =>
+            annotation.footnoteReference != null)) {
+      return paintedText;
+    }
+
+    // 缩小脚注的透明占位后，TextSpan 自身的命中区域也会变窄。
+    // 在实际绘制位置覆盖独立点击区域，不牺牲正文的原始字符索引与复制内容。
+    return LayoutBuilder(builder: (context, constraints) {
+      if (!constraints.hasBoundedWidth || constraints.maxWidth <= 0) {
+        return paintedText;
+      }
+      final width = constraints.maxWidth;
+      final paragraph = TextPainter(
+        text: span,
+        textDirection: textDirection,
+        textScaler: textScaler,
+        locale: locale,
+        textAlign: textAlign,
+        textWidthBasis: TextWidthBasis.parent,
+      )..layout(maxWidth: width);
+      final notePainter = TextPainter(
+        textDirection: textDirection,
+        textScaler: textScaler,
+        locale: locale,
+      );
+      final hitAreas = <Widget>[];
+      for (final annotation in verticalAnnotations) {
+        final reference = annotation.footnoteReference;
+        if (reference == null) continue;
+        notePainter.text = TextSpan(
+          text: annotation.text,
+          style: annotation.style,
+        );
+        notePainter.layout();
+        final position = _verticalAnnotationPosition(
+          paragraph: paragraph,
+          notePainter: notePainter,
+          annotation: annotation,
+          size: Size(width, paragraph.height),
+        );
+        if (position == null) continue;
+        final hitWidth = math.min(width, math.max(24.0, notePainter.width + 8));
+        final hitHeight = math.min(
+          paragraph.height,
+          math.max(24.0, notePainter.height + 8),
+        );
+        hitAreas.add(Positioned(
+          left: (position.dx - 4)
+              .clamp(0.0, math.max(0.0, width - hitWidth))
+              .toDouble(),
+          top: (position.dy - 4)
+              .clamp(0.0, math.max(0.0, paragraph.height - hitHeight))
+              .toDouble(),
+          width: hitWidth,
+          height: hitHeight,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => onFootnoteTap!(reference),
+          ),
+        ));
+      }
+      notePainter.dispose();
+      paragraph.dispose();
+      return Stack(
+        children: [SizedBox(width: width, child: paintedText), ...hitAreas],
+      );
+    });
   }
 }
 
@@ -782,55 +922,18 @@ class _StructuredRubyPainter extends CustomPainter {
       notePainter.paint(canvas, Offset(dx, dy));
     }
     for (final annotation in verticalAnnotations) {
-      if (annotation.start < 0 ||
-          annotation.end <= annotation.start ||
-          annotation.end > paragraph.plainText.length) {
-        continue;
-      }
-      final boxes = paragraph.getBoxesForSelection(
-        TextSelection(
-          baseOffset: annotation.start,
-          extentOffset: annotation.end,
-        ),
-        boxHeightStyle: ui.BoxHeightStyle.tight,
-        boxWidthStyle: ui.BoxWidthStyle.tight,
-      );
-      if (boxes.isEmpty) continue;
-
-      final box = boxes.first;
       notePainter.text = TextSpan(
         text: annotation.text,
         style: annotation.style,
       );
       notePainter.layout();
-      // 不以较小的标记字形框计算垂直位置；iOS 和 Android 的字形框
-      // 度量不同。与同一行前一个正文字符的顶端对齐，得到稳定的右上标。
-      ui.TextBox? precedingBox;
-      if (annotation.alignment == StructuredVerticalAlignment.superscript &&
-          annotation.start > 0 &&
-          paragraph
-                  .getLineBoundary(TextPosition(offset: annotation.start))
-                  .start <
-              annotation.start) {
-        final preceding = paragraph.getBoxesForSelection(
-          TextSelection(
-            baseOffset: annotation.start - 1,
-            extentOffset: annotation.start,
-          ),
-          boxHeightStyle: ui.BoxHeightStyle.tight,
-          boxWidthStyle: ui.BoxWidthStyle.tight,
-        );
-        if (preceding.isNotEmpty) precedingBox = preceding.last;
-      }
-      final dx = box.left
-          .clamp(0.0, math.max(0.0, size.width - notePainter.width))
-          .toDouble();
-      final dy = annotation.alignment == StructuredVerticalAlignment.superscript
-          ? (precedingBox?.top ?? box.top)
-              .clamp(0.0, math.max(0.0, size.height - notePainter.height))
-              .toDouble()
-          : box.bottom - notePainter.height * 0.78;
-      notePainter.paint(canvas, Offset(dx, dy));
+      final position = _verticalAnnotationPosition(
+        paragraph: paragraph,
+        notePainter: notePainter,
+        annotation: annotation,
+        size: size,
+      );
+      if (position != null) notePainter.paint(canvas, position);
     }
     notePainter.dispose();
     paragraph.dispose();

@@ -490,6 +490,7 @@ class _ReaderPageState extends State<ReaderPage>
         textScaler: _readerTextScaler,
         locale: _readerLocale,
         textAlign: textAlign,
+        onFootnoteTap: _showFootnote,
       );
 
   TextPainter _scrollTextPainter(int index,
