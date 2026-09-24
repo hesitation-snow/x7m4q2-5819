@@ -245,7 +245,7 @@ void main() {
     expect(find.text('文件与书籍标题'), findsOneWidget);
 
     // 验证封面区域
-    expect(find.text('电子书封面'), findsOneWidget);
+    expect(find.text('EPUB 封面'), findsOneWidget);
     expect(find.text('当前封面'), findsOneWidget);
     expect(find.text('默认封面'), findsOneWidget);
     expect(find.text('自选本机'), findsOneWidget);
@@ -254,10 +254,11 @@ void main() {
 
     // 验证底部操作按钮
     expect(find.text('取消制作'), findsOneWidget);
-    expect(find.text('确认并生成 EPUB'), findsOneWidget);
-
-    // 验证账号标识告知卡片
-    expect(find.text('导出的 EPUB 元数据中包含可还原的发布者与当前导出账号 UID 标识'), findsOneWidget);
+    expect(find.text('确认并生成'), findsOneWidget);
+    final cancelButton = find.widgetWithText(OutlinedButton, '取消制作');
+    final generateButton = find.widgetWithText(FilledButton, '确认并生成');
+    expect(tester.getSize(cancelButton).width,
+        closeTo(tester.getSize(generateButton).width, 1));
 
     // 修改标题输入框
     await tester.enterText(find.byType(TextField), '自定义测试标题');
@@ -294,12 +295,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // 默认格式为 EPUB 电子书
-    expect(find.text('EPUB 电子书'), findsOneWidget);
-    expect(find.text('TXT 纯文本'), findsOneWidget);
+    expect(find.text('EPUB'), findsOneWidget);
+    expect(find.text('TXT'), findsOneWidget);
     expect(find.text('包含封面与插画'), findsWidgets);
 
     // 切换至“TXT 纯文本”
-    await tester.tap(find.text('TXT 纯文本'));
+    await tester.tap(find.text('TXT'));
     await tester.pumpAndSettle();
 
     // 纯文本格式下不展示插画选项
@@ -324,9 +325,36 @@ void main() {
     expect(find.text('确认标题'), findsOneWidget);
     expect(find.text('TXT 标题'), findsOneWidget);
     // 不应展示电子书封面选择卡片
-    expect(find.text('电子书封面'), findsNothing);
-    // 底部生成按钮为 TXT
-    expect(find.text('确认并生成 TXT'), findsOneWidget);
+    expect(find.text('EPUB 封面'), findsNothing);
+    // 不论导出格式，底部操作文案保持简洁。
+    expect(find.text('确认并生成'), findsOneWidget);
+  });
+
+  testWidgets('metadata action buttons remain equal on a narrow screen', (tester) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final book = LKBook(bookId: 401, title: '测试作品');
+    EpubDownloadService.shared.currentTask.value = const EpubDownloadTask(
+      bookId: 401,
+      bookTitle: '测试作品',
+      authorName: '测试作者',
+      ownerUid: 1,
+      phase: EpubTaskPhase.editingMetadata,
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: EpubMakerPage(book: book, initialVolumes: const []),
+    ));
+    await tester.pumpAndSettle();
+
+    final cancelButton = find.widgetWithText(OutlinedButton, '取消制作');
+    final generateButton = find.widgetWithText(FilledButton, '确认并生成');
+    expect(tester.getSize(cancelButton).width,
+        closeTo(tester.getSize(generateButton).width, 1));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('EpubMakerPage completed view renders separate save as file and share buttons', (tester) async {

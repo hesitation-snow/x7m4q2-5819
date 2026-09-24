@@ -1175,11 +1175,10 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
               ),
               const SizedBox(width: 16),
               Expanded(
-                flex: 2,
                 child: FilledButton.icon(
                   onPressed: () => _confirmAndPackage(task),
                   icon: const Icon(Icons.check_rounded),
-                  label: Text(task.options.exportAsTxt ? '确认并生成 TXT' : '确认并生成 EPUB'),
+                  label: const Text('确认并生成'),
                 ),
               ),
             ],
