@@ -27,10 +27,13 @@ void main() {
   });
 
   Future<void> pumpBook(WidgetTester tester,
-      {required List<String> tags, required bool completed}) async {
+      {required List<String> tags,
+      required bool completed,
+      ThemeData? theme}) async {
     final book = {
       'book_id': 42,
       'title': '测试作品',
+      'summary': '这是一段用于检查阅读对比度的书籍简介。',
       'tags': tags,
       'is_completed': completed,
     };
@@ -47,9 +50,34 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester
-        .pumpWidget(const MaterialApp(home: BookDetailPage(bookId: 42)));
+    await tester.pumpWidget(
+        MaterialApp(theme: theme, home: const BookDetailPage(bookId: 42)));
     await tester.pumpAndSettle();
+  }
+
+  for (final brightness in Brightness.values) {
+    testWidgets('book summary is readable in $brightness', (tester) async {
+      final scheme = ColorScheme.fromSeed(
+          seedColor: const Color(0xFF5C6BC0), brightness: brightness);
+      final background = brightness == Brightness.dark
+          ? const Color(0xFF121316)
+          : const Color(0xFFF6F7FB);
+      await pumpBook(tester,
+          tags: [],
+          completed: false,
+          theme: ThemeData(
+              colorScheme: scheme,
+              scaffoldBackgroundColor: background));
+      final summary = tester.widget<Text>(
+          find.text('这是一段用于检查阅读对比度的书籍简介。'));
+      expect(summary.style!.color, scheme.onSurfaceVariant);
+      final foregroundLuminance = summary.style!.color!.computeLuminance();
+      final backgroundLuminance = background.computeLuminance();
+      final contrast = foregroundLuminance > backgroundLuminance
+          ? (foregroundLuminance + 0.05) / (backgroundLuminance + 0.05)
+          : (backgroundLuminance + 0.05) / (foregroundLuminance + 0.05);
+      expect(contrast, greaterThanOrEqualTo(4.5));
+    });
   }
 
   for (final completed in [false, true]) {

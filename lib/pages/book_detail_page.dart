@@ -988,7 +988,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                   style: TextStyle(
                                       height: 1.6,
                                       fontSize: 13.5,
-                                      color: Colors.grey.shade700)),
+                                      color: scheme.onSurfaceVariant)),
                               const SizedBox(height: 18),
                               Row(children: [
                                 const Text('目录',
