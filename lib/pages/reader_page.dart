@@ -53,7 +53,7 @@ class _BodyBlock {
   /// 链接区间 (start, end, url),相对于 [text] 的下标
   final List<(int, int, String)> links;
 
-  /// 结构化正文模型（开启正文样式增强时提供）
+  /// 结构化正文模型（开启原文格式时提供）
   final StructuredBlock? structured;
 
   _BodyBlock.text(this.text, [this.links = const []])

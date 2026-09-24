@@ -447,8 +447,8 @@ class _SettingsPageState extends State<SettingsPage> {
               valueListenable: LKStore.enhancedContentStyleEnabled,
               builder: (context, enabled, _) => SwitchListTile(
                 secondary: _settingsIcon(context, Icons.format_paint_outlined),
-                title: const Text('正文样式增强'),
-                subtitle: const Text('尽量还原正文中的注音、文字样式与注释'),
+                title: const Text('原文格式'),
+                subtitle: const Text('如原文支持，显示注音、文字样式与注释'),
                 value: enabled,
                 onChanged: LKStore.setEnhancedContentStyleEnabled,
               ),

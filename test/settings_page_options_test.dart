@@ -36,9 +36,9 @@ void main() {
     }
     expect(find.text('实验性功能'), findsNothing);
     expect(find.text('书籍导出'), findsNothing);
-    final style = find.widgetWithText(SwitchListTile, '正文样式增强');
+    final style = find.widgetWithText(SwitchListTile, '原文格式');
     expect(tester.widget<SwitchListTile>(style).value, isTrue);
-    expect(find.text('尽量还原正文中的注音、文字样式与注释'), findsOneWidget);
+    expect(find.text('如原文支持，显示注音、文字样式与注释'), findsOneWidget);
 
     await tester.tap(style);
     await tester.pump();
@@ -76,6 +76,6 @@ void main() {
     LKClient.sessionRev.value++;
     await tester.pumpAndSettle();
     expect(find.text('书籍导出'), findsNothing);
-    expect(find.text('正文样式增强'), findsOneWidget);
+    expect(find.text('原文格式'), findsOneWidget);
   });
 }

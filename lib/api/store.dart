@@ -51,7 +51,7 @@ class LKStore {
   /// 书籍导出开关（入口仍需登录）
   static final ValueNotifier<bool> epubDownloadEnabled = ValueNotifier(false);
 
-  /// 正文样式增强，首次安装默认开启，保留用户后续选择。
+  /// 原文格式显示，首次安装默认开启，保留用户后续选择。
   static final ValueNotifier<bool> enhancedContentStyleEnabled =
       ValueNotifier(true);
 
