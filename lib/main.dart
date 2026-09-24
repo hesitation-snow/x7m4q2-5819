@@ -41,7 +41,7 @@ void main() async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 128 * 1024 * 1024;
   runApp(const LKApp());
   unawaited(LKClient.shared.warmErrorCodeHints());
-  unawaited(LKStore.removeLegacyTelemetryData());
+  unawaited(LKStore.removeLegacyUsageIdentifier());
 }
 
 class LKApp extends StatelessWidget {

@@ -10,7 +10,7 @@ import '../api/store.dart';
 import '../services/app_cache.dart';
 import '../services/app_update_service.dart';
 import '../widgets/common.dart';
-import 'feedback_page.dart';
+import 'feedback_options_sheet.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -498,17 +498,7 @@ class _SettingsPageState extends State<SettingsPage> {
               leading: _settingsIcon(context, Icons.feedback_outlined),
               title: const Text('反馈问题'),
               trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () async {
-                final sent = await Navigator.push<bool>(
-                  context,
-                  MaterialPageRoute<bool>(
-                    builder: (_) => const FeedbackPage(),
-                  ),
-                );
-                if (sent == true && context.mounted) {
-                  showLkError(context, '反馈已发送，谢谢你的反馈');
-                }
-              },
+              onTap: () => showFeedbackOptions(context),
             ),
           ]),
           const SizedBox(height: 20),

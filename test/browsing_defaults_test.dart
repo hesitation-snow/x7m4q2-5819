@@ -78,7 +78,7 @@ void main() {
       },
     );
 
-    await LKStore.removeLegacyTelemetryData();
+    await LKStore.removeLegacyUsageIdentifier();
 
     final preferences = await SharedPreferences.getInstance();
     expect(preferences.containsKey('anonymous_telemetry_reported_v1'), isFalse);

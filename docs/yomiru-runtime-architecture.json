@@ -27,8 +27,8 @@
       {
         "id": "security-background",
         "label": "会话与后台支路",
-        "focus": ["app-shell", "secure-store", "http-client", "telemetry-endpoint"],
-        "note": "security_key 仅进入系统安全存储；匿名打开上报和更新检查不阻塞首屏。"
+        "focus": ["app-shell", "secure-store", "http-client", "external-links"],
+        "note": "security_key 仅进入系统安全存储；用户主动选择 GitHub Issues 或 Telegram 反馈。"
       }
     ]
   },
@@ -134,15 +134,15 @@
       ]
     },
     {
-      "id": "telemetry-endpoint",
+      "id": "external-links",
       "type": "external",
-      "label": "telemetry.yutro.uk / GitHub Releases",
-      "sublabel": "每日打开 / 主动反馈 · 版本检查 / 下载入口",
+      "label": "外部反馈 / 版本更新",
+      "sublabel": "GitHub Issues · Telegram",
       "tag": "非阻塞外部支路",
       "pos": [870, 55],
       "size": [230, 88],
       "sources": [
-        { "path": "lib/services/anonymous_telemetry.dart", "line": 15, "end_line": 31, "label": "端点与调度" },
+        { "path": "lib/pages/feedback_options_sheet.dart", "line": 6, "end_line": 18, "label": "反馈选项" },
         { "path": "lib/api/lk_api.dart", "line": 899, "end_line": 925, "label": "最新发布" },
         { "path": "lib/services/app_update_service.dart", "line": 26, "end_line": 40, "label": "更新服务" }
       ]
@@ -218,10 +218,10 @@
       "label": "正文 / 图片缓存"
     },
     {
-      "id": "app-reports-open",
+      "id": "app-opens-external-links",
       "from": "app-shell",
-      "to": "telemetry-endpoint",
-      "label": "异步上报 / 更新检查",
+      "to": "external-links",
+      "label": "主动反馈 / 更新检查",
       "variant": "dashed"
     }
   ],
@@ -249,7 +249,7 @@
       "items": [
         "security_key 仅持久化到 Android Keystore / iOS Keychain",
         "服务端判定会话失效时清空本地会话与账号缓存，再通知 UI",
-        "匿名打开上报与更新检查均不阻塞应用首屏"
+        "反馈由用户主动打开外部链接；更新检查不阻塞应用首屏"
       ]
     }
   ]

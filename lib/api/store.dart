@@ -90,7 +90,7 @@ class LKStore {
 
   /// Remove identifiers left by versions that reported automatic usage data.
   /// Run asynchronously after runApp so cleanup never delays startup.
-  static Future<void> removeLegacyTelemetryData() async {
+  static Future<void> removeLegacyUsageIdentifier() async {
     try {
       final p = await SharedPreferences.getInstance();
       await p.remove('anonymous_telemetry_reported_v1');

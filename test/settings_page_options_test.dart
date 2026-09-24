@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/store.dart';
+import 'package:yomiru/pages/feedback_options_sheet.dart';
 import 'package:yomiru/pages/settings_page.dart';
 
 void main() {
@@ -78,5 +79,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('书籍导出'), findsNothing);
     expect(find.text('原文格式'), findsOneWidget);
+  });
+
+  testWidgets('feedback offers GitHub and Telegram without an in-app form',
+      (tester) async {
+    await showSettings(tester);
+
+    await tester.tap(find.text('反馈问题'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('在 GitHub 提交 Issue'), findsOneWidget);
+    expect(find.text('加入 Telegram 群组'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    expect(githubIssuesUrl, 'https://github.com/hesitation-snow/Yomiru/issues');
+    expect(telegramFeedbackUrl, 'https://t.me/FurippuFurappazu');
   });
 }
