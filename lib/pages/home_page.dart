@@ -465,9 +465,13 @@ class _HomePageState extends State<HomePage> {
                                           ),
                                         ),
                                       const SizedBox(width: 4),
-                                      TextButton(
+                                      IconButton(
+                                        tooltip:
+                                            _channel >= _primaryChannelCount
+                                                ? '分类：${_channels[_channel].$2}'
+                                                : '选择分类',
                                         onPressed: _showCategoryPicker,
-                                        style: TextButton.styleFrom(
+                                        style: IconButton.styleFrom(
                                           foregroundColor:
                                               _channel >= _primaryChannelCount
                                                   ? Theme.of(context)
@@ -476,31 +480,13 @@ class _HomePageState extends State<HomePage> {
                                                   : Theme.of(context)
                                                       .colorScheme
                                                       .onSurfaceVariant,
-                                          minimumSize: const Size(0, 32),
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8),
-                                          tapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                          visualDensity: VisualDensity.compact,
                                         ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              _channel >= _primaryChannelCount
-                                                  ? _channels[_channel].$2
-                                                  : '分类',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style:
-                                                  const TextStyle(fontSize: 13),
-                                            ),
-                                            const SizedBox(width: 2),
-                                            const Icon(
-                                                Icons.expand_more_rounded,
-                                                size: 18),
-                                          ],
-                                        ),
+                                        constraints: const BoxConstraints(
+                                            minWidth: 40, minHeight: 32),
+                                        padding: EdgeInsets.zero,
+                                        visualDensity: VisualDensity.compact,
+                                        icon: const Icon(Icons.menu_rounded,
+                                            size: 22),
                                       ),
                                     ],
                                   ),
