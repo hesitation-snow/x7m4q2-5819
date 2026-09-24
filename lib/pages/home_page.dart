@@ -50,6 +50,7 @@ class _HomePageState extends State<HomePage> {
   static const double _barFlex = 104.0;
   late List<String> _channelOrder;
   late String _channelCode;
+  late final PageController _channelPager;
   bool _listMode = false;
 
   @override
@@ -57,6 +58,7 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _channelOrder = normalizeHomeChannelOrder(LKStore.homeChannelOrder.value);
     _channelCode = _channelOrder.first;
+    _channelPager = PageController();
     // 登录/登出后刷新顶栏头像等会话相关 UI
     LKClient.sessionRev.addListener(_onSessionRev);
     _loadListMode();
@@ -73,6 +75,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionRev);
+    _channelPager.dispose();
     _barFrac.dispose();
     super.dispose();
   }
@@ -87,10 +90,10 @@ class _HomePageState extends State<HomePage> {
   void _onFeedScroll(ScrollNotification n) {
     // 首页、书架、动态都让底部导航栏跟随内容滚动收合。
     if (_tab != 0 && _tab != 1 && _tab != 2) return;
+    if (n.metrics.axis != Axis.vertical) return;
     if (n is ScrollUpdateNotification) {
       // 只响应手指拖动;惯性滚动/程序修正产生的通知不参与
       if (n.dragDetails == null) return;
-      if (n.metrics.axis == Axis.horizontal) return;
       final delta = n.scrollDelta ?? 0.0;
       if (delta == 0) return;
       final current = _barFrac.value;
@@ -123,6 +126,42 @@ class _HomePageState extends State<HomePage> {
     _barFrac.value = 1.0;
   }
 
+  List<String> get _primaryChannels =>
+      _channelOrder.take(homePrimaryChannelCount).toList(growable: false);
+
+  void _moveChannelPagerTo(String code, {bool animate = true}) {
+    final page = _primaryChannels.indexOf(code);
+    if (page < 0) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _channelCode != code || !_channelPager.hasClients) return;
+      final duration = AppMotion.duration(context, 220);
+      if (!animate || duration == Duration.zero) {
+        _channelPager.jumpToPage(page);
+      } else {
+        unawaited(_channelPager.animateToPage(
+          page,
+          duration: duration,
+          curve: Curves.easeOutCubic,
+        ));
+      }
+    });
+  }
+
+  void _selectHomeChannel(String code) {
+    if (code == _channelCode) return;
+    setState(() => _channelCode = code);
+    _barFrac.value = 1.0;
+    _moveChannelPagerTo(code);
+  }
+
+  void _onChannelPageChanged(int page) {
+    final channels = _primaryChannels;
+    if (page >= channels.length || !channels.contains(_channelCode)) return;
+    final code = channels[page];
+    if (code != _channelCode) setState(() => _channelCode = code);
+    _barFrac.value = 1.0;
+  }
+
   Future<void> _showCategoryPicker() async {
     final result = await showModalBottomSheet<HomeChannelPickerResult>(
       context: context,
@@ -147,20 +186,50 @@ class _HomePageState extends State<HomePage> {
           _channelCode = order.first;
         }
       });
+      _moveChannelPagerTo(_channelCode, animate: false);
       await LKStore.setHomeChannelOrder(order);
     } else if (result.selectedCode != _channelCode) {
-      setState(() => _channelCode = result.selectedCode);
+      _selectHomeChannel(result.selectedCode);
     }
+  }
+
+  Widget _homeChannelBody() {
+    final channels = _primaryChannels;
+    final isPrimary = channels.contains(_channelCode);
+    return IndexedStack(
+      index: isPrimary ? 0 : 1,
+      children: [
+        PageView(
+          key: const ValueKey('home_channel_pager'),
+          controller: _channelPager,
+          onPageChanged: _onChannelPageChanged,
+          children: [
+            for (final code in channels)
+              FeedTab(
+                key: ValueKey('home_channel_$code'),
+                channelCode: code,
+                path: homeChannelByCode(code).path,
+                listMode: _listMode,
+              ),
+          ],
+        ),
+        if (isPrimary)
+          const SizedBox.shrink()
+        else
+          FeedTab(
+            key: ValueKey('home_extra_$_channelCode'),
+            channelCode: _channelCode,
+            path: homeChannelByCode(_channelCode).path,
+            listMode: _listMode,
+          ),
+      ],
+    );
   }
 
   Widget _tabBody(int index) {
     if (!_loadedTabs.contains(index)) return const SizedBox.shrink();
     return switch (index) {
-      0 => FeedTab(
-          channelCode: _channelCode,
-          path: homeChannelByCode(_channelCode).path,
-          listMode: _listMode,
-        ),
+      0 => _homeChannelBody(),
       1 => ShelfPage(embedded: true, listMode: _listMode),
       2 => const DynamicPage(embedded: true),
       3 => MyTab(onOpenShelf: () => _selectTab(1)),
@@ -312,8 +381,8 @@ class _HomePageState extends State<HomePage> {
                                           child: InkWell(
                                             borderRadius:
                                                 BorderRadius.circular(10),
-                                            onTap: () => setState(
-                                                () => _channelCode = code),
+                                            onTap: () =>
+                                                _selectHomeChannel(code),
                                             child: Column(
                                               children: [
                                                 Expanded(
@@ -477,7 +546,11 @@ class FeedTab extends StatefulWidget {
   State<FeedTab> createState() => _FeedTabState();
 }
 
-class _FeedTabState extends State<FeedTab> {
+class _FeedTabState extends State<FeedTab>
+    with AutomaticKeepAliveClientMixin<FeedTab> {
+  @override
+  bool get wantKeepAlive => true;
+
   final List<LKBook> _items = [];
   static const _recommendCachePrefix = 'home_recommend_v2_';
   List<LKBook> _recommendBooks = [];
@@ -877,6 +950,7 @@ class _FeedTabState extends State<FeedTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     // 注意:IndexedStack 的子组件不能包 Expanded(非法 ParentDataWidget,
     // release 模式会抛类型转换异常导致整个信息流区域空白),直接返回即可。
     if (_error != null && _items.isEmpty) {

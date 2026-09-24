@@ -175,6 +175,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(requests.any((path) => path.endsWith('/home-epub-feed-v1')), isTrue);
 
+    final pager = find.byKey(const ValueKey('home_channel_pager'));
+    expect(tester.widget<PageView>(pager).controller!.page, closeTo(1, 0.01));
+    await tester.drag(pager, const Offset(-320, 0));
+    await tester.pumpAndSettle();
+    expect(tester.widget<PageView>(pager).controller!.page, closeTo(2, 0.01));
+    expect(requests.any((path) => path.endsWith('/home-lightnovel-feed-v1')),
+        isTrue);
+    await tester.drag(pager, const Offset(320, 0));
+    await tester.pumpAndSettle();
+    expect(tester.widget<PageView>(pager).controller!.page, closeTo(1, 0.01));
+
     await tester.tap(find.byTooltip('选择分类'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('编辑'));
@@ -189,12 +200,67 @@ void main() {
     expect(LKStore.homeChannelOrder.value.take(3), ['hot', 'original', 'epub']);
     expect(find.text('热度'), findsOneWidget);
     expect(find.text('轻小说'), findsNothing);
+    expect(tester.widget<PageView>(pager).controller!.page, closeTo(2, 0.01));
     expect(
       (await SharedPreferences.getInstance())
           .getStringList('home_channel_order')!
           .take(3),
       ['hot', 'original', 'epub'],
     );
+
+    await tester.tap(find.byTooltip('选择分类'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('同人'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('分类：同人'), findsOneWidget);
+    await tester.drag(find.byType(FeedTab).last, const Offset(-320, 0));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('分类：同人'), findsOneWidget);
+
+    await tester.tap(find.text('原创'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<PageView>(pager).controller!.page, closeTo(1, 0.01));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('swiping recommended books does not change the home channel',
+      (tester) async {
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      final books = List.generate(
+        request.url.path.endsWith('/home-promo-v1') ? 8 : 1,
+        (index) => {'book_id': index + 1, 'title': '测试书籍 $index'},
+      );
+      return http.Response(
+        jsonEncode({
+          'code': 0,
+          'data': {'list': books},
+        }),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    }));
+    tester.view.physicalSize = const Size(390, 780);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const MaterialApp(home: HomePage()));
+    await tester.pumpAndSettle();
+
+    final pager = find.byKey(const ValueKey('home_channel_pager'));
+    final carousel = find.byWidgetPredicate(
+      (widget) => widget is ListView && widget.scrollDirection == Axis.horizontal,
+    );
+    expect(carousel, findsOneWidget);
+    final carouselScroll = find.descendant(
+      of: carousel,
+      matching: find.byType(Scrollable),
+    );
+    final carouselPosition = tester.state<ScrollableState>(carouselScroll).position;
+    await tester.drag(carousel, const Offset(-200, 0));
+    await tester.pumpAndSettle();
+    expect(carouselPosition.pixels, greaterThan(0));
+    expect(tester.widget<PageView>(pager).controller!.page, closeTo(0, 0.01));
     expect(tester.takeException(), isNull);
   });
 }
