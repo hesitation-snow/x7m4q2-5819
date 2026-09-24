@@ -118,7 +118,7 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('使用须知'),
         content: const Text(
-          '作品版权归原作者或相应权利人所有。请遵守站点规则及作品授权要求，未经许可，请勿上传、分享、售卖或用于其他商业用途。',
+          '作品版权归原作者或相关权利人。导出文件请仅用于个人离线阅读，并遵守作品授权与站点规则；未经许可，请勿公开上传、传播、售卖或商用。',
         ),
         actions: [
           TextButton(
