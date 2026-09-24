@@ -11,12 +11,26 @@ const double _rubyAnnotationFontSizeScale = 0.58;
 const double _rubyMinimumLineHeight = 2.30;
 const double _rubyAnnotationGapScale = 0.08;
 const double _footnoteAnnotationScale = 0.8;
-const double _footnoteMarkerOverlapFraction = 0.18;
-const double _footnotePlaceholderScale = 0.94 * _footnoteAnnotationScale;
 final RegExp _footnoteMarkerPattern = RegExp(r'\[\s*([^\]]+?)\s*\]');
 final RegExp _bareFootnoteReferencePattern = RegExp(r'^[A-Za-z0-9_.:-]+$');
 final RegExp _cssFontSizePattern =
     RegExp(r'^([+-]?(?:\d+\.?\d*|\.\d+))\s*(px|pt|em|rem|%)?$');
+
+/// Resolve inherited typography before both measurement and rendering. In
+/// particular, iOS accessibility bold must also reach the annotation painters.
+TextStyle resolveStructuredTextStyle(
+  BuildContext context,
+  TextStyle style, {
+  TextStyle? inheritedStyle,
+}) {
+  final inherited = inheritedStyle ?? DefaultTextStyle.of(context).style;
+  return inherited.merge(style).copyWith(
+        inherit: false,
+        fontWeight: MediaQuery.boldTextOf(context)
+            ? FontWeight.bold
+            : (style.fontWeight ?? inherited.fontWeight ?? FontWeight.normal),
+      );
+}
 
 String? _footnoteReference(String text, {bool allowBare = false}) {
   final bracketed = _footnoteMarkerPattern.firstMatch(text)?.group(1)?.trim();
@@ -585,15 +599,14 @@ class StructuredBlock {
               color: Colors.transparent,
               decoration: TextDecoration.none,
               decorationColor: Colors.transparent,
-              // 注释浮在前一个字符右上角，透明文本保留原文与字符索引。
-              // 占位略宽于注释右侧的外伸量，避免后一个字压住标记。
+              // 占位与可见脚注使用完全相同的字形尺寸，保留原始字符索引。
               fontSize: run.isFootnote &&
                       run.verticalAlignment ==
                           StructuredVerticalAlignment.superscript
                   ? math.max(
                       1.0,
                       (runStyle.fontSize ?? blockStyle.fontSize ?? 16.0) *
-                          _footnotePlaceholderScale,
+                          _footnoteAnnotationScale,
                     )
                   : runStyle.fontSize,
               height: 1.0,
@@ -661,6 +674,36 @@ class StructuredVerticalAnnotation {
   final String? footnoteReference;
 }
 
+// A very narrow line can force a marker to wrap even inside its brackets.
+// Paint each laid-out fragment on its own line, retaining the same reference.
+Iterable<StructuredVerticalAnnotation> _verticalAnnotationFragments(
+  TextPainter paragraph,
+  StructuredVerticalAnnotation annotation,
+) sync* {
+  if (annotation.start < 0 ||
+      annotation.end > paragraph.plainText.length ||
+      annotation.end <= annotation.start) {
+    return;
+  }
+  var start = annotation.start;
+  while (start < annotation.end) {
+    final line = paragraph.getLineBoundary(TextPosition(offset: start));
+    final end = math.min(annotation.end, math.max(start + 1, line.end));
+    yield StructuredVerticalAnnotation(
+      start: start,
+      end: end,
+      text: annotation.text.substring(
+        start - annotation.start,
+        end - annotation.start,
+      ),
+      alignment: annotation.alignment,
+      style: annotation.style,
+      footnoteReference: annotation.footnoteReference,
+    );
+    start = end;
+  }
+}
+
 /// 绘制与点击热区共用同一坐标，避免小占位文本与可见脚注脱节。
 Offset? _verticalAnnotationPosition({
   required TextPainter paragraph,
@@ -703,12 +746,20 @@ Offset? _verticalAnnotationPosition({
   }
 
   final isFootnote = annotation.footnoteReference != null;
-  final left = isFootnote && precedingBox != null
-      ? precedingBox.right - notePainter.width * _footnoteMarkerOverlapFraction
-      : markerBox.left;
+  final left = markerBox.left;
+  // Use the marker's own line, including when it wraps after the preceding
+  // character. unscaledAscent excludes the user's extra line-height leading.
+  final lines = isFootnote ? paragraph.computeLineMetrics() : null;
+  final line = lines?.firstWhere(
+    (line) =>
+        (markerBox.top + markerBox.bottom) / 2 >= line.baseline - line.ascent &&
+        (markerBox.top + markerBox.bottom) / 2 <= line.baseline + line.descent,
+    orElse: () => lines.last,
+  );
   final top = switch (annotation.alignment) {
-    StructuredVerticalAlignment.superscript when isFootnote =>
-      (precedingBox?.top ?? markerBox.top) - notePainter.height * 0.65,
+    StructuredVerticalAlignment.superscript when isFootnote => line!.baseline -
+        line.unscaledAscent * 0.5 -
+        notePainter.computeDistanceToActualBaseline(TextBaseline.alphabetic),
     StructuredVerticalAlignment.superscript =>
       precedingBox?.top ?? markerBox.top,
     StructuredVerticalAlignment.subscript =>
@@ -721,7 +772,7 @@ Offset? _verticalAnnotationPosition({
 }
 
 /// 在不改变正文字符索引的前提下，把 ruby 注音及上/下标绘制在正文上。
-/// Text.rich 仍负责换行、选择与复制；前景画笔复用相同 TextSpan 布局。
+/// RichText 与前景画笔使用同一个已解析字体的 TextSpan，保留选择与复制。
 class StructuredRubyText extends StatelessWidget {
   const StructuredRubyText({
     super.key,
@@ -752,28 +803,36 @@ class StructuredRubyText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final effectiveStyle = resolveStructuredTextStyle(context, baseStyle);
+    final effectiveSpan = TextSpan(style: effectiveStyle, children: [span]);
     final annotations = block.rubyAnnotations(
-      baseStyle: baseStyle,
+      baseStyle: effectiveStyle,
       linkColor: linkColor,
       backgroundColor: backgroundColor,
     );
     final verticalAnnotations = block.verticalAnnotations(
-      baseStyle: baseStyle,
+      baseStyle: effectiveStyle,
       linkColor: linkColor,
       backgroundColor: backgroundColor,
     );
-    final text = Text.rich(
+    // Text.rich would independently inherit typography and accessibility
+    // overrides. RichText consumes the exact span measured by our painters.
+    final text = RichText(
       key: textKey,
-      span,
+      text: effectiveSpan,
+      textDirection: textDirection,
       textScaler: textScaler,
       locale: locale,
       textAlign: textAlign,
       textWidthBasis: TextWidthBasis.parent,
+      selectionRegistrar: SelectionContainer.maybeOf(context),
+      selectionColor: DefaultSelectionStyle.of(context).selectionColor ??
+          DefaultSelectionStyle.defaultColor,
     );
     if (annotations.isEmpty && verticalAnnotations.isEmpty) return text;
     final paintedText = CustomPaint(
       foregroundPainter: _StructuredRubyPainter(
-        span: span,
+        span: effectiveSpan,
         annotations: annotations,
         verticalAnnotations: verticalAnnotations,
         textDirection: textDirection,
@@ -797,7 +856,7 @@ class StructuredRubyText extends StatelessWidget {
       }
       final width = constraints.maxWidth;
       final paragraph = TextPainter(
-        text: span,
+        text: effectiveSpan,
         textDirection: textDirection,
         textScaler: textScaler,
         locale: locale,
@@ -810,7 +869,8 @@ class StructuredRubyText extends StatelessWidget {
         locale: locale,
       );
       final hitAreas = <Widget>[];
-      for (final annotation in verticalAnnotations) {
+      for (final annotation in verticalAnnotations.expand((annotation) =>
+          _verticalAnnotationFragments(paragraph, annotation))) {
         final reference = annotation.footnoteReference;
         if (reference == null) continue;
         notePainter.text = TextSpan(
@@ -929,7 +989,8 @@ class _StructuredRubyPainter extends CustomPainter {
       final dy = firstTop - notePainter.height - rubyGap;
       notePainter.paint(canvas, Offset(dx, dy));
     }
-    for (final annotation in verticalAnnotations) {
+    for (final annotation in verticalAnnotations.expand(
+        (annotation) => _verticalAnnotationFragments(paragraph, annotation))) {
       notePainter.text = TextSpan(
         text: annotation.text,
         style: annotation.style,

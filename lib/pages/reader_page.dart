@@ -553,7 +553,7 @@ class _ReaderPageState extends State<ReaderPage>
         '${_typography.wordSpacing.toStringAsFixed(2)}|${_typography.firstLineIndentChars.toStringAsFixed(2)}|'
         '${_typography.justify}|'
         '${pad.left}|${pad.top}|${pad.right}|${pad.bottom}|$lockedBody|'
-        '$scale';
+        '$scale|${_bodyTextStyle.hashCode}';
   }
 
   void _ensureScrollLayoutIndex(double viewportWidth, bool lockedBody) {
@@ -3607,12 +3607,18 @@ class _ReaderPageState extends State<ReaderPage>
 
   // ==================== 翻页模式 ====================
 
-  TextStyle get _bodyTextStyle => TextStyle(
-      fontSize: _fontSize,
-      height: _typography.lineHeight,
-      color: _textColor,
-      letterSpacing: _typography.letterSpacing,
-      wordSpacing: _typography.wordSpacing > 0 ? _typography.wordSpacing : null);
+  TextStyle get _bodyTextStyle => resolveStructuredTextStyle(
+      context,
+      TextStyle(
+          fontSize: _fontSize,
+          height: _typography.lineHeight,
+          color: _textColor,
+          letterSpacing: _typography.letterSpacing,
+          wordSpacing:
+              _typography.wordSpacing > 0 ? _typography.wordSpacing : null),
+      // This State's context is above Scaffold's DefaultTextStyle. Resolve
+      // from the same Material body style, never from the error-text fallback.
+      inheritedStyle: Theme.of(context).textTheme.bodyMedium);
 
   TextScaler get _readerTextScaler => MediaQuery.textScalerOf(context);
 
@@ -4127,7 +4133,7 @@ class _ReaderPageState extends State<ReaderPage>
                                         '${pad.left}|${pad.top}|${pad.right}|${pad.bottom}|'
                                         '$isDouble|$vw|$effectiveVh|'
                                         '$viewTopPadding|$viewBottomPadding|'
-                                        '$textScale|$locale|$_locked|$_unlocked',
+                                        '$textScale|$locale|$_locked|$_unlocked|${_bodyTextStyle.hashCode}',
                                   );
                                   if (key != _pagedKey) {
                                     _pagedKey = key;

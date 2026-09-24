@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yomiru/reader/structured_content.dart';
@@ -241,8 +242,8 @@ void main() {
         ),
       ));
 
-      final text = tester.widget<Text>(find.byType(Text));
-      expect(text.textSpan!.toPlainText(), block.text);
+      final text = tester.widget<RichText>(find.byType(RichText));
+      expect(text.text.toPlainText(), block.text);
       expect(find.byType(StructuredRubyText), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -567,33 +568,42 @@ void main() {
         locale: const Locale('zh', 'CN'),
         textWidthBasis: TextWidthBasis.parent,
       )..layout(maxWidth: 320);
-      final previousBox = paragraph.getBoxesForSelection(
-        const TextSelection(baseOffset: 5, extentOffset: 6),
-      ).single;
-      final markerBox = paragraph.getBoxesForSelection(
-        const TextSelection(baseOffset: 6, extentOffset: 9),
-      ).single;
-      final nextBox = paragraph.getBoxesForSelection(
-        const TextSelection(baseOffset: 9, extentOffset: 10),
-      ).single;
+      final previousBox = paragraph
+          .getBoxesForSelection(
+            const TextSelection(baseOffset: 5, extentOffset: 6),
+          )
+          .single;
+      final markerBox = paragraph
+          .getBoxesForSelection(
+            const TextSelection(baseOffset: 6, extentOffset: 9),
+          )
+          .single;
+      final nextBox = paragraph
+          .getBoxesForSelection(
+            const TextSelection(baseOffset: 9, extentOffset: 10),
+          )
+          .single;
       expect(markerBox.left, closeTo(previousBox.right, 2));
       expect(nextBox.left, closeTo(markerBox.right, 2));
 
-      final noteStyle = block.verticalAnnotations(
-        baseStyle: style,
-        linkColor: Colors.blue,
-        backgroundColor: Colors.white,
-      ).single.style;
+      final noteStyle = block
+          .verticalAnnotations(
+            baseStyle: style,
+            linkColor: Colors.blue,
+            backgroundColor: Colors.white,
+          )
+          .single
+          .style;
       final notePainter = TextPainter(
         text: TextSpan(text: '[1]', style: noteStyle),
         textDirection: TextDirection.ltr,
         textScaler: scaler,
       )..layout();
       expect(noteStyle.decoration, TextDecoration.none);
-      expect(markerBox.right - markerBox.left,
-          closeTo(notePainter.width * 0.94, 2));
-      expect(nextBox.left - previousBox.right,
-          lessThan(notePainter.width * 1.1));
+      expect(
+          markerBox.right - markerBox.left, closeTo(notePainter.width, 0.01));
+      expect(
+          nextBox.left - previousBox.right, lessThan(notePainter.width * 1.1));
       final hitArea = find.descendant(
         of: find.byType(StructuredRubyText),
         matching: find.byType(GestureDetector),
@@ -605,7 +615,9 @@ void main() {
       ));
       expect(positioned.left!, lessThan(previousBox.right));
       expect(positioned.top!, lessThan(previousBox.top));
-      expect(positioned.left! + 4 + notePainter.width, lessThan(nextBox.left));
+      expect(positioned.left! + 4, closeTo(markerBox.left, 0.01));
+      expect(positioned.left! + 4 + notePainter.width,
+          closeTo(nextBox.left, 0.01));
       await tester.tap(hitArea);
       await tester.pump();
       expect(tappedReference, '1');
@@ -615,7 +627,160 @@ void main() {
       paragraph.dispose();
     });
 
-    test('buildTextSpan provides explicit decorationColor and thickness for strikethrough', () {
+    for (final bold in [false, true]) {
+      for (final scale in [1.0, 1.6]) {
+        for (final reference in ['1', '12']) {
+          testWidgets(
+              'footnote real layout: bold=$bold scale=$scale ref=$reference',
+              (tester) async {
+            final block = StructuredContentParser.parseHtml(
+              '<p>123456<sup class="ln-footnote-ref">[$reference]</sup>7890</p>',
+            ).single;
+            final scaler = TextScaler.linear(scale);
+            const textKey = ValueKey('footnote-paragraph');
+            late TextStyle effectiveStyle;
+            String? tapped;
+
+            for (final (width, height) in [
+              (480.0, 1.7), (200.0, 1.7), (480.0, 1.0), (200.0, 1.0),
+            ]) {
+              final style = TextStyle(fontSize: 26, height: height);
+              await tester.pumpWidget(MaterialApp(
+                home: MediaQuery(
+                  data: MediaQueryData(boldText: bold, textScaler: scaler),
+                  child: DefaultTextStyle(
+                    style: const TextStyle(
+                      fontFamily: 'Ahem',
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0.5,
+                    ),
+                    child: Align(
+                      alignment: Alignment.topLeft,
+                      child: SizedBox(
+                        width: width,
+                        child: SelectionArea(
+                          child: Builder(builder: (context) {
+                            effectiveStyle =
+                                resolveStructuredTextStyle(context, style);
+                            return StructuredRubyText(
+                              textKey: textKey,
+                              block: block,
+                              // Deliberately leave inherited font properties
+                              // unresolved here, as Text.rich used to do.
+                              span: block.buildTextSpan(
+                                baseStyle: style,
+                                linkColor: Colors.blue,
+                                backgroundColor: Colors.white,
+                              ),
+                              baseStyle: style,
+                              linkColor: Colors.blue,
+                              backgroundColor: Colors.white,
+                              textDirection: TextDirection.ltr,
+                              textScaler: scaler,
+                              locale: const Locale('en'),
+                              textAlign: TextAlign.start,
+                              onFootnoteTap: (value) => tapped = value,
+                            );
+                          }),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ));
+              final render = tester.renderObject<RenderParagraph>(
+                find.byKey(textKey),
+              );
+              expect(render.text.toPlainText(), block.text);
+              expect(render.text.style!.fontWeight,
+                  bold ? FontWeight.bold : FontWeight.w500);
+              expect(render.text.style!.fontFamily, 'Ahem');
+              expect(render.registrar, isNotNull);
+
+              final measured = TextPainter(
+                text: block.buildTextSpan(
+                  baseStyle: effectiveStyle,
+                  linkColor: Colors.blue,
+                  backgroundColor: Colors.white,
+                  forMeasurement: true,
+                ),
+                textDirection: TextDirection.ltr,
+                textScaler: scaler,
+                locale: const Locale('en'),
+              )..layout(maxWidth: width);
+              expect(render.size.height, closeTo(measured.height, 0.01));
+              final end = 6 + reference.length + 2;
+              final selection = TextSelection(baseOffset: 6, extentOffset: end);
+              final boxes = render.getBoxesForSelection(selection);
+              final measuredBoxes = measured.getBoxesForSelection(selection);
+              expect(boxes.map((box) => box.toRect()),
+                  measuredBoxes.map((box) => box.toRect()));
+              final note = TextPainter(
+                text: TextSpan(
+                  text: '[$reference]',
+                  style: block
+                      .verticalAnnotations(
+                        baseStyle: effectiveStyle,
+                        linkColor: Colors.blue,
+                        backgroundColor: Colors.white,
+                      )
+                      .single
+                      .style,
+                ),
+                textDirection: TextDirection.ltr,
+                textScaler: scaler,
+                locale: const Locale('en'),
+              )..layout();
+              expect(
+                  boxes.fold<double>(
+                      0, (sum, box) => sum + box.right - box.left),
+                  closeTo(note.width, 0.01));
+              final hit = find.descendant(
+                of: find.byType(StructuredRubyText),
+                matching: find.byType(GestureDetector),
+              );
+              expect(hit, findsNWidgets(boxes.length));
+              for (var i = 0; i < boxes.length; i++) {
+                final box = boxes[i];
+                final positioned = tester.widget<Positioned>(find.ancestor(
+                  of: hit.at(i),
+                  matching: find.byType(Positioned),
+                ));
+                expect(
+                    positioned.left,
+                    closeTo(
+                        (box.left - 4).clamp(0.0, width - positioned.width!),
+                        0.01));
+                final line = measured.computeLineMetrics().firstWhere((line) =>
+                    (box.top + box.bottom) / 2 >= line.baseline - line.ascent &&
+                    (box.top + box.bottom) / 2 <= line.baseline + line.descent);
+                final top = (line.baseline -
+                        line.unscaledAscent * 0.5 -
+                        note.computeDistanceToActualBaseline(
+                            TextBaseline.alphabetic))
+                    .clamp(0.0, render.size.height - note.height);
+                expect(
+                    positioned.top,
+                    closeTo(
+                        (top - 4).clamp(
+                            0.0, render.size.height - positioned.height!),
+                        0.01));
+                tapped = null;
+                await tester.tap(hit.at(i));
+                expect(tapped, reference);
+              }
+              expect(tester.takeException(), isNull);
+              note.dispose();
+              measured.dispose();
+            }
+          });
+        }
+      }
+    }
+
+    test(
+        'buildTextSpan provides explicit decorationColor and thickness for strikethrough',
+        () {
       const block = StructuredBlock(
         type: StructuredBlockType.paragraph,
         text: '1234567890',
