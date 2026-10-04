@@ -216,6 +216,8 @@ void main() {
       expect(find.text('关于我转生成为史莱姆的那档事'), findsOneWidget);
       expect(find.textContaining('异世界'), findsOneWidget);
       expect(find.text('152.0万字'), findsOneWidget);
+      expect(tester.getRect(find.text('152.0万字')).right,
+          closeTo(tester.getRect(find.byType(BookGridCard)).right, 0.01));
       expect(find.text('1'), findsOneWidget);
       expect(find.text('勇者'), findsOneWidget);
     });
@@ -266,6 +268,8 @@ void main() {
 
       expect(find.text('152.0万字'), findsOneWidget);
       expect(find.textContaining('异世界'), findsNothing);
+      expect(tester.getRect(find.text('152.0万字')).left,
+          closeTo(tester.getRect(find.byType(BookGridCard)).left, 0.01));
     });
 
     testWidgets('renders shelf layout without secondary tags or word count', (tester) async {

@@ -1106,6 +1106,22 @@ class BookGridCard extends StatelessWidget {
         // isStandard (>= 150): 2 列标准海报模式
         final isDense = cardWidth < 105;
         final isCompact = cardWidth >= 105 && cardWidth < 150;
+        final visibleTags = isCompact
+            ? const <String>[]
+            : shortTags(book.tags).where((tag) => tag.trim().isNotEmpty).toList();
+        final hasTags = visibleTags.isNotEmpty;
+        final wordCountLabel = Text(
+          book.wordCount >= 10000
+              ? '${(book.wordCount / 10000).toStringAsFixed(1)}万字'
+              : '${book.wordCount}字',
+          style: TextStyle(
+            fontSize: isCompact ? 10.0 : 10.5,
+            height: 1.25,
+            color: Colors.grey.shade500,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        );
 
         final isBlurActive = LKStore.coverBlurMode.value == CoverBlurMode.all ||
             (LKStore.coverBlurMode.value == CoverBlurMode.brave && book.isBrave);
@@ -1290,10 +1306,10 @@ class BookGridCard extends StatelessWidget {
                   SizedBox(height: isCompact ? 2 : 3),
                   Row(
                     children: [
-                      if (!isCompact && book.tags.isNotEmpty)
+                      if (hasTags)
                         Expanded(
                           child: Text(
-                            shortTags(book.tags).join(' · '),
+                            visibleTags.join(' · '),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -1304,20 +1320,17 @@ class BookGridCard extends StatelessWidget {
                           ),
                         ),
                       if (book.wordCount > 0)
-                        Flexible(
-                          child: Text(
-                          book.wordCount >= 10000
-                              ? '${(book.wordCount / 10000).toStringAsFixed(1)}万字'
-                              : '${book.wordCount}字',
-                          style: TextStyle(
-                            fontSize: isCompact ? 10.0 : 10.5,
-                            height: 1.25,
-                            color: Colors.grey.shade500,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
+                        if (hasTags)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: ConstrainedBox(
+                              constraints:
+                                  BoxConstraints(maxWidth: cardWidth * 0.45),
+                              child: wordCountLabel,
+                            ),
+                          )
+                        else
+                          Flexible(child: wordCountLabel),
                     ],
                   ),
                 ],
