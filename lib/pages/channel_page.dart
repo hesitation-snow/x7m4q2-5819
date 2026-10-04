@@ -174,7 +174,7 @@ class _ChannelPageState extends State<ChannelPage> {
                             physics: const AlwaysScrollableScrollPhysics(),
                             padding: EdgeInsets.fromLTRB(12, 8, 12,
                                 12 + MediaQuery.of(context).padding.bottom),
-                            gridDelegate: bookGridDelegate(),
+                            gridDelegate: bookGridDelegate(context),
                             itemCount: visibleItems.length + (_hasMore ? 1 : 0),
                             itemBuilder: (_, i) {
                               if (i >= visibleItems.length) {
@@ -321,7 +321,7 @@ class _RankPageState extends State<RankPage> {
                           physics: const AlwaysScrollableScrollPhysics(),
                           padding: EdgeInsets.fromLTRB(12, 8, 12,
                               12 + MediaQuery.of(context).padding.bottom),
-                          gridDelegate: bookGridDelegate(),
+                          gridDelegate: bookGridDelegate(context),
                           itemCount: visibleItems.length,
                           itemBuilder: (_, i) {
                             final book = visibleItems[i];

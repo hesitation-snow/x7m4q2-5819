@@ -61,8 +61,8 @@ void main() {
     test('adaptive text height step function', () {
       expect(BookGridDelegate.calculateTextHeight(75.0), 36.0);
       expect(BookGridDelegate.calculateTextHeight(104.9), 36.0);
-      expect(BookGridDelegate.calculateTextHeight(105.0), 48.0);
-      expect(BookGridDelegate.calculateTextHeight(140.0), 48.0);
+      expect(BookGridDelegate.calculateTextHeight(105.0), 50.0);
+      expect(BookGridDelegate.calculateTextHeight(140.0), 50.0);
       expect(BookGridDelegate.calculateTextHeight(150.0), 58.0);
       expect(BookGridDelegate.calculateTextHeight(200.0), 58.0);
 
@@ -105,7 +105,7 @@ void main() {
       const expectedChildCross = (370.0 - 20) / 3;
       expect(regular.childCrossAxisExtent, closeTo(expectedChildCross, 0.01));
       const expectedChildMain =
-          expectedChildCross * (148.0 / 105.0) + 48.0;
+          expectedChildCross * (148.0 / 105.0) + 50.0;
       expect(regular.childMainAxisExtent, closeTo(expectedChildMain, 0.01));
       expect(regular.mainAxisStride, closeTo(expectedChildMain + 12, 0.01));
     });
@@ -133,6 +133,49 @@ void main() {
       expect(await ReaderPrefs.gridColumnCount(), 4);
       expect(LKStore.gridColumnCount.value, 4);
     });
+  });
+
+  for (final scale in [1.0, 1.3, 2.0]) {
+    for (final columns in [2, 3, 5]) {
+      for (final shelf in [false, true]) {
+        testWidgets('real grid fits long titles: scale=$scale columns=$columns shelf=$shelf', (tester) async {
+          final book = LKBook(
+            bookId: 1, title: '这是一本名字非常长且必须占据两行的轻小说作品标题',
+            authorName: '', coverUrl: '', tags: ['奇幻', '校园', '恋爱喜剧'],
+            wordCount: 1234567,
+          );
+          for (final brightness in [Brightness.light, Brightness.dark]) {
+            await tester.pumpWidget(MaterialApp(
+              theme: ThemeData(brightness: brightness),
+              home: MediaQuery(
+                data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+                child: Scaffold(body: Center(child: SizedBox(
+                  width: 391.5,
+                  child: Builder(builder: (context) => GridView.builder(
+                    gridDelegate: bookGridDelegate(context, columnCount: columns, isShelf: shelf),
+                    itemCount: 6,
+                    itemBuilder: (_, i) => BookGridCard(book: book, isShelf: shelf, onTap: () {}),
+                  )),
+                ))),
+              ),
+            ));
+            expect(tester.takeException(), isNull);
+            final cover = tester.widget<AspectRatio>(find.byType(AspectRatio).first);
+            expect(cover.aspectRatio, BookGridDelegate.coverAspectRatio);
+          }
+        });
+      }
+    }
+  }
+
+  test('font scale changes grid height and invalidates layout', () {
+    const standard = BookGridDelegate();
+    const larger = BookGridDelegate(textScaler: TextScaler.linear(1.5));
+    expect(larger.shouldRelayout(standard), isTrue);
+    for (final width in [80.0, 120.0, 180.0]) {
+      expect(BookGridDelegate.calculateTextHeight(width, textScaler: larger.textScaler),
+          greaterThan(BookGridDelegate.calculateTextHeight(width)));
+    }
   });
 
   group('BookGridCard Widget rendering', () {

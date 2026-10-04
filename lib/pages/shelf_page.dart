@@ -94,6 +94,7 @@ class _ShelfPageState extends State<ShelfPage> {
     final metrics = BookGridDelegate.computeMetrics(
       usableWidth: width,
       columnCount: _lastGridColumnCount,
+      textScaler: MediaQuery.textScalerOf(context),
       isShelf: true,
       mainAxisSpacing: 8,
     );
@@ -127,6 +128,7 @@ class _ShelfPageState extends State<ShelfPage> {
       final newMetrics = BookGridDelegate.computeMetrics(
         usableWidth: width,
         columnCount: newCount,
+        textScaler: MediaQuery.textScalerOf(context),
         isShelf: true,
         mainAxisSpacing: 8,
       );
@@ -675,7 +677,7 @@ class _ShelfPageState extends State<ShelfPage> {
                             physics: const AlwaysScrollableScrollPhysics(),
                             padding: EdgeInsets.fromLTRB(12, 8, 12,
                                 12 + MediaQuery.of(context).padding.bottom),
-                            gridDelegate: bookGridDelegate(isShelf: true),
+                            gridDelegate: bookGridDelegate(context, isShelf: true),
                             itemCount: visibleItems.length + (_hasMore ? 1 : 0),
                             itemBuilder: (_, i) {
                               if (i >= visibleItems.length) {

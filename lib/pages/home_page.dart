@@ -621,6 +621,7 @@ class _FeedTabState extends State<FeedTab>
     final metrics = BookGridDelegate.computeMetrics(
       usableWidth: width,
       columnCount: _lastGridColumnCount,
+      textScaler: MediaQuery.textScalerOf(context),
     );
     if (metrics.rowStride > 0 && metrics.count > 0) {
       final row = (gridOffset / metrics.rowStride).floor();
@@ -669,6 +670,7 @@ class _FeedTabState extends State<FeedTab>
       final newMetrics = BookGridDelegate.computeMetrics(
         usableWidth: width,
         columnCount: newCount,
+        textScaler: MediaQuery.textScalerOf(context),
       );
       if (newMetrics.rowStride > 0 && newMetrics.count > 0) {
         final newRow = _anchorBookIndex ~/ newMetrics.count;
@@ -1053,7 +1055,7 @@ class _FeedTabState extends State<FeedTab>
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
             sliver: SliverGrid(
-              gridDelegate: bookGridDelegate(),
+              gridDelegate: bookGridDelegate(context),
               delegate: SliverChildBuilderDelegate(
                 (_, i) {
                   if (i >= visibleItems.length) {

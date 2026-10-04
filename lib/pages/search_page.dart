@@ -327,7 +327,7 @@ class _SearchPageState extends State<SearchPage> {
         padding: EdgeInsets.fromLTRB(
             12, 4, 12, 12 + MediaQuery.of(context).padding.bottom),
         sliver: SliverGrid(
-          gridDelegate: bookGridDelegate(),
+          gridDelegate: bookGridDelegate(context),
           delegate: SliverChildBuilderDelegate(
             (_, i) {
               if (i >= visibleItems.length) {

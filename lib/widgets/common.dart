@@ -773,14 +773,15 @@ List<String> shortTags(List<String> tags) =>
 
 /// 书籍网格排版代理：
 /// 1. 支持指定固定列数（2/3/4/5）或自动自适应（<= 0 时按 maxCrossAxisExtent: 220 自动计算）；
-/// 2. 精确锁定封面为 3:4 比例，卡片总高度 = 封面高度 + 自适应文字区高度；
-/// 3. 文字区高度随卡片宽度阶梯自适应，彻底避免封面变形与溢出。
+/// 2. 锁定封面为 105:148 比例，卡片总高度 = 封面高度 + 文字区高度；
+/// 3. 文字区按列宽和系统字体缩放预留两行标题及一行次要信息。
 class BookGridDelegate extends SliverGridDelegate {
   final int columnCount;
   final double crossAxisSpacing;
   final double mainAxisSpacing;
   final double maxCrossAxisExtent;
   final bool isShelf;
+  final TextScaler textScaler;
 
   /// 轻小说文库本标准封面宽高比（A6 规格：105mm × 148mm，约 1 : 1.4095）。
   /// 平台小说封面均依此日本文库本标准规格制作（如 697x981、826x1163、1065x1500、1367x1923），
@@ -793,10 +794,30 @@ class BookGridDelegate extends SliverGridDelegate {
     this.mainAxisSpacing = 12,
     this.maxCrossAxisExtent = 220,
     this.isShelf = false,
+    this.textScaler = TextScaler.noScaling,
   });
 
   /// 根据单元格宽度计算文字信息区的高度（与 BookGridCard 严格保持一致）
-  static double calculateTextHeight(double cellWidth, {bool isShelf = false}) {
+  static double calculateTextHeight(double cellWidth,
+      {bool isShelf = false, TextScaler textScaler = TextScaler.noScaling}) {
+    final dense = cellWidth < 105;
+    final compact = cellWidth < 150;
+    final titleSize = dense ? 11.0 : (compact ? 12.0 : (isShelf ? 13.0 : 13.5));
+    final topGap = isShelf
+        ? (dense ? 3.0 : 4.0)
+        : (dense ? 4.0 : (compact ? 5.0 : 7.0));
+    final titleHeight =
+        (textScaler.scale(titleSize) * (isShelf ? 1.22 : 1.25)).ceilToDouble() * 2;
+    final secondaryHeight = isShelf || dense
+        ? 0.0
+        : (compact ? 2.0 : 3.0) +
+            (textScaler.scale(compact ? 10.0 : 10.5) * 1.25).ceilToDouble();
+    final requiredHeight = topGap + titleHeight + secondaryHeight;
+    return math.max(
+        requiredHeight, _minimumTextHeight(cellWidth, isShelf: isShelf));
+  }
+
+  static double _minimumTextHeight(double cellWidth, {bool isShelf = false}) {
     if (isShelf) {
       // 书架模式：仅展示书名（最多 2 行），无次要标签行，行高与留白更紧凑精干，极大减小行间空隙
       if (cellWidth < 105) {
@@ -828,6 +849,7 @@ class BookGridDelegate extends SliverGridDelegate {
     double? mainAxisSpacing,
     double maxCrossAxisExtent = 220,
     bool isShelf = false,
+    TextScaler textScaler = TextScaler.noScaling,
   }) {
     final int count = columnCount > 0
         ? columnCount
@@ -836,7 +858,8 @@ class BookGridDelegate extends SliverGridDelegate {
     final double cellWidth =
         math.max(0.0, (usableWidth - totalCrossSpacing) / count);
     final double coverHeight = cellWidth / coverAspectRatio;
-    final double textHeight = calculateTextHeight(cellWidth, isShelf: isShelf);
+    final double textHeight = calculateTextHeight(cellWidth,
+        isShelf: isShelf, textScaler: textScaler);
     final double cellHeight = coverHeight + textHeight;
     final double effectiveMainAxisSpacing =
         mainAxisSpacing ?? (isShelf ? 8.0 : 12.0);
@@ -860,6 +883,7 @@ class BookGridDelegate extends SliverGridDelegate {
       mainAxisSpacing: mainAxisSpacing,
       maxCrossAxisExtent: maxCrossAxisExtent,
       isShelf: isShelf,
+      textScaler: textScaler,
     );
 
     return SliverGridRegularTileLayout(
@@ -878,13 +902,15 @@ class BookGridDelegate extends SliverGridDelegate {
         oldDelegate.crossAxisSpacing != crossAxisSpacing ||
         oldDelegate.mainAxisSpacing != mainAxisSpacing ||
         oldDelegate.maxCrossAxisExtent != maxCrossAxisExtent ||
-        oldDelegate.isShelf != isShelf;
+        oldDelegate.isShelf != isShelf ||
+        oldDelegate.textScaler != textScaler;
   }
 }
 
 /// 书籍网格使用自适应/用户指定列数。
-/// 封面比例严格保持 3:4，文字与角标自适应不同列宽。
-SliverGridDelegate bookGridDelegate({
+/// 封面比例保持 105:148，文字区跟随系统字体缩放。
+SliverGridDelegate bookGridDelegate(
+  BuildContext context, {
   int? columnCount,
   double crossAxisSpacing = 10,
   double? mainAxisSpacing,
@@ -895,6 +921,7 @@ SliverGridDelegate bookGridDelegate({
       crossAxisSpacing: crossAxisSpacing,
       mainAxisSpacing: mainAxisSpacing ?? (isShelf ? 8.0 : 12.0),
       isShelf: isShelf,
+      textScaler: MediaQuery.textScalerOf(context),
     );
 
 /// 弹出网格列数选择面板
@@ -1271,18 +1298,24 @@ class BookGridCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 10.5,
+                              height: 1.25,
                               color: scheme.primary,
                             ),
                           ),
                         ),
                       if (book.wordCount > 0)
-                        Text(
+                        Flexible(
+                          child: Text(
                           book.wordCount >= 10000
                               ? '${(book.wordCount / 10000).toStringAsFixed(1)}万字'
                               : '${book.wordCount}字',
                           style: TextStyle(
                             fontSize: isCompact ? 10.0 : 10.5,
+                            height: 1.25,
                             color: Colors.grey.shade500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           ),
                         ),
                     ],
