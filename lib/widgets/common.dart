@@ -1318,19 +1318,19 @@ class BookGridCard extends StatelessWidget {
                               color: scheme.primary,
                             ),
                           ),
-                        ),
+                        )
+                      else
+                        const Spacer(),
                       if (book.wordCount > 0)
-                        if (hasTags)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 6),
-                            child: ConstrainedBox(
-                              constraints:
-                                  BoxConstraints(maxWidth: cardWidth * 0.45),
-                              child: wordCountLabel,
+                        Padding(
+                          padding: EdgeInsets.only(left: hasTags ? 6 : 0),
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: cardWidth * (hasTags ? 0.45 : 1),
                             ),
-                          )
-                        else
-                          Flexible(child: wordCountLabel),
+                            child: wordCountLabel,
+                          ),
+                        ),
                     ],
                   ),
                 ],

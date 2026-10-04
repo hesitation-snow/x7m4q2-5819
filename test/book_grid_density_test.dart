@@ -268,9 +268,47 @@ void main() {
 
       expect(find.text('152.0万字'), findsOneWidget);
       expect(find.textContaining('异世界'), findsNothing);
-      expect(tester.getRect(find.text('152.0万字')).left,
-          closeTo(tester.getRect(find.byType(BookGridCard)).left, 0.01));
+      expect(tester.getRect(find.text('152.0万字')).right,
+          closeTo(tester.getRect(find.byType(BookGridCard)).right, 0.01));
     });
+
+    for (final tags in <List<String>>[
+      [],
+      [' ', '这是一个超过十二个字符且不会显示的标签'],
+    ]) {
+      testWidgets('word count stays right aligned without visible tags: $tags',
+          (tester) async {
+        final book = LKBook(
+          bookId: 1002,
+          title: '没有可见标签的书籍',
+          authorName: '',
+          coverUrl: '',
+          tags: tags,
+          wordCount: 1520000,
+        );
+        for (final width in [120.0, 180.0]) {
+          for (final scale in [1.0, 2.0]) {
+            await tester.pumpWidget(MaterialApp(
+              home: MediaQuery(
+                data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+                child: Scaffold(
+                  body: Center(
+                    child: SizedBox(
+                      width: width,
+                      height: 400,
+                      child: BookGridCard(book: book, onTap: () {}),
+                    ),
+                  ),
+                ),
+              ),
+            ));
+            expect(tester.takeException(), isNull);
+            expect(tester.getRect(find.text('152.0万字')).right,
+                closeTo(tester.getRect(find.byType(BookGridCard)).right, 0.01));
+          }
+        }
+      });
+    }
 
     testWidgets('renders shelf layout without secondary tags or word count', (tester) async {
       await tester.pumpWidget(
