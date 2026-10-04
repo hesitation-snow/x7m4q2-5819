@@ -854,6 +854,9 @@ class _CommentsPageState extends State<CommentsPage> {
   /// 评论采用左侧头像 + 右侧正文布局，日期统一放在昵称下方。
   Widget _commentItem(dynamic c,
       {bool isReply = false, int parentCommentId = 0}) {
+    final platform = Theme.of(context).platform;
+    final touchPlatform =
+        platform == TargetPlatform.android || platform == TargetPlatform.iOS;
     final avatar = CircleAvatar(
       radius: 24,
       backgroundImage: YomiruAvatarCache.providerOrNull(c.avatar),
@@ -877,6 +880,8 @@ class _CommentsPageState extends State<CommentsPage> {
       ],
     );
     return InkWell(
+      hoverColor: touchPlatform ? Colors.transparent : null,
+      focusColor: touchPlatform ? Colors.transparent : null,
       onTap: c.userUid > 0 ? () => openUserProfile(context, c.userUid) : null,
       onLongPress: () => _copyComment(c),
       child: Padding(
