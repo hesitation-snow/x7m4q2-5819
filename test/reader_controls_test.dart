@@ -229,6 +229,7 @@ Future<void> withReader(WidgetTester tester,
     {required bool paged,
     required TargetPlatform platform,
     bool indentAndJustify = false,
+    bool pushReader = false,
     required Future<void> Function(
             List<Map<dynamic, dynamic>>, Future<void> Function(String))
         run}) async {
@@ -278,15 +279,23 @@ Future<void> withReader(WidgetTester tester,
   }));
   try {
     await tester.runAsync(ReaderContentCache.clear);
+    const reader = ReaderPage(
+        bookId: 1338, bookTitle: 'fixture', chapterId: 317815,
+        chapterTitle: 'Controls fixture', volumeId: 1);
     await tester.pumpWidget(MaterialApp(
         navigatorObservers: [readerRouteObserver],
         theme: ThemeData(pageTransitionsTheme: AppMotion.noPageTransitions),
-        home: const ReaderPage(
-            bookId: 1338,
-            bookTitle: 'fixture',
-            chapterId: 317815,
-            chapterTitle: 'Controls fixture',
-            volumeId: 1)));
+        home: pushReader
+            ? Scaffold(body: Builder(builder: (context) => TextButton(
+                onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(builder: (_) => reader)),
+                child: const Text('打开测试阅读器'),
+              )))
+            : reader));
+    if (pushReader) {
+      await tester.tap(find.text('打开测试阅读器'));
+      await tester.pump();
+    }
     for (var i = 0; i < 12; i++) {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.runAsync(

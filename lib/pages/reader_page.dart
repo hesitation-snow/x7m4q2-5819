@@ -202,6 +202,10 @@ class _ReaderPageState extends State<ReaderPage>
   bool _loading = true;
   String? _loadError;
   bool _chrome = true;
+  static const _exitConfirmationDuration = Duration(seconds: 2);
+  Timer? _exitConfirmationTimer;
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _exitPrompt;
+  bool _exitInFlight = false;
 
   /// 章节真实所在卷(详情接口返回,入口传的 volumeId 可能是默认卷,不可靠)
   int _effectiveVolumeId = 0;
@@ -1066,6 +1070,7 @@ class _ReaderPageState extends State<ReaderPage>
 
   @override
   void dispose() {
+    _exitConfirmationTimer?.cancel();
     readerRouteObserver.unsubscribe(this);
     FocusManager.instance.removeListener(_syncVolumeKeys);
     LKStore.enhancedContentStyleEnabled
@@ -1092,6 +1097,7 @@ class _ReaderPageState extends State<ReaderPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _resetExitConfirmation();
     _readerForeground = state == AppLifecycleState.resumed;
     _volumeKeys.sync(force: _readerForeground);
     switch (state) {
@@ -1151,6 +1157,49 @@ class _ReaderPageState extends State<ReaderPage>
 
   Future<void> _handlePop() async {
     await _finishReadingSession();
+  }
+
+  void _resetExitConfirmation() {
+    _exitConfirmationTimer?.cancel();
+    _exitConfirmationTimer = null;
+    _exitPrompt?.close();
+    _exitPrompt = null;
+  }
+
+  Future<void> _requestExit(Object? result) async {
+    if (_exitInFlight || ModalRoute.of(context)?.isCurrent != true) return;
+    if (_exitConfirmationTimer?.isActive != true) {
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      _exitPrompt = messenger.showSnackBar(
+        SnackBar(
+          content: const Text('再按一次返回退出阅读'),
+          duration: _exitConfirmationDuration,
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.fromLTRB(16, 0, 16, _chrome ? 104 : 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+        snackBarAnimationStyle: AppMotion.style(context),
+      );
+      _exitConfirmationTimer =
+          Timer(_exitConfirmationDuration, _resetExitConfirmation);
+      return;
+    }
+    await _exitReader(result);
+  }
+
+  Future<void> _exitReader(Object? result) async {
+    if (_exitInFlight || ModalRoute.of(context)?.isCurrent != true) return;
+    _exitInFlight = true;
+    _resetExitConfirmation();
+    final route = ModalRoute.of(context);
+    await _handlePop();
+    if (!mounted) return;
+    if (route?.isCurrent == true) {
+      Navigator.of(context).pop(result);
+    } else {
+      _exitInFlight = false;
+    }
   }
 
   /// 保存与排版无关的正文进度，切换滚动/翻页模式仍指向同一段内容。
@@ -1280,9 +1329,13 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void didPush() => _syncVolumeKeys();
   @override
-  void didPushNext() => _syncVolumeKeys();
+  void didPushNext() {
+    _resetExitConfirmation();
+    _syncVolumeKeys();
+  }
   @override
   void didPopNext() {
+    _resetExitConfirmation();
     _syncVolumeKeys();
     _applyImmersive();
   }
@@ -2045,6 +2098,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   Future<void> _open(int chapterId, String title, {int? volumeId}) async {
+    _resetExitConfirmation();
     await _finishReadingSession();
     if (!mounted) return;
     Navigator.pushReplacement(
@@ -4079,15 +4133,13 @@ class _ReaderPageState extends State<ReaderPage>
     final viewTopPadding = _hideBar ? 0.0 : padTop;
     final viewBottomPadding =
         _hideBar ? 0.0 : MediaQuery.of(context).padding.bottom;
-    // PopScope is used so the final reading report can complete before
-    // the reader route is removed.
+    // System back requires confirmation; the explicit toolbar exit is direct.
+    // Both paths finish the reading session before removing the route.
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
+      onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        await _handlePop();
-        if (!context.mounted) return;
-        Navigator.of(context).pop(result);
+        unawaited(_requestExit(result));
       },
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         value: SystemUiOverlayStyle(
@@ -4240,9 +4292,10 @@ class _ReaderPageState extends State<ReaderPage>
                         child: Row(
                           children: [
                             IconButton(
+                              tooltip: '返回',
                               icon: Icon(Icons.chevron_left_rounded,
                                   color: _textColor),
-                              onPressed: () => Navigator.pop(context),
+                              onPressed: () => unawaited(_exitReader(null)),
                             ),
                             Expanded(
                               child: Text(
