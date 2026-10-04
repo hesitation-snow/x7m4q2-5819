@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
+import 'reader_indent.dart';
 
 const double _rubyAnnotationFontSizeScale = 0.58;
 const double _rubyMinimumLineHeight = 2.30;
@@ -469,7 +470,7 @@ class StructuredBlock {
     }
 
     if (runs.isEmpty) {
-      return TextSpan(text: text, style: blockStyle);
+      return withReaderIndent(TextSpan(text: text, style: blockStyle), baseStyle);
     }
 
     final spans = <InlineSpan>[];
@@ -620,7 +621,8 @@ class StructuredBlock {
       ));
     }
 
-    return TextSpan(style: blockStyle, children: spans);
+    return withReaderIndent(
+        TextSpan(style: blockStyle, children: spans), baseStyle);
   }
 
   /// 提取用于旧版兼容或测试的超链接列表 (start, end, url)
@@ -862,7 +864,9 @@ class StructuredRubyText extends StatelessWidget {
         locale: locale,
         textAlign: textAlign,
         textWidthBasis: TextWidthBasis.parent,
-      )..layout(maxWidth: width);
+      );
+      setReaderIndentDimensions(paragraph);
+      paragraph.layout(maxWidth: width);
       final notePainter = TextPainter(
         textDirection: textDirection,
         textScaler: textScaler,
@@ -946,7 +950,9 @@ class _StructuredRubyPainter extends CustomPainter {
       locale: locale,
       textAlign: textAlign,
       textWidthBasis: TextWidthBasis.parent,
-    )..layout(maxWidth: size.width);
+    );
+    setReaderIndentDimensions(paragraph);
+    paragraph.layout(maxWidth: size.width);
     final notePainter = TextPainter(
       textDirection: textDirection,
       textScaler: textScaler,
@@ -1158,12 +1164,24 @@ class StructuredContentParser {
 
       if (bType == StructuredBlockType.paragraph) {
         if (firstLineIndent) {
-          if (!fullText.startsWith('\u3000') && !fullText.startsWith('  ')) {
-            currentRuns[0] = currentRuns[0].copyWith(
-              text: '\u3000\u3000${currentRuns[0].text}',
-            );
-            fullText = '\u3000\u3000$fullText';
+          // Normalize existing source indentation, even across inline tags.
+          // Keep the prefix separate: inheriting ruby/superscript/link styling
+          // from the first word would change its metrics and annotation range.
+          final content = fullText.trimLeft();
+          var remaining = fullText.length - content.length;
+          while (remaining > 0 && currentRuns.isNotEmpty) {
+            final run = currentRuns.first;
+            if (run.text.length <= remaining) {
+              remaining -= run.text.length;
+              currentRuns.removeAt(0);
+            } else {
+              currentRuns[0] = run.copyWith(text: run.text.substring(remaining));
+              remaining = 0;
+            }
           }
+          currentRuns.insert(
+              0, const StructuredInlineRun(text: '\u3000\u3000'));
+          fullText = '\u3000\u3000$content';
         } else {
           // 不缩进：若正文开头有全角空格或普通空格，移除之以顶格显示
           if (fullText.startsWith('\u3000') || fullText.startsWith(' ')) {

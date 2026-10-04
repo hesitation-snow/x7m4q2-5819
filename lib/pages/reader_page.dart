@@ -32,6 +32,7 @@ import 'media_viewer_page.dart';
 import 'reader_catalog_sheet.dart';
 import '../services/illustration_cache.dart';
 import '../services/app_motion.dart';
+import '../reader/reader_indent.dart';
 import '../services/reader_volume_keys.dart';
 import '../services/reader_system_ui.dart';
 import '../widgets/reader_device_status.dart';
@@ -467,9 +468,9 @@ class _ReaderPageState extends State<ReaderPage>
         forMeasurement: false,
       );
     }
-    return TextSpan(
-      style: _bodyTextStyle,
-      children: _spansFor(block),
+    return withReaderIndent(
+      TextSpan(style: _bodyTextStyle, children: _spansFor(block)),
+      _bodyTextStyle,
     );
   }
 
@@ -521,17 +522,20 @@ class _ReaderPageState extends State<ReaderPage>
         block,
         lockedBody: lockedBody ?? _scrollLayoutLockedBody,
       );
-      span = TextSpan(style: _bodyTextStyle, text: displayText);
+      span = withReaderIndent(
+          TextSpan(style: _bodyTextStyle, text: displayText), _bodyTextStyle);
     }
 
-    return TextPainter(
+    final painter = TextPainter(
       text: span,
       textDirection: TextDirection.ltr,
       textScaler: MediaQuery.textScalerOf(context),
       locale: Localizations.maybeLocaleOf(context),
       textAlign:
           _effectiveTextAlign(block.textAlign, isHeading: block.isHeading),
-    )..layout(maxWidth: maxWidth);
+    );
+    setReaderIndentDimensions(painter);
+    return painter..layout(maxWidth: maxWidth);
   }
 
   double _scrollImageHeight(_BodyBlock block, double contentWidth) {
@@ -1754,7 +1758,7 @@ class _ReaderPageState extends State<ReaderPage>
     }
     final source = d.bodyHtml?.isNotEmpty == true ? d.bodyHtml! : d.bodyText;
     final cacheKey =
-        'v3_enhanced:${d.chapterId}:$mode:$enhanced:$indent:${source.length}:${source.hashCode}';
+        'v4_enhanced:${d.chapterId}:$mode:$enhanced:$indent:${source.length}:${source.hashCode}';
     final shared = _parsedChapterCache.remove(cacheKey);
     if (shared != null) {
       _parsedChapterCache[cacheKey] = shared;
@@ -3310,9 +3314,12 @@ class _ReaderPageState extends State<ReaderPage>
                   forMeasurement: false,
                 );
               } else {
-                span = TextSpan(
-                  style: _bodyTextStyle,
-                  children: _spans(it.text, it.links),
+                span = withReaderIndent(
+                  TextSpan(
+                    style: _bodyTextStyle,
+                    children: _spans(it.text, it.links),
+                  ),
+                  _bodyTextStyle,
                 );
               }
 
@@ -3855,7 +3862,8 @@ class _ReaderPageState extends State<ReaderPage>
         forMeasurement: true,
       );
     } else {
-      span = TextSpan(text: b.text, style: _bodyTextStyle);
+      span = withReaderIndent(
+          TextSpan(text: b.text, style: _bodyTextStyle), _bodyTextStyle);
     }
 
     final tp = TextPainter(
@@ -3864,7 +3872,9 @@ class _ReaderPageState extends State<ReaderPage>
       textScaler: _readerTextScaler,
       locale: _readerLocale,
       textAlign: _effectiveTextAlign(b.textAlign, isHeading: b.isHeading),
-    )..layout(maxWidth: effectiveW);
+    );
+    setReaderIndentDimensions(tp);
+    tp.layout(maxWidth: effectiveW);
     final lms = tp.computeLineMetrics();
     if (lms.isEmpty) {
       final height = tp.height;
@@ -3924,7 +3934,8 @@ class _ReaderPageState extends State<ReaderPage>
         forMeasurement: true,
       );
     } else {
-      span = TextSpan(text: text, style: _bodyTextStyle);
+      span = withReaderIndent(
+          TextSpan(text: text, style: _bodyTextStyle), _bodyTextStyle);
     }
     final tp = TextPainter(
       text: span,
@@ -3933,7 +3944,9 @@ class _ReaderPageState extends State<ReaderPage>
       locale: _readerLocale,
       textAlign: _effectiveTextAlign(structured?.align,
           isHeading: structured?.isHeading ?? false),
-    )..layout(maxWidth: w);
+    );
+    setReaderIndentDimensions(tp);
+    tp.layout(maxWidth: w);
     final height = tp.height;
     tp.dispose();
     return height;

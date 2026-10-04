@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -12,6 +13,7 @@ import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/reader_cache.dart';
 import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/reader_page.dart';
+import 'package:yomiru/reader/reader_indent.dart';
 import 'package:yomiru/services/app_motion.dart';
 import 'package:yomiru/services/reader_volume_keys.dart';
 import 'package:yomiru/widgets/reader_typography_sheet.dart';
@@ -19,6 +21,37 @@ import 'package:yomiru/widgets/reader_typography_sheet.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   for (final paged in [false, true]) {
+    for (final enhanced in [false, true]) {
+      testWidgets('real reader indent and justify: paged=$paged enhanced=$enhanced', (tester) async {
+        final previous = LKStore.enhancedContentStyleEnabled.value;
+        LKStore.enhancedContentStyleEnabled.value = enhanced;
+        try {
+          await withReader(tester, paged: paged, platform: TargetPlatform.android,
+              indentAndJustify: true, run: (calls, key) async {
+            final paragraph = find.byWidgetPredicate((widget) => widget is RichText &&
+                widget.text.toPlainText().startsWith('\u3000\u3000第0段'));
+            expect(paragraph, findsOneWidget);
+            final render = tester.renderObject<RenderParagraph>(paragraph);
+            final indents = <ReaderIndentSpan>[];
+            render.text.visitChildren((span) {
+              if (span is ReaderIndentSpan) indents.add(span);
+              return true;
+            });
+            expect(indents, hasLength(2));
+            final first = render.getBoxesForSelection(
+                const TextSelection(baseOffset: 2, extentOffset: 3)).first;
+            expect(first.left, closeTo(indents.first.em * 2, 1));
+            await key('next');
+            await tester.pump();
+            await key('previous');
+            await tester.pump();
+            expect(tester.takeException(), isNull);
+          });
+        } finally {
+          LKStore.enhancedContentStyleEnabled.value = previous;
+        }
+      });
+    }
     testWidgets(
         'real ${paged ? 'paged' : 'scroll'} reader volume keys, modal and lifecycle',
         (tester) async {
@@ -195,6 +228,7 @@ void main() {
 Future<void> withReader(WidgetTester tester,
     {required bool paged,
     required TargetPlatform platform,
+    bool indentAndJustify = false,
     required Future<void> Function(
             List<Map<dynamic, dynamic>>, Future<void> Function(String))
         run}) async {
@@ -214,7 +248,9 @@ Future<void> withReader(WidgetTester tester,
     return null;
   });
   SharedPreferences.setMockInitialValues(
-      {'r_paged': paged, 'r_vol_turn': true});
+      {'r_paged': paged, 'r_vol_turn': true,
+        'r_indent': indentAndJustify ? 2.0 : 0.0,
+        'r_justify': indentAndJustify});
   debugDefaultTargetPlatformOverride = platform;
   tester.view.physicalSize = const Size(400, 800);
   tester.view.devicePixelRatio = 1;

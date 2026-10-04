@@ -487,7 +487,6 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
 
   /// 顶部实时排版预览卡片
   Widget _buildPreviewCard(ColorScheme scheme) {
-    final previewIndent = _current.firstLineIndentChars * _fontSize;
     final textStyle = TextStyle(
       fontSize: _fontSize.clamp(13.0, 18.0),
       height: _current.lineHeight,
@@ -495,6 +494,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
       letterSpacing: _current.letterSpacing,
       wordSpacing: _current.wordSpacing > 0 ? _current.wordSpacing : null,
     );
+    final previewIndent = _current.firstLineIndentChars * textStyle.fontSize!;
 
     return Container(
       decoration: BoxDecoration(
