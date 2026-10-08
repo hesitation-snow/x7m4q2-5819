@@ -115,6 +115,9 @@ void main() {
     if (find.text('确定取关').evaluate().isNotEmpty) {
       await tester.tap(find.text('确定取关'));
       await tester.pumpAndSettle();
+    } else if (find.text('确定').evaluate().isNotEmpty) {
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
     }
     expect(find.text('已取消关注'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, '已关注'), findsNothing);

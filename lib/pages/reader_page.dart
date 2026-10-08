@@ -39,6 +39,7 @@ import '../widgets/reader_device_status.dart';
 import '../reader/structured_content.dart';
 import '../reader/reader_typography.dart';
 import '../widgets/reader_typography_sheet.dart';
+import '../widgets/reader_text_color_picker.dart';
 
 final RegExp _readerFootnoteDefinitionPattern =
     RegExp(r'^[\s\u3000]*\[\s*([^\]]+?)\s*\]\s*(.*)$', dotAll: true);
@@ -234,6 +235,7 @@ class _ReaderPageState extends State<ReaderPage>
 
   int _bg = 0;
   bool _bgChosen = false;
+  int? _customTextColorValue;
 
   /// 外观:跟随系统深浅色
   bool _bgFollowSystem = true;
@@ -311,7 +313,9 @@ class _ReaderPageState extends State<ReaderPage>
   bool get _sysDark => Theme.of(context).brightness == Brightness.dark;
   int get _bgEff => _bgFollowSystem ? (_sysDark ? 2 : 0) : _bg;
   Color get _bgColor => _presets[_bgEff].$1;
-  Color get _textColor => _presets[_bgEff].$2;
+  Color get _textColor => _customTextColorValue != null
+      ? Color(_customTextColorValue!)
+      : _presets[_bgEff].$2;
   bool get _isDarkBg => _bgEff >= 2;
 
   _ReadingAnchor? get _logicalAnchor => _positionController.value;
@@ -1220,6 +1224,7 @@ class _ReaderPageState extends State<ReaderPage>
     setState(() {
       _fontSize = prefs.fontSize;
       _typography = prefs.typography;
+      _customTextColorValue = prefs.textColor;
       if (prefs.bgPreset >= 0) {
         _bg = prefs.bgPreset;
         _bgChosen = true;
@@ -2575,6 +2580,10 @@ class _ReaderPageState extends State<ReaderPage>
                                 ),
                               ],
                             ),
+                            const SizedBox(height: 14),
+                            const Divider(height: 1, thickness: 0.5),
+                            const SizedBox(height: 4),
+                            _textColorTile(scheme, setSheet),
                           ],
                         ),
                         // ---- 排版 ----
@@ -2590,6 +2599,26 @@ class _ReaderPageState extends State<ReaderPage>
                           backgroundColor: _bgColor,
                           linkColor: _linkColor,
                           isDark: isDark,
+                          onPickTextColor: () async {
+                            final result = await showReaderTextColorDialog(
+                              context: context,
+                              initialColor: _textColor,
+                              defaultColor: _presets[_bgEff].$2,
+                              backgroundColor: _bgColor,
+                              isCustom: _customTextColorValue != null,
+                            );
+                            if (result == null) return;
+                            if (result.resetToDefault) {
+                              setState(() => _customTextColorValue = null);
+                              setSheet(() {});
+                              await ReaderPrefs.setTextColor(null);
+                            } else if (result.color != null) {
+                              final argb = result.color!.toARGB32();
+                              setState(() => _customTextColorValue = argb);
+                              setSheet(() {});
+                              await ReaderPrefs.setTextColor(argb);
+                            }
+                          },
                           onPreviewChange: (t) {},
                           onCommit: (t) {
                             setSheet(() {});
@@ -2655,6 +2684,86 @@ class _ReaderPageState extends State<ReaderPage>
       subtitle: subtitle == null ? null : Text(subtitle),
       value: value,
       onChanged: (v) => onChanged(v),
+    );
+  }
+
+  Widget _textColorTile(ColorScheme scheme, StateSetter setSheet) {
+    final isCustom = _customTextColorValue != null;
+    final hex = formatHexColor(_textColor);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: _textColor,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: isDark ? Colors.white54 : Colors.black26,
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+      ),
+      title: const Text(
+        '文字颜色',
+        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+      ),
+      subtitle: Text(
+        isCustom ? '$hex · 自定义' : '$hex · 默认',
+        style: TextStyle(
+          fontSize: 12,
+          color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
+        ),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isCustom)
+            TextButton(
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              onPressed: () async {
+                setState(() => _customTextColorValue = null);
+                setSheet(() {});
+                await ReaderPrefs.setTextColor(null);
+              },
+              child: const Text('恢复默认', style: TextStyle(fontSize: 12)),
+            ),
+          const Icon(Icons.chevron_right_rounded, size: 20),
+        ],
+      ),
+      onTap: () async {
+        final result = await showReaderTextColorDialog(
+          context: context,
+          initialColor: _textColor,
+          defaultColor: _presets[_bgEff].$2,
+          backgroundColor: _bgColor,
+          isCustom: isCustom,
+        );
+        if (result == null) return;
+        if (result.resetToDefault) {
+          setState(() => _customTextColorValue = null);
+          setSheet(() {});
+          await ReaderPrefs.setTextColor(null);
+        } else if (result.color != null) {
+          final argb = result.color!.toARGB32();
+          setState(() => _customTextColorValue = argb);
+          setSheet(() {});
+          await ReaderPrefs.setTextColor(argb);
+        }
+      },
     );
   }
 

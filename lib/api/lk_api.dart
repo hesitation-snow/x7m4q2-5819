@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import 'lk_client.dart';
 import 'models.dart';
+import 'medal_catalog.dart';
 import 'pagination.dart';
 import 'store.dart';
 
@@ -1053,9 +1054,23 @@ class LKApi {
         .toList();
   }
 
-  static Future<Map<String, dynamic>> medalCenter() => client.post(
-      '/api/bff/my-medal-center-v1',
-      client.authed({'page': 0, 'pageSize': 20}));
+  static Future<Map<String, dynamic>> medalCenter() {
+    final requestClient = client;
+    final uid = requestClient.session.uid;
+    final key = requestClient.session.securityKey;
+    Future<Map<String, dynamic>> page(int number) {
+      if (requestClient.session.uid != uid ||
+          requestClient.session.securityKey != key) {
+        throw LKException(-1, '账号已变更，请重新打开勋章商城');
+      }
+      return requestClient.post(
+          '/api/bff/my-medal-center-v1',
+          requestClient
+              .authed({'page': number, 'pageSize': allMedalsBuild ? 50 : 20}));
+    }
+
+    return allMedalsBuild ? loadAllMedalPages(page) : page(0);
+  }
 
   static Future<void> exchangeMedal(int medalId, {int? goodsId}) async {
     final exchangeGoodsId = goodsId ?? medalId;
@@ -1104,6 +1119,97 @@ class LKApi {
     if (taskId > 0) body['task_id'] = taskId;
     if (taskKey.isNotEmpty) body['task_key'] = taskKey;
     return client.post('/api/bff/claim-welfare-task-v1', client.authed(body));
+  }
+
+  static Future<Map<String, dynamic>> welfareTreasureBoxDetail() =>
+      client.post('/api/bff/welfare-treasure-box-detail-v1', client.authed());
+
+  static Future<Map<String, dynamic>> claimWelfareTreasureBox({
+    int? boxIndex,
+    int? campaignId,
+    int? campaignDay,
+    int? taskId,
+    String? taskKey,
+  }) {
+    final body = <String, dynamic>{};
+    if (boxIndex != null) {
+      body['box_index'] = boxIndex;
+      body['boxIndex'] = boxIndex;
+    }
+    if (campaignId != null) {
+      body['campaign_id'] = campaignId;
+      body['campaignId'] = campaignId;
+    }
+    if (campaignDay != null) {
+      body['campaign_day'] = campaignDay;
+      body['campaignDay'] = campaignDay;
+    }
+    if (taskId != null && taskId > 0) {
+      body['task_id'] = taskId;
+      body['taskId'] = taskId;
+    }
+    if (taskKey != null && taskKey.isNotEmpty) {
+      body['task_key'] = taskKey;
+      body['taskKey'] = taskKey;
+    }
+    return client.post(
+        '/api/bff/claim-welfare-treasure-box-v1', client.authed(body));
+  }
+
+  static Future<Map<String, dynamic>> reportWelfareTreasureBoxProgress({
+    String action = 'complete',
+    int? boxIndex,
+    int? campaignId,
+    int? campaignDay,
+    int? taskId,
+    String? taskKey,
+    String? adType,
+    String? actionType,
+    int? duration,
+    int? progress,
+  }) {
+    final body = <String, dynamic>{};
+    final resolvedAction = action.trim().isNotEmpty ? action.trim() : 'complete';
+    body['action'] = resolvedAction;
+    if (boxIndex != null) {
+      body['box_index'] = boxIndex;
+      body['boxIndex'] = boxIndex;
+    }
+    if (campaignId != null) {
+      body['campaign_id'] = campaignId;
+      body['campaignId'] = campaignId;
+    }
+    if (campaignDay != null) {
+      body['campaign_day'] = campaignDay;
+      body['campaignDay'] = campaignDay;
+    }
+    if (taskId != null && taskId > 0) {
+      body['task_id'] = taskId;
+      body['taskId'] = taskId;
+    }
+    if (taskKey != null && taskKey.isNotEmpty) {
+      body['task_key'] = taskKey;
+      body['taskKey'] = taskKey;
+    }
+    if (adType != null && adType.isNotEmpty) {
+      body['ad_type'] = adType;
+      body['adType'] = adType;
+    }
+    if (actionType != null && actionType.isNotEmpty) {
+      body['action_type'] = actionType;
+      body['actionType'] = actionType;
+      body['button_action'] = actionType;
+      body['buttonAction'] = actionType;
+    }
+    if (duration != null && duration > 0) {
+      body['duration'] = duration;
+      body['read_duration_seconds'] = duration;
+    }
+    if (progress != null) {
+      body['progress'] = progress;
+    }
+    return client.post('/api/bff/report-welfare-treasure-box-progress-v1',
+        client.authed(body));
   }
 
   static Future<Map<String, dynamic>> welfareCoinRecords(int page,

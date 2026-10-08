@@ -741,9 +741,15 @@ class ReaderPrefs {
         orElse: () => ReaderColumnMode.auto,
       ),
     );
+    final customTextColor = prefs.containsKey('r_text_color')
+        ? (prefs.getInt('r_text_color') == -1
+            ? null
+            : prefs.getInt('r_text_color'))
+        : null;
     return ReaderSettings(
       fontSize: prefs.getDouble('r_font') ?? 17,
       typography: typography,
+      textColor: customTextColor,
       bgPreset: prefs.getInt('r_bg') ?? -1,
       bgFollowSystem: prefs.getBool('r_bg_sys') ?? false,
       keepScreenOn: prefs.getBool('r_keep_on') ?? false,
@@ -790,6 +796,26 @@ class ReaderPrefs {
   static Future<int> bgPreset() async => (await _p()).getInt('r_bg') ?? -1;
   static Future<void> setBgPreset(int v) async =>
       (await _p()).setInt('r_bg', v);
+
+  static const String _keyTextColor = 'r_text_color';
+
+  /// 自定义文字颜色(32位 ARGB int), null 表示使用当前背景预设默认文字颜色
+  static Future<int?> textColor() async {
+    final p = await _p();
+    if (!p.containsKey(_keyTextColor)) return null;
+    final val = p.getInt(_keyTextColor);
+    if (val == null || val == -1) return null;
+    return val;
+  }
+
+  static Future<void> setTextColor(int? v) async {
+    final p = await _p();
+    if (v == null || v == -1) {
+      await p.remove(_keyTextColor);
+    } else {
+      await p.setInt(_keyTextColor, v);
+    }
+  }
 
   static Future<bool> bgFollowSystem() async =>
       (await _p()).getBool('r_bg_sys') ?? false;
@@ -895,6 +921,7 @@ class ReaderPrefs {
 class ReaderSettings {
   final double fontSize;
   final ReaderTypography typography;
+  final int? textColor;
   final int bgPreset;
   final bool bgFollowSystem;
   final bool keepScreenOn;
@@ -917,6 +944,7 @@ class ReaderSettings {
     this.volumeTurnPage = false,
     required this.fontSize,
     ReaderTypography? typography,
+    this.textColor,
     double? lineHeight,
     bool? autoMargin,
     double? marginTop,

@@ -176,7 +176,8 @@ class LKClient {
             code >= 500) {
           return cached.data;
         }
-        final msg = _extractMessage(obj['data']);
+        final msg = _extractMessage(
+            obj['data'] ?? obj['message'] ?? obj['msg'] ?? obj['error'] ?? obj);
         if (code == 8) await expireSessionIfCurrent(requestSecurityKey);
         throw LKException(code, msg.isNotEmpty ? msg : _codeHint(code));
       }

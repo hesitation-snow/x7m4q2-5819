@@ -12,6 +12,7 @@ class ReaderTypographySheet extends StatefulWidget {
   final bool isDark;
   final ValueChanged<ReaderTypography> onPreviewChange;
   final ValueChanged<ReaderTypography> onCommit;
+  final VoidCallback? onPickTextColor;
 
   const ReaderTypographySheet({
     super.key,
@@ -24,6 +25,7 @@ class ReaderTypographySheet extends StatefulWidget {
     required this.isDark,
     required this.onPreviewChange,
     required this.onCommit,
+    this.onPickTextColor,
   });
 
   @override
@@ -529,6 +531,43 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                   color: widget.textColor.withValues(alpha: 0.6),
                 ),
               ),
+              if (widget.onPickTextColor != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: widget.onPickTextColor,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: widget.textColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: widget.textColor.withValues(alpha: 0.5),
+                                width: 1,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '文字颜色',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: widget.textColor.withValues(alpha: 0.8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               const Spacer(),
               Text(
                 '${_current.currentPreset.label} · 行高 ${_current.lineHeight.toStringAsFixed(2)}',

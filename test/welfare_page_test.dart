@@ -84,7 +84,7 @@ void main() {
   });
 
   testWidgets(
-      'task center omits the removed treasure task even when returned by the server',
+      'task center has one dedicated treasure entry without eager treasure requests',
       (tester) async {
     final paths = <String>[];
     const treasureTask = {
@@ -104,7 +104,7 @@ void main() {
     expect(WelfarePage.filterVisibleTasks([treasureTask]), isEmpty);
     await tester.pumpWidget(const MaterialApp(home: WelfarePage()));
     await tester.pumpAndSettle();
-    expect(find.text('每日开宝箱'), findsNothing);
+    expect(find.text('每日开宝箱'), findsOneWidget);
     expect(find.text('每日签到'), findsOneWidget);
     expect(paths.where((path) => path.contains('treasure')), isEmpty);
     expect(tester.takeException(), isNull);

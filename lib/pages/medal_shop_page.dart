@@ -3,6 +3,7 @@ import '../widgets/account_scope.dart';
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
+import '../api/medal_catalog.dart';
 import '../api/lk_client.dart';
 import '../services/avatar_cache.dart';
 import '../widgets/common.dart';
@@ -503,7 +504,7 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
     final taskItems = _taskItems;
     final exchangeItems = _exchangeItems;
     return Scaffold(
-      appBar: AppBar(title: const Text('勋章商城')),
+      appBar: AppBar(title: const Text(allMedalsBuild ? '勋章商城 · 全量版' : '勋章商城')),
       body: _loading && _data == null
           ? const Center(child: LkLoadingIndicator())
           : _error != null && _data == null

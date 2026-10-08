@@ -20,6 +20,7 @@ import 'book_detail_page.dart';
 import 'dynamic_page.dart';
 import 'reader_page.dart';
 import 'search_page.dart';
+import 'treasure_box_page.dart';
 
 // 本地协议测试开关：默认关闭，需显式 --dart-define 才会编译入口。
 const _enableWelfareProtocolProbe =
@@ -2170,6 +2171,21 @@ class _WelfarePageState extends State<WelfarePage>
                       _buildBalanceCard(_rootData),
                       const SizedBox(height: 10),
                       _buildSignCard(),
+                      const SizedBox(height: 10),
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.card_giftcard_outlined),
+                          title: const Text('每日开宝箱'),
+                          subtitle: const Text('查看进度与开启条件'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () async {
+                            await Navigator.of(context).push(MaterialPageRoute<void>(
+                              builder: (_) => const TreasureBoxPage(),
+                            ));
+                            if (mounted) await _load();
+                          },
+                        ),
+                      ),
                       if (_earnData.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         _buildEarnCoinCard(),
