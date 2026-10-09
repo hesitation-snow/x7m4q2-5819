@@ -728,6 +728,7 @@ class ReaderPrefs {
       wordSpacing: prefs.getDouble('r_word_spacing') ?? 0.0,
       firstLineIndentChars: prefs.getDouble('r_indent') ?? 0.0,
       justify: prefs.getBool('r_justify') ?? false,
+      bold: prefs.getBool('r_bold') ?? false,
       autoMargin: autoMargin,
       marginHorizontal:
           prefs.getDouble('r_margin_h') ?? (prefs.getDouble('r_ml') ?? 20.0),
@@ -772,6 +773,7 @@ class ReaderPrefs {
       prefs.setDouble('r_word_spacing', t.wordSpacing),
       prefs.setDouble('r_indent', t.firstLineIndentChars),
       prefs.setBool('r_justify', t.justify),
+      prefs.setBool('r_bold', t.bold),
       prefs.setBool('r_auto_margin', t.autoMargin),
       prefs.setDouble('r_margin_h', t.marginHorizontal),
       prefs.setBool('r_custom_margins', t.customMargins),

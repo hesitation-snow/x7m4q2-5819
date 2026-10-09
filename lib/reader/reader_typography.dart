@@ -51,6 +51,9 @@ class ReaderTypography {
   /// 两端对齐（仅作用于普通正文，段落末行不强制撑开）
   final bool justify;
 
+  /// 正文加粗，默认关闭，不随间距预设变化。
+  final bool bold;
+
   /// 是否启用自适应留白基线
   final bool autoMargin;
 
@@ -82,6 +85,7 @@ class ReaderTypography {
     this.wordSpacing = 0.0,
     this.firstLineIndentChars = 0.0,
     this.justify = false,
+    this.bold = false,
     this.autoMargin = true,
     this.marginHorizontal = 20.0,
     this.customMargins = false,
@@ -175,6 +179,7 @@ class ReaderTypography {
     double? wordSpacing,
     double? firstLineIndentChars,
     bool? justify,
+    bool? bold,
     bool? autoMargin,
     double? marginHorizontal,
     bool? customMargins,
@@ -191,6 +196,7 @@ class ReaderTypography {
       wordSpacing: wordSpacing ?? this.wordSpacing,
       firstLineIndentChars: firstLineIndentChars ?? this.firstLineIndentChars,
       justify: justify ?? this.justify,
+      bold: bold ?? this.bold,
       autoMargin: autoMargin ?? this.autoMargin,
       marginHorizontal: marginHorizontal ?? this.marginHorizontal,
       customMargins: customMargins ?? this.customMargins,
@@ -252,6 +258,7 @@ class ReaderTypography {
         'word_spacing': wordSpacing,
         'first_line_indent': firstLineIndentChars,
         'justify': justify,
+        'bold': bold,
         'auto_margin': autoMargin,
         'margin_horizontal': marginHorizontal,
         'custom_margins': customMargins,
@@ -265,16 +272,15 @@ class ReaderTypography {
   factory ReaderTypography.fromJson(Map<String, dynamic> json) {
     return ReaderTypography(
       lineHeight: (json['line_height'] as num?)?.toDouble() ?? 1.70,
-      paragraphSpacing:
-          (json['paragraph_spacing'] as num?)?.toDouble() ?? 12.0,
+      paragraphSpacing: (json['paragraph_spacing'] as num?)?.toDouble() ?? 12.0,
       letterSpacing: (json['letter_spacing'] as num?)?.toDouble() ?? 0.3,
       wordSpacing: (json['word_spacing'] as num?)?.toDouble() ?? 0.0,
       firstLineIndentChars:
           (json['first_line_indent'] as num?)?.toDouble() ?? 0.0,
       justify: json['justify'] == true,
+      bold: json['bold'] == true,
       autoMargin: json['auto_margin'] != false,
-      marginHorizontal:
-          (json['margin_horizontal'] as num?)?.toDouble() ?? 20.0,
+      marginHorizontal: (json['margin_horizontal'] as num?)?.toDouble() ?? 20.0,
       customMargins: json['custom_margins'] == true,
       marginTop: (json['margin_top'] as num?)?.toDouble() ?? 56.0,
       marginBottom: (json['margin_bottom'] as num?)?.toDouble() ?? 70.0,

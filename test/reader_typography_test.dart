@@ -2,8 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yomiru/reader/reader_typography.dart';
 import 'package:yomiru/widgets/reader_typography_sheet.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:yomiru/api/store.dart';
 
 void main() {
+  test('bold is backward compatible and persists with typography', () async {
+    SharedPreferences.setMockInitialValues({});
+    expect((await ReaderPrefs.loadAll()).typography.bold, isFalse);
+    expect(ReaderTypography.fromJson(const {}).bold, isFalse);
+    final bold = const ReaderTypography().copyWith(bold: true);
+    expect(ReaderTypography.fromJson(bold.toJson()).bold, isTrue);
+    await ReaderPrefs.saveTypography(bold);
+    expect((await ReaderPrefs.loadAll()).typography.bold, isTrue);
+  });
   group('ReaderTypography Model & Adaptive Margins', () {
     test('Presets match standard, compact, loose, and detect custom', () {
       final std = ReaderTypography.standard();
@@ -39,7 +50,9 @@ void main() {
       expect(pad.bottom, equals(70.0));
     });
 
-    test('Adaptive margin on tablets constrains max text width in single column', () {
+    test(
+        'Adaptive margin on tablets constrains max text width in single column',
+        () {
       final typo = ReaderTypography.standard();
       final pad = typo.computePadding(
         screenWidth: 1000.0,
@@ -54,7 +67,9 @@ void main() {
       expect(1000.0 - pad.left - pad.right, equals(640.0));
     });
 
-    test('Custom margins take precedence in advanced mode with minimum safety bounds', () {
+    test(
+        'Custom margins take precedence in advanced mode with minimum safety bounds',
+        () {
       const typo = ReaderTypography(
         customMargins: true,
         marginTop: 60.0,
@@ -98,7 +113,8 @@ void main() {
       expect(restored.paragraphSpacing, equals(original.paragraphSpacing));
       expect(restored.letterSpacing, equals(original.letterSpacing));
       expect(restored.wordSpacing, equals(original.wordSpacing));
-      expect(restored.firstLineIndentChars, equals(original.firstLineIndentChars));
+      expect(
+          restored.firstLineIndentChars, equals(original.firstLineIndentChars));
       expect(restored.justify, equals(original.justify));
       expect(restored.autoMargin, equals(original.autoMargin));
       expect(restored.marginHorizontal, equals(original.marginHorizontal));
@@ -112,7 +128,8 @@ void main() {
   });
 
   group('ReaderTypographySheet Widget Tests', () {
-    testWidgets('Renders all typography controls and updates settings', (tester) async {
+    testWidgets('Renders all typography controls and updates settings',
+        (tester) async {
       tester.view.physicalSize = const Size(500, 1200);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {
@@ -138,6 +155,9 @@ void main() {
 
       // 常用设置检查
       expect(find.text('排版预览'), findsOneWidget);
+      await tester.tap(find.text('加粗'));
+      await tester.pumpAndSettle();
+      expect(current.bold, isTrue);
       expect(find.text('紧凑'), findsOneWidget);
       expect(find.text('标准'), findsOneWidget);
       expect(find.text('宽松'), findsOneWidget);
@@ -155,10 +175,10 @@ void main() {
       await tester.tap(find.text('紧凑'));
       await tester.pumpAndSettle();
       expect(current.currentPreset, equals(ReaderTypographyPreset.compact));
+      expect(current.bold, isTrue);
 
-      // 展开「更多排版设置」
-      await tester.ensureVisible(find.text('更多排版设置'));
-      await tester.tap(find.text('更多排版设置'));
+      expect(find.text('更多排版设置'), findsNothing);
+      await tester.ensureVisible(find.text('段落与边距'));
       await tester.pumpAndSettle();
 
       expect(find.text('词间距'), findsOneWidget);
@@ -184,6 +204,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(current.currentPreset, equals(ReaderTypographyPreset.standard));
       expect(current.firstLineIndentChars, equals(0.0));
+      expect(current.bold, isFalse);
       expect(current.columnMode, equals(ReaderColumnMode.auto));
     });
 
@@ -223,13 +244,12 @@ void main() {
         ),
       ));
 
-      // 展开「更多排版设置」
-      await tester.ensureVisible(find.text('更多排版设置'));
-      await tester.tap(find.text('更多排版设置'));
+      await tester.ensureVisible(find.text('段落与边距'));
       await tester.pumpAndSettle();
 
-      final switchTiles =
-          tester.widgetList<SwitchListTile>(find.byType(SwitchListTile)).toList();
+      final switchTiles = tester
+          .widgetList<SwitchListTile>(find.byType(SwitchListTile))
+          .toList();
       expect(switchTiles.length, greaterThanOrEqualTo(3));
       for (final tile in switchTiles) {
         expect(tile.tileColor, equals(Colors.transparent));

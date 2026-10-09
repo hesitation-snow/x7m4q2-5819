@@ -3720,6 +3720,7 @@ class _ReaderPageState extends State<ReaderPage>
       TextStyle(
           fontSize: _fontSize,
           height: _typography.lineHeight,
+          fontWeight: _typography.bold ? FontWeight.bold : FontWeight.normal,
           color: _textColor,
           letterSpacing: _typography.letterSpacing,
           wordSpacing:
