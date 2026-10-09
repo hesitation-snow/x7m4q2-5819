@@ -1085,8 +1085,10 @@ class _ReaderPageState extends State<ReaderPage>
     _positionRestoreSerial++;
     _scrollProgressGeneration++;
     _readingReportTimer?.cancel();
-    LKReadingSession.shared.pause();
-    unawaited(_reportReadingProgress(force: true));
+    if (!_finishingReadingSession) {
+      LKReadingSession.shared.pause();
+      unawaited(_reportReadingProgress(force: true));
+    }
     WidgetsBinding.instance.removeObserver(this);
     _positionPersistTimer?.cancel();
     _savePos();
@@ -1159,10 +1161,6 @@ class _ReaderPageState extends State<ReaderPage>
     }
   }
 
-  Future<void> _handlePop() async {
-    await _finishReadingSession();
-  }
-
   void _resetExitConfirmation() {
     _exitConfirmationTimer?.cancel();
     _exitConfirmationTimer = null;
@@ -1197,7 +1195,8 @@ class _ReaderPageState extends State<ReaderPage>
     _exitInFlight = true;
     _resetExitConfirmation();
     final route = ModalRoute.of(context);
-    await _handlePop();
+    _savePos();
+    unawaited(_finishReadingSession());
     if (!mounted) return;
     if (route?.isCurrent == true) {
       Navigator.of(context).pop(result);
@@ -4243,7 +4242,7 @@ class _ReaderPageState extends State<ReaderPage>
     final viewBottomPadding =
         _hideBar ? 0.0 : MediaQuery.of(context).padding.bottom;
     // System back requires confirmation; the explicit toolbar exit is direct.
-    // Both paths finish the reading session before removing the route.
+    // Both paths stop timing immediately and report in the background.
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {

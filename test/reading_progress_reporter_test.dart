@@ -106,6 +106,37 @@ void main() {
     expect(deltas, [16, 16]);
   });
 
+  test(
+      'queued exit report keeps old chapter and cannot acknowledge new chapter',
+      () async {
+    final gate = Completer<void>();
+    final chapters = <int>[];
+    reporter = ReadingProgressReporter(
+        session: session,
+        owner: () => owner,
+        send: (snapshot, delta) async {
+          chapters.add(snapshot.chapterId);
+          deltas.add(delta);
+          if (deltas.length == 1) await gate.future;
+        });
+    now = now.add(const Duration(seconds: 60));
+    final heartbeat = reporter.flush();
+    now = now.add(const Duration(seconds: 3));
+    session.pause();
+    final exit = reporter.flush(force: true);
+    final duplicateExit = reporter.flush(force: true);
+    begin(chapter: 2);
+    now = now.add(const Duration(seconds: 20));
+    gate.complete();
+    await Future.wait([heartbeat, exit, duplicateExit]);
+    expect(chapters, [1, 1]);
+    expect(deltas, [60, 3]);
+    expect(session.reportedSeconds, 0);
+    await reporter.flush(force: true);
+    expect(chapters, [1, 1, 2]);
+    expect(deltas, [60, 3, 20]);
+  });
+
   test('switching accounts or logging in again cannot report an old session',
       () async {
     now = now.add(const Duration(seconds: 60));
@@ -115,6 +146,28 @@ void main() {
     owner = (12, 3);
     await reporter.flush(force: true);
     expect(deltas, isEmpty);
+  });
+
+  test('queued exit report is discarded after switching accounts', () async {
+    final gate = Completer<void>();
+    reporter = ReadingProgressReporter(
+        session: session,
+        owner: () => owner,
+        send: (_, delta) async {
+          deltas.add(delta);
+          await gate.future;
+        });
+    now = now.add(const Duration(seconds: 60));
+    final heartbeat = reporter.flush();
+    now = now.add(const Duration(seconds: 3));
+    session.pause();
+    final exit = reporter.flush(force: true);
+    owner = (13, 2);
+    begin(chapter: 2);
+    gate.complete();
+    await Future.wait([heartbeat, exit]);
+    expect(deltas, [60]);
+    expect(session.reportedSeconds, 0);
   });
 
   test('late acknowledgement cannot change new chapter reporting offset',

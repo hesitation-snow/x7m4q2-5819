@@ -30,16 +30,29 @@ class ReadingProgressReporter {
   final (int, int) Function() owner;
   final Future<void> Function(LKReadingSnapshot, int) send;
   Future<void>? _inFlight;
+  _ReadingReportCursor? _cursor;
 
   Future<void> flush({bool force = false}) async {
-    final existing = _inFlight;
-    if (existing != null) {
+    final identity = owner();
+    final generation = session.generation;
+    final snapshot = session.snapshot();
+    if (identity.$1 <= 0 ||
+        (session.accountId, session.accountRevision) != identity ||
+        snapshot == null) {
+      return;
+    }
+    final cursor =
+        _cursor?.generation == generation && _cursor?.identity == identity
+            ? _cursor!
+            : (_cursor = _ReadingReportCursor(
+                identity, generation, session.reportedSeconds));
+    // 在等待网络前固定章节与时长，退出后进入其他章节也不会串报。
+    while (_inFlight != null) {
+      final existing = _inFlight!;
       await existing;
       if (!force) return;
-      // 离开阅读器时把请求期间新增的真实时长也补齐。
-      return flush(force: true);
     }
-    final request = _flush(force: force);
+    final request = _flush(snapshot, cursor, force: force);
     _inFlight = request;
     try {
       await request;
@@ -48,26 +61,32 @@ class ReadingProgressReporter {
     }
   }
 
-  Future<void> _flush({required bool force}) async {
-    final identity = owner();
-    final generation = session.generation;
+  Future<void> _flush(LKReadingSnapshot snapshot, _ReadingReportCursor cursor,
+      {required bool force}) async {
     bool isCurrent() =>
-        identity.$1 > 0 &&
-        owner() == identity &&
-        (session.accountId, session.accountRevision) == identity &&
-        session.generation == generation;
+        owner() == cursor.identity &&
+        (session.accountId, session.accountRevision) == cursor.identity;
     if (!isCurrent()) return;
-    final snapshot = session.snapshot();
-    if (snapshot == null) return;
-    var pending = snapshot.readDurationSeconds - session.reportedSeconds;
+    var pending = snapshot.readDurationSeconds - cursor.reportedSeconds;
     if (pending < (force ? 1 : 15)) return;
     // 固定本次截止值，补报也不会无限追赶计时器或超过服务器的单次上限。
     while (pending > 0 && isCurrent()) {
       final delta = pending.clamp(1, 300);
       await send(snapshot, delta);
       if (!isCurrent()) return;
-      session.reportedSeconds += delta;
+      cursor.reportedSeconds += delta;
+      if (session.generation == cursor.generation) {
+        session.reportedSeconds = cursor.reportedSeconds;
+      }
       pending -= delta;
     }
   }
+}
+
+class _ReadingReportCursor {
+  _ReadingReportCursor(this.identity, this.generation, this.reportedSeconds);
+
+  final (int, int) identity;
+  final int generation;
+  int reportedSeconds;
 }
