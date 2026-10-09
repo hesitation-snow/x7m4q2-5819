@@ -40,6 +40,7 @@ import '../reader/structured_content.dart';
 import '../reader/reader_typography.dart';
 import '../widgets/reader_typography_sheet.dart';
 import '../widgets/reader_text_color_picker.dart';
+import '../widgets/reader_settings_section.dart';
 
 final RegExp _readerFootnoteDefinitionPattern =
     RegExp(r'^[\s\u3000]*\[\s*([^\]]+?)\s*\]\s*(.*)$', dotAll: true);
@@ -2413,6 +2414,7 @@ class _ReaderPageState extends State<ReaderPage>
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Theme.of(context).brightness == Brightness.dark
           ? const Color(0xFF1E2025)
           : Colors.white,
@@ -2426,21 +2428,32 @@ class _ReaderPageState extends State<ReaderPage>
             animationDuration: AppMotion.duration(context, 300),
             length: 3,
             child: SizedBox(
-              height: (MediaQuery.of(sheetCtx).size.height * 0.65)
-                  .clamp(440.0, 720.0),
-              child: Column(children: [
-                const TabBar(
-                  tabs: [
-                    Tab(
-                        icon: Icon(Icons.palette_outlined, size: 20),
-                        text: '外观'),
-                    Tab(
-                        icon: Icon(Icons.format_line_spacing_rounded, size: 20),
-                        text: '排版'),
-                    Tab(
-                        icon: Icon(Icons.touch_app_outlined, size: 20),
-                        text: '操作'),
-                  ],
+              height: (MediaQuery.of(sheetCtx).size.height * 0.82)
+                  .clamp(0.0, 720.0),
+              child: SafeArea(top: false, child: Column(children: [
+                Container(
+                  width: 32, height: 4,
+                  margin: const EdgeInsets.only(top: 10),
+                  decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(4)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 8, 0),
+                  child: Row(children: [
+                    const Expanded(child: Text('阅读设置', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600))),
+                    IconButton(tooltip: '关闭阅读设置', onPressed: () => Navigator.pop(sheetCtx), icon: const Icon(Icons.close_rounded, size: 20)),
+                  ]),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: TabBar(
+                    dividerColor: Colors.transparent,
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    indicator: BoxDecoration(color: scheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(14)),
+                    labelColor: scheme.primary,
+                    unselectedLabelColor: scheme.onSurfaceVariant,
+                    labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    tabs: const [Tab(text: '外观'), Tab(text: '排版'), Tab(text: '操作')],
+                  ),
                 ),
                 Expanded(
                   child: TabBarView(
@@ -2448,141 +2461,82 @@ class _ReaderPageState extends State<ReaderPage>
                           ? const NeverScrollableScrollPhysics()
                           : null,
                       children: [
-                        // ---- 外观 ----
+// ---- 外观 ----
                         ListView(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
                           children: [
-                            _switchTile(scheme, Icons.brightness_6_outlined,
-                                '保持屏幕常亮', _keepOn, (v) async {
-                              setSheet(() {});
-                              setState(() => _keepOn = v);
-                              ReaderPrefs.setKeepScreenOn(v);
-                              WakelockPlus.toggle(enable: v);
-                            }),
-                            _switchTile(scheme, Icons.hide_image_outlined,
-                                '隐藏系统状态栏', _hideBar, (v) {
-                              setSheet(() {});
-                              setState(() => _hideBar = v);
-                              ReaderPrefs.setHideStatusBar(v);
-                              _applyImmersive();
-                            }),
-                            _switchTile(scheme, Icons.info_outline, '正文指示器',
-                                _indicators, (v) {
-                              setSheet(() {});
-                              setState(() => _indicators = v);
-                              ReaderPrefs.setShowIndicators(v);
-                            }),
-                            _switchTile(scheme, Icons.translate_rounded,
-                                '繁体显示(简→繁)', _traditional, (v) async {
-                              setSheet(() {});
-                              setState(() {
-                                _traditional = v;
-                                if (v) _simplified = false;
-                              });
-                              ReaderPrefs.setTraditional(v);
-                              if (v) ReaderPrefs.setSimplified(false);
-                              await _reparseCurrentDetail();
-                            }),
-                            _switchTile(scheme, Icons.translate_rounded,
-                                '简体显示(繁→简)', _simplified, (v) async {
-                              setSheet(() {});
-                              setState(() {
-                                _simplified = v;
-                                if (v) _traditional = false;
-                              });
-                              ReaderPrefs.setSimplified(v);
-                              if (v) ReaderPrefs.setTraditional(false);
-                              await _reparseCurrentDetail();
-                            }),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                for (var i = 0; i < _presets.length; i++)
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 10),
-                                    child: GestureDetector(
-                                      onTap: () {
-                                        setSheet(() {});
-                                        setState(() {
-                                          _bg = i;
-                                          _bgChosen = true;
-                                          _bgFollowSystem = false;
-                                        });
-                                        ReaderPrefs.setBgPreset(i);
-                                        ReaderPrefs.setBgFollowSystem(false);
-                                      },
-                                      child: Container(
-                                        width: 44,
-                                        height: 44,
-                                        decoration: BoxDecoration(
-                                          color: _presets[i].$1,
-                                          borderRadius:
-                                              BorderRadius.circular(22),
-                                          border: Border.all(
-                                            color: !_bgFollowSystem && _bg == i
-                                                ? scheme.primary
-                                                : (isDark
-                                                    ? Colors.grey.shade700
-                                                    : Colors.grey.shade300),
-                                            width: !_bgFollowSystem && _bg == i
-                                                ? 2.5
-                                                : 1,
-                                          ),
-                                        ),
-                                        child: Center(
-                                          child: Text(_presets[i].$3,
-                                              style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: _presets[i].$2)),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                // 跟随系统
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 10),
-                                  child: GestureDetector(
-                                    onTap: () {
-                                      setSheet(() {});
-                                      setState(() {
-                                        _bgFollowSystem = true;
-                                        _bgChosen = true;
-                                      });
-                                      ReaderPrefs.setBgFollowSystem(true);
-                                    },
-                                    child: Container(
-                                      width: 44,
-                                      height: 44,
-                                      decoration: BoxDecoration(
-                                        color: isDark
-                                            ? const Color(0xFF2A2D34)
-                                            : Colors.white,
-                                        borderRadius: BorderRadius.circular(22),
-                                        border: Border.all(
-                                          color: _bgFollowSystem
-                                              ? scheme.primary
-                                              : (isDark
-                                                  ? Colors.grey.shade700
-                                                  : Colors.grey.shade300),
-                                          width: _bgFollowSystem ? 2.5 : 1,
-                                        ),
-                                      ),
-                                      child: Icon(
-                                        Icons.brightness_auto_rounded,
-                                        size: 20,
-                                        color: _bgFollowSystem
-                                            ? scheme.primary
-                                            : Colors.grey,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            const Divider(height: 1, thickness: 0.5),
-                            const SizedBox(height: 4),
-                            _textColorTile(scheme, setSheet),
+                            ReaderSettingsSection(title: '主题', children: [
+                              const Padding(
+                                padding: EdgeInsets.only(top: 8, bottom: 6),
+                                child: Text('配色', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                              ),
+                              ReaderThemePicker(
+                                presets: _presets,
+                                selected: _bgFollowSystem ? null : _bg,
+                                onSelected: (index) {
+                                  setState(() {
+                                    _bgChosen = true;
+                                    _bgFollowSystem = index == null;
+                                    if (index != null) _bg = index;
+                                  });
+                                  setSheet(() {});
+                                  if (index != null) ReaderPrefs.setBgPreset(index);
+                                  ReaderPrefs.setBgFollowSystem(index == null);
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                              _textColorTile(scheme, setSheet),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: Text('用于正文和章节标题，可恢复配色默认值。', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                              ),
+                            ]),
+                            ReaderSettingsSection(title: '显示', children: [
+                              _switchTile(scheme, Icons.brightness_6_outlined,
+                                  '保持屏幕常亮', _keepOn, (v) {
+                                setState(() => _keepOn = v);
+                                setSheet(() {});
+                                ReaderPrefs.setKeepScreenOn(v);
+                                WakelockPlus.toggle(enable: v);
+                              }),
+                              _switchTile(scheme, Icons.hide_image_outlined,
+                                  '隐藏系统状态栏', _hideBar, (v) {
+                                setState(() => _hideBar = v);
+                                setSheet(() {});
+                                ReaderPrefs.setHideStatusBar(v);
+                                _applyImmersive();
+                              }),
+                              _switchTile(scheme, Icons.info_outline,
+                                  '正文指示器', _indicators, (v) {
+                                setState(() => _indicators = v);
+                                setSheet(() {});
+                                ReaderPrefs.setShowIndicators(v);
+                              }),
+                            ]),
+                            ReaderSettingsSection(title: '文字转换', children: [
+                              _switchTile(scheme, Icons.translate_rounded,
+                                  '繁体显示', _traditional, (v) async {
+                                setState(() {
+                                  _traditional = v;
+                                  if (v) _simplified = false;
+                                });
+                                setSheet(() {});
+                                ReaderPrefs.setTraditional(v);
+                                if (v) ReaderPrefs.setSimplified(false);
+                                await _reparseCurrentDetail();
+                              }, subtitle: '简体转为繁体'),
+                              _switchTile(scheme, Icons.translate_rounded,
+                                  '简体显示', _simplified, (v) async {
+                                setState(() {
+                                  _simplified = v;
+                                  if (v) _traditional = false;
+                                });
+                                setSheet(() {});
+                                ReaderPrefs.setSimplified(v);
+                                if (v) ReaderPrefs.setTraditional(false);
+                                await _reparseCurrentDetail();
+                              }, subtitle: '繁体转为简体'),
+                            ]),
                           ],
                         ),
                         // ---- 排版 ----
@@ -2626,14 +2580,15 @@ class _ReaderPageState extends State<ReaderPage>
                         ),
                         // ---- 操作 ----
                         ListView(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
                           children: [
+                            ReaderSettingsSection(title: '翻页', children: [
                             _switchTile(scheme, Icons.touch_app_outlined,
-                                '点击翻页(左右 1/3 区域翻页)', _tapTurn, (v) {
+                                '点击翻页', _tapTurn, (v) {
                               setSheet(() {});
                               setState(() => _tapTurn = v);
                               ReaderPrefs.setTapTurnPage(v);
-                            }),
+                            }, subtitle: '点击左右两侧翻页'),
                             if (ReaderVolumeKeys.supported)
                               _switchTile(scheme, Icons.volume_up_outlined,
                                   '音量键翻页', _volumeTurn, (v) {
@@ -2643,9 +2598,11 @@ class _ReaderPageState extends State<ReaderPage>
                                 _syncVolumeKeys();
                               }),
                             _switchTile(scheme, Icons.auto_stories_rounded,
-                                '翻页模式(整页左右翻)', _paged, (v) {
+                                '翻页模式', _paged, (v) {
                               _changeReadingMode(v, setSheet);
-                            }),
+                            }, subtitle: '关闭后使用连续滚动'),
+                            ]),
+                            ReaderSettingsSection(title: '快捷操作', children: [
                             if (_locked && !_unlocked)
                               _aaTile(
                                   scheme,
@@ -2661,11 +2618,12 @@ class _ReaderPageState extends State<ReaderPage>
                               Navigator.pop(sheetCtx);
                               _sc.jumpTo(0);
                             }),
+                            ]),
                           ],
                         ),
                       ]),
                 ),
-              ]),
+              ])),
             ),
           ),
         );
@@ -2677,10 +2635,10 @@ class _ReaderPageState extends State<ReaderPage>
       bool value, Function(bool) onChanged,
       {String? subtitle}) {
     return SwitchListTile(
-      dense: true,
-      secondary: Icon(icon, color: scheme.primary),
-      title: Text(title, style: const TextStyle(fontSize: 14)),
-      subtitle: subtitle == null ? null : Text(subtitle),
+      contentPadding: EdgeInsets.zero,
+      secondary: Icon(icon, size: 20, color: scheme.onSurfaceVariant),
+      title: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+      subtitle: subtitle == null ? null : Text(subtitle, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
       value: value,
       onChanged: (v) => onChanged(v),
     );
@@ -2689,36 +2647,15 @@ class _ReaderPageState extends State<ReaderPage>
   Widget _textColorTile(ColorScheme scheme, StateSetter setSheet) {
     final isCustom = _customTextColorValue != null;
     final hex = formatHexColor(_textColor);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
-      leading: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          color: _textColor,
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: isDark ? Colors.white54 : Colors.black26,
-            width: 1.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.12),
-              blurRadius: 4,
-              offset: const Offset(0, 1),
-            ),
-          ],
-        ),
-      ),
       title: const Text(
         '文字颜色',
         style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
       ),
       subtitle: Text(
-        isCustom ? '$hex · 自定义' : '$hex · 默认',
+        hex,
         style: TextStyle(
           fontSize: 12,
           color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
@@ -2727,6 +2664,8 @@ class _ReaderPageState extends State<ReaderPage>
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          Container(width: 24, height: 24, decoration: BoxDecoration(color: _textColor, shape: BoxShape.circle, border: Border.all(color: scheme.outlineVariant))),
+          const SizedBox(width: 8),
           if (isCustom)
             TextButton(
               style: TextButton.styleFrom(

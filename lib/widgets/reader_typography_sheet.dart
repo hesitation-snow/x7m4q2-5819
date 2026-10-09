@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../reader/reader_typography.dart';
+import 'reader_settings_section.dart';
 
 /// 借鉴 Apple Books 风格的排版设置面板
 class ReaderTypographySheet extends StatefulWidget {
@@ -93,9 +94,9 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
           Card(
             margin: EdgeInsets.zero,
             elevation: 0,
-            color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+            color: readerSettingsCardColor(scheme),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(22),
               side: BorderSide(
                 color: scheme.outlineVariant.withValues(alpha: 0.25),
               ),
@@ -203,257 +204,260 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                   ),
                   const Divider(height: 16, thickness: 0.5),
 
-                // 分栏模式
-                Row(
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '分栏模式',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        Text(
-                          '仅对翻页模式生效',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Spacer(),
-                    SegmentedButton<ReaderColumnMode>(
-                      segments: const [
-                        ButtonSegment(
-                          value: ReaderColumnMode.auto,
-                          label: Text('自动', style: TextStyle(fontSize: 12)),
-                        ),
-                        ButtonSegment(
-                          value: ReaderColumnMode.single,
-                          label: Text('单栏', style: TextStyle(fontSize: 12)),
-                        ),
-                        ButtonSegment(
-                          value: ReaderColumnMode.doubleColumn,
-                          label: Text('双栏', style: TextStyle(fontSize: 12)),
-                        ),
-                      ],
-                      selected: {_current.columnMode},
-                      onSelectionChanged: (set) {
-                        final updated = _current.copyWith(columnMode: set.first);
-                        _commitChange(updated);
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // 4. 折叠的「更多设置」
-        Card(
-          margin: EdgeInsets.zero,
-          elevation: 0,
-          color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(
-              color: scheme.outlineVariant.withValues(alpha: 0.25),
-            ),
-          ),
-          child: Column(
-            children: [
-              InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () {
-                  setState(() => _moreExpanded = !_moreExpanded);
-                },
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _moreExpanded
-                            ? Icons.expand_less_rounded
-                            : Icons.expand_more_rounded,
-                        size: 20,
-                        color: scheme.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '更多排版设置',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                      const Spacer(),
-                      Text(
-                        _current.customMargins ? '高级边距已开启' : '',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: scheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              if (_moreExpanded) ...[
-                Padding(
-                  padding:
-                      const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Column(
+                  // 分栏模式：选项独占一行，窄屏与大字体不挤压标题。
+                  Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Divider(height: 1, thickness: 0.5),
-                      const SizedBox(height: 12),
-
-                      // 词间距
-                      _buildSliderRow(
-                        label: '词间距',
-                        value: _current.wordSpacing,
-                        min: 0.0,
-                        max: 8.0,
-                        divisions: 16,
-                        valueText:
-                            '${_current.wordSpacing.toStringAsFixed(1)} pt',
-                        defaultValue: 0.0,
-                        onChanged: (v) =>
-                            _updatePreview(_current.copyWith(wordSpacing: v)),
-                        onChangeEnd: (v) =>
-                            _commitChange(_current.copyWith(wordSpacing: v)),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2, bottom: 4),
-                        child: Text(
-                          '仅对空格分隔的外文/数字单词生效，纯中文无空格不影响',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '分栏模式',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
-                        ),
+                          Text(
+                            '仅对翻页模式生效',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.onSurfaceVariant
+                                  .withValues(alpha: 0.7),
+                            ),
+                          ),
+                        ],
                       ),
-                      const Divider(height: 16, thickness: 0.5),
-
-                      // 首行缩进
-                      _buildSwitchTile(
-                        title: '首行缩进',
-                        subtitle: '普通正文段落首行缩进两字符宽',
-                        value: _current.firstLineIndentChars > 0,
-                        onChanged: (v) {
-                          final updated = _current.copyWith(
-                            firstLineIndentChars: v ? 2.0 : 0.0,
-                          );
+                      const SizedBox(height: 10),
+                      SegmentedButton<ReaderColumnMode>(
+                        segments: const [
+                          ButtonSegment(
+                            value: ReaderColumnMode.auto,
+                            label: Text('自动', style: TextStyle(fontSize: 12)),
+                          ),
+                          ButtonSegment(
+                            value: ReaderColumnMode.single,
+                            label: Text('单栏', style: TextStyle(fontSize: 12)),
+                          ),
+                          ButtonSegment(
+                            value: ReaderColumnMode.doubleColumn,
+                            label: Text('双栏', style: TextStyle(fontSize: 12)),
+                          ),
+                        ],
+                        selected: {_current.columnMode},
+                        onSelectionChanged: (set) {
+                          final updated =
+                              _current.copyWith(columnMode: set.first);
                           _commitChange(updated);
                         },
-                        scheme: scheme,
-                      ),
-                      const Divider(height: 16, thickness: 0.5),
-
-                      // 独立调整四周边距开关
-                      _buildSwitchTile(
-                        title: '独立四周边距',
-                        subtitle: _current.customMargins
-                            ? '当前使用下方独立边距'
-                            : '开启后可独立微调上、下、左、右边距',
-                        value: _current.customMargins,
-                        onChanged: (v) {
-                          final updated = _current.copyWith(customMargins: v);
-                          _commitChange(updated);
-                        },
-                        scheme: scheme,
-                      ),
-
-                      if (_current.customMargins) ...[
-                        const SizedBox(height: 8),
-                        _buildSliderRow(
-                          label: '上边距',
-                          value: _current.marginTop,
-                          min: 44.0,
-                          max: 120.0,
-                          divisions: 38,
-                          valueText: '${_current.marginTop.round()} dp',
-                          defaultValue: 56.0,
-                          onChanged: (v) =>
-                              _updatePreview(_current.copyWith(marginTop: v)),
-                          onChangeEnd: (v) =>
-                              _commitChange(_current.copyWith(marginTop: v)),
-                        ),
-                        const SizedBox(height: 8),
-                        _buildSliderRow(
-                          label: '下边距',
-                          value: _current.marginBottom,
-                          min: 50.0,
-                          max: 140.0,
-                          divisions: 45,
-                          valueText: '${_current.marginBottom.round()} dp',
-                          defaultValue: 70.0,
-                          onChanged: (v) => _updatePreview(
-                              _current.copyWith(marginBottom: v)),
-                          onChangeEnd: (v) =>
-                              _commitChange(_current.copyWith(marginBottom: v)),
-                        ),
-                        const SizedBox(height: 8),
-                        _buildSliderRow(
-                          label: '左边距',
-                          value: _current.marginLeft,
-                          min: 8.0,
-                          max: 60.0,
-                          divisions: 26,
-                          valueText: '${_current.marginLeft.round()} dp',
-                          defaultValue: 20.0,
-                          onChanged: (v) =>
-                              _updatePreview(_current.copyWith(marginLeft: v)),
-                          onChangeEnd: (v) =>
-                              _commitChange(_current.copyWith(marginLeft: v)),
-                        ),
-                        const SizedBox(height: 8),
-                        _buildSliderRow(
-                          label: '右边距',
-                          value: _current.marginRight,
-                          min: 8.0,
-                          max: 60.0,
-                          divisions: 26,
-                          valueText: '${_current.marginRight.round()} dp',
-                          defaultValue: 20.0,
-                          onChanged: (v) =>
-                              _updatePreview(_current.copyWith(marginRight: v)),
-                          onChangeEnd: (v) =>
-                              _commitChange(_current.copyWith(marginRight: v)),
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-
-                      // 恢复默认排版按钮
-                      Center(
-                        child: OutlinedButton.icon(
-                          onPressed: () {
-                            final std = ReaderTypography.standard();
-                            _commitChange(std);
-                          },
-                          icon: const Icon(Icons.refresh_rounded, size: 18),
-                          label: const Text('恢复默认排版'),
-                        ),
                       ),
                     ],
                   ),
-                ),
-              ],
-            ],
+                ],
+              ),
+            ),
           ),
-        ),
-      ],
-    ),
-  );
-}
+          const SizedBox(height: 12),
+
+          // 4. 折叠的「更多设置」
+          Card(
+            margin: EdgeInsets.zero,
+            elevation: 0,
+            color: readerSettingsCardColor(scheme),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+              side: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: 0.25),
+              ),
+            ),
+            child: Column(
+              children: [
+                InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () {
+                    setState(() => _moreExpanded = !_moreExpanded);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _moreExpanded
+                              ? Icons.expand_less_rounded
+                              : Icons.expand_more_rounded,
+                          size: 20,
+                          color: scheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '更多排版设置',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          _current.customMargins ? '高级边距已开启' : '',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: scheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (_moreExpanded) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Divider(height: 1, thickness: 0.5),
+                        const SizedBox(height: 12),
+
+                        // 词间距
+                        _buildSliderRow(
+                          label: '词间距',
+                          value: _current.wordSpacing,
+                          min: 0.0,
+                          max: 8.0,
+                          divisions: 16,
+                          valueText:
+                              '${_current.wordSpacing.toStringAsFixed(1)} pt',
+                          defaultValue: 0.0,
+                          onChanged: (v) =>
+                              _updatePreview(_current.copyWith(wordSpacing: v)),
+                          onChangeEnd: (v) =>
+                              _commitChange(_current.copyWith(wordSpacing: v)),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2, bottom: 4),
+                          child: Text(
+                            '仅对空格分隔的外文/数字单词生效，纯中文无空格不影响',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.onSurfaceVariant
+                                  .withValues(alpha: 0.7),
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 16, thickness: 0.5),
+
+                        // 首行缩进
+                        _buildSwitchTile(
+                          title: '首行缩进',
+                          subtitle: '普通正文段落首行缩进两字符宽',
+                          value: _current.firstLineIndentChars > 0,
+                          onChanged: (v) {
+                            final updated = _current.copyWith(
+                              firstLineIndentChars: v ? 2.0 : 0.0,
+                            );
+                            _commitChange(updated);
+                          },
+                          scheme: scheme,
+                        ),
+                        const Divider(height: 16, thickness: 0.5),
+
+                        // 独立调整四周边距开关
+                        _buildSwitchTile(
+                          title: '独立四周边距',
+                          subtitle: _current.customMargins
+                              ? '当前使用下方独立边距'
+                              : '开启后可独立微调上、下、左、右边距',
+                          value: _current.customMargins,
+                          onChanged: (v) {
+                            final updated = _current.copyWith(customMargins: v);
+                            _commitChange(updated);
+                          },
+                          scheme: scheme,
+                        ),
+
+                        if (_current.customMargins) ...[
+                          const SizedBox(height: 8),
+                          _buildSliderRow(
+                            label: '上边距',
+                            value: _current.marginTop,
+                            min: 44.0,
+                            max: 120.0,
+                            divisions: 38,
+                            valueText: '${_current.marginTop.round()} dp',
+                            defaultValue: 56.0,
+                            onChanged: (v) =>
+                                _updatePreview(_current.copyWith(marginTop: v)),
+                            onChangeEnd: (v) =>
+                                _commitChange(_current.copyWith(marginTop: v)),
+                          ),
+                          const SizedBox(height: 8),
+                          _buildSliderRow(
+                            label: '下边距',
+                            value: _current.marginBottom,
+                            min: 50.0,
+                            max: 140.0,
+                            divisions: 45,
+                            valueText: '${_current.marginBottom.round()} dp',
+                            defaultValue: 70.0,
+                            onChanged: (v) => _updatePreview(
+                                _current.copyWith(marginBottom: v)),
+                            onChangeEnd: (v) => _commitChange(
+                                _current.copyWith(marginBottom: v)),
+                          ),
+                          const SizedBox(height: 8),
+                          _buildSliderRow(
+                            label: '左边距',
+                            value: _current.marginLeft,
+                            min: 8.0,
+                            max: 60.0,
+                            divisions: 26,
+                            valueText: '${_current.marginLeft.round()} dp',
+                            defaultValue: 20.0,
+                            onChanged: (v) => _updatePreview(
+                                _current.copyWith(marginLeft: v)),
+                            onChangeEnd: (v) =>
+                                _commitChange(_current.copyWith(marginLeft: v)),
+                          ),
+                          const SizedBox(height: 8),
+                          _buildSliderRow(
+                            label: '右边距',
+                            value: _current.marginRight,
+                            min: 8.0,
+                            max: 60.0,
+                            divisions: 26,
+                            valueText: '${_current.marginRight.round()} dp',
+                            defaultValue: 20.0,
+                            onChanged: (v) => _updatePreview(
+                                _current.copyWith(marginRight: v)),
+                            onChangeEnd: (v) => _commitChange(
+                                _current.copyWith(marginRight: v)),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+
+                        // 恢复默认排版按钮
+                        Center(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              final std = ReaderTypography.standard();
+                              _commitChange(std);
+                            },
+                            icon: const Icon(Icons.refresh_rounded, size: 18),
+                            label: const Text('恢复默认排版'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   /// 统一的开关行（去除深色独立卡片底色，与排版卡片无缝融合）
   Widget _buildSwitchTile({
