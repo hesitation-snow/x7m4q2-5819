@@ -11,6 +11,7 @@ class ReaderTypographySheet extends StatefulWidget {
   final Color backgroundColor;
   final Color linkColor;
   final bool isDark;
+  final bool paged;
   final ValueChanged<ReaderTypography> onPreviewChange;
   final ValueChanged<ReaderTypography> onCommit;
   final VoidCallback? onPickTextColor;
@@ -24,6 +25,7 @@ class ReaderTypographySheet extends StatefulWidget {
     required this.backgroundColor,
     required this.linkColor,
     required this.isDark,
+    this.paged = true,
     required this.onPreviewChange,
     required this.onCommit,
     this.onPickTextColor,
@@ -107,6 +109,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                 children: [
                   _buildSwitchTile(
                     title: '加粗',
+                    subtitle: '仅加粗阅读正文，不改变应用界面字体',
                     value: _current.bold,
                     onChanged: (v) => _commitChange(_current.copyWith(bold: v)),
                     scheme: scheme,
@@ -195,6 +198,10 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                     onChangeEnd: (v) =>
                         _commitChange(_current.copyWith(marginHorizontal: v)),
                   ),
+                  if (_current.customMargins)
+                    Text('已启用独立四周边距，请在下方分别调整；此滑杆暂不生效。',
+                        style: TextStyle(
+                            fontSize: 11, color: scheme.onSurfaceVariant)),
                   const Divider(height: 16, thickness: 0.5),
 
                   // 两端对齐开关
@@ -225,7 +232,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                             ),
                           ),
                           Text(
-                            '仅对翻页模式生效',
+                            widget.paged ? '自动：宽屏双栏，手机单栏' : '仅对翻页模式生效，请先开启翻页模式',
                             style: TextStyle(
                               fontSize: 11,
                               color: scheme.onSurfaceVariant
@@ -251,11 +258,13 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                           ),
                         ],
                         selected: {_current.columnMode},
-                        onSelectionChanged: (set) {
-                          final updated =
-                              _current.copyWith(columnMode: set.first);
-                          _commitChange(updated);
-                        },
+                        onSelectionChanged: !widget.paged
+                            ? null
+                            : (set) {
+                                final updated =
+                                    _current.copyWith(columnMode: set.first);
+                                _commitChange(updated);
+                              },
                       ),
                     ],
                   ),
@@ -301,7 +310,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                         max: 8.0,
                         divisions: 16,
                         valueText:
-                            '${_current.wordSpacing.toStringAsFixed(1)} pt',
+                            '${_current.wordSpacing.toStringAsFixed(1)} dp',
                         defaultValue: 0.0,
                         onChanged: (v) =>
                             _updatePreview(_current.copyWith(wordSpacing: v)),

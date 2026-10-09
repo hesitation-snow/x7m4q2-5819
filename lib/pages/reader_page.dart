@@ -20,8 +20,10 @@ import '../api/models.dart';
 import '../api/reader_cache.dart';
 import '../api/reading_session.dart';
 import '../services/reading_progress_reporter.dart';
+import '../services/offline_library.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import '../reader/scroll_layout_index.dart';
 import '../reader/pagination_key.dart';
 import 'catalog_paging.dart';
@@ -44,8 +46,7 @@ import '../widgets/reader_settings_section.dart';
 
 final RegExp _readerFootnoteDefinitionPattern =
     RegExp(r'^[\s\u3000]*\[\s*([^\]]+?)\s*\]\s*(.*)$', dotAll: true);
-final RegExp _readerFootnoteReferencePattern =
-    RegExp(r'\[\s*([^\]]+?)\s*\]');
+final RegExp _readerFootnoteReferencePattern = RegExp(r'\[\s*([^\]]+?)\s*\]');
 
 /// 正文块:文本(可含链接区间)或插画
 class _BodyBlock {
@@ -172,13 +173,15 @@ class ReaderPage extends StatefulWidget {
   final int chapterId;
   final String chapterTitle;
   final int volumeId;
+  final bool offlineOnly;
   const ReaderPage(
       {super.key,
       required this.bookId,
       required this.bookTitle,
       required this.chapterId,
       required this.chapterTitle,
-      required this.volumeId});
+      required this.volumeId,
+      this.offlineOnly = false});
 
   @override
   State<ReaderPage> createState() => _ReaderPageState();
@@ -203,6 +206,12 @@ class _ReaderPageState extends State<ReaderPage>
   bool _unlocked = false;
   bool _loading = true;
   String? _loadError;
+  bool _accessRestricted = false;
+  bool _cachedRefreshFailed = false;
+  Size? _lastViewport;
+  ReaderPaginationKey? _builtPagedKey;
+  double? _lastTextScale;
+  int _loadSerial = 0;
   bool _chrome = true;
   static const _exitConfirmationDuration = Duration(seconds: 2);
   Timer? _exitConfirmationTimer;
@@ -333,7 +342,7 @@ class _ReaderPageState extends State<ReaderPage>
   void _syncProgressUi(_ReadingAnchor anchor, {bool updateSession = true}) {
     final progress = _progressForAnchor(anchor);
     _progressN.value = progress;
-    if (updateSession) {
+    if (updateSession && !widget.offlineOnly) {
       LKReadingSession.shared
           .update(volumeId: _effectiveVolumeId, progress: progress);
     }
@@ -397,7 +406,19 @@ class _ReaderPageState extends State<ReaderPage>
     LKStore.enhancedContentStyleEnabled
         .addListener(_onEnhancedContentStyleChanged);
     _prefsReady = _loadPrefs();
+    LKClient.sessionRev.addListener(_onAccountChanged);
     _load();
+  }
+
+  void _onAccountChanged() {
+    if (!mounted) return;
+    _detail = null;
+    _parsedDetail = null;
+    _parsedBlocks = null;
+    _readingReportTimer?.cancel();
+    _readingReportTimer = null;
+    setState(() => _applyBlocks(const []));
+    unawaited(_load());
   }
 
   void _onEnhancedContentStyleChanged() {
@@ -743,6 +764,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _warmNearbyIllustrations() {
+    if (widget.offlineOnly) return;
     if (!mounted ||
         _illustrationIndexes.isEmpty ||
         LKStore.dataSaverMode.value) {
@@ -1075,6 +1097,7 @@ class _ReaderPageState extends State<ReaderPage>
 
   @override
   void dispose() {
+    LKClient.sessionRev.removeListener(_onAccountChanged);
     _exitConfirmationTimer?.cancel();
     readerRouteObserver.unsubscribe(this);
     FocusManager.instance.removeListener(_syncVolumeKeys);
@@ -1124,6 +1147,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _startReadingReportTimer() {
+    if (widget.offlineOnly) return;
     if (_readingReportTimer != null || !LKClient.shared.session.isLoggedIn) {
       assert(() {
         debugPrint(
@@ -1151,6 +1175,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   Future<void> _reportReadingProgress({bool force = false}) async {
+    if (widget.offlineOnly) return;
     try {
       await ReadingProgressReporter.shared.flush(force: force);
     } catch (_) {
@@ -1180,7 +1205,8 @@ class _ReaderPageState extends State<ReaderPage>
           duration: _exitConfirmationDuration,
           behavior: SnackBarBehavior.floating,
           margin: EdgeInsets.fromLTRB(16, 0, 16, _chrome ? 104 : 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
         snackBarAnimationStyle: AppMotion.style(context),
       );
@@ -1248,18 +1274,30 @@ class _ReaderPageState extends State<ReaderPage>
     _applyImmersive();
   }
 
-  void _applyTypography(ReaderTypography t, {bool persist = true}) {
-    if (_typography == t) return;
+  void _applyTypography(ReaderTypography t,
+      {bool persist = true, double? fontSize}) {
+    if (_typography == t && (fontSize == null || fontSize == _fontSize)) return;
+    final transitionId = _positionController.beginTransition();
     final anchor = _paged
         ? (_pendingPagedAnchor ??
             _positionController.value ??
             _anchorForProgress(_progress))
-        : (_positionController.value ?? _anchorForProgress(_progress));
+        : (_restoringScrollAnchor ? _logicalAnchor : _captureScrollAnchor()) ??
+            _logicalAnchor ??
+            _anchorForProgress(_progress);
+    _positionRestoreSerial++;
+    _scrollProgressGeneration++;
+    _publishPosition(anchor,
+        transitionId: transitionId, persist: false, syncUi: false);
 
     final oldIndent = _typography.firstLineIndentChars;
 
     setState(() {
       _typography = t;
+      if (fontSize != null) _fontSize = fontSize;
+      _pendingPagedAnchor = _paged ? anchor : null;
+      _pendingPositionTransitionId = _paged ? transitionId : null;
+      _restoringPagedProgress = _paged;
       _pageLayouts.clear();
       _scrollLayouts.clear();
       _scrollLayoutIndexKey = '';
@@ -1269,13 +1307,15 @@ class _ReaderPageState extends State<ReaderPage>
 
     if (persist) {
       ReaderPrefs.saveTypography(t);
+      if (fontSize != null) ReaderPrefs.setFontSize(fontSize);
     }
 
     if (oldIndent != t.firstLineIndentChars && _detail != null) {
       _parsedDetail = null;
       _parsedBlocks = null;
       _parsedIndent = null;
-      _reparseCurrentDetail();
+      unawaited(
+          _reparseCurrentDetail(anchor: anchor, transitionId: transitionId));
       return;
     }
 
@@ -1284,23 +1324,40 @@ class _ReaderPageState extends State<ReaderPage>
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        _restoreScrollAnchor(anchor);
+        if (_positionController.transitionId != transitionId) return;
+        unawaited(_restoreScrollAnchor(anchor,
+            retainAnchor: true, transitionId: transitionId));
       });
     }
   }
 
-  Future<void> _reparseCurrentDetail() async {
+  Future<void> _reparseCurrentDetail(
+      {_ReadingAnchor? anchor, int? transitionId}) async {
     final detail = _detail;
     if (detail == null) return;
+    anchor ??=
+        _paged ? _logicalAnchor : (_captureScrollAnchor() ?? _logicalAnchor);
     final blocks = await _parseBlocks(detail);
     if (!mounted || _detail?.hasSameContent(detail) != true) return;
-    final anchor = _positionController.value;
+    if (transitionId != null &&
+        _positionController.transitionId != transitionId) {
+      return;
+    }
+    final target = anchor;
     setState(() => _applyBlocks(blocks));
-    if (!_paged && anchor != null) {
+    if (_paged && target != null) {
+      _pendingPagedAnchor = target;
+      _pendingPositionTransitionId = transitionId;
+      _restoringPagedProgress = true;
+    }
+    if (!_paged && target != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_paged) {
-          unawaited(_restoreScrollAnchor(_normalizeAnchor(anchor),
-              retainAnchor: true));
+        if (mounted &&
+            !_paged &&
+            (transitionId == null ||
+                _positionController.transitionId == transitionId)) {
+          unawaited(_restoreScrollAnchor(_normalizeAnchor(target),
+              retainAnchor: true, transitionId: transitionId));
         }
       });
     }
@@ -1309,6 +1366,32 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final size = MediaQuery.sizeOf(context);
+    final scale = MediaQuery.textScalerOf(context).scale(16);
+    final changed = _lastViewport != null &&
+        (_lastViewport != size || _lastTextScale != scale);
+    _lastViewport = size;
+    _lastTextScale = scale;
+    if (changed && _blocks.isNotEmpty) {
+      final anchor = _logicalAnchor ?? _anchorForProgress(_progress);
+      final transition = _positionController.beginTransition();
+      _positionRestoreSerial++;
+      _scrollProgressGeneration++;
+      if (_paged) {
+        _pendingPagedAnchor = anchor;
+        _pendingPositionTransitionId = transition;
+        _restoringPagedProgress = true;
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted &&
+              !_paged &&
+              _positionController.transitionId == transition) {
+            unawaited(_restoreScrollAnchor(anchor,
+                retainAnchor: true, transitionId: transition));
+          }
+        });
+      }
+    }
     final route = ModalRoute.of(context);
     if (_observedRoute != route) {
       readerRouteObserver.unsubscribe(this);
@@ -1338,6 +1421,7 @@ class _ReaderPageState extends State<ReaderPage>
     _resetExitConfirmation();
     _syncVolumeKeys();
   }
+
   @override
   void didPopNext() {
     _resetExitConfirmation();
@@ -1391,9 +1475,12 @@ class _ReaderPageState extends State<ReaderPage>
   // ==================== 加载与解析 ====================
 
   Future<void> _load() async {
+    final loadSerial = ++_loadSerial;
     setState(() {
       _loading = true;
       _loadError = null;
+      _accessRestricted = false;
+      _cachedRefreshFailed = false;
     });
     final cacheOwnerUid = _readerCacheOwnerUid;
     final cacheGeneration = ReaderContentCache.generation;
@@ -1403,8 +1490,7 @@ class _ReaderPageState extends State<ReaderPage>
       ReaderPrefs.readPosFrac(widget.chapterId),
       cacheOwnerUid == null
           ? Future<LKChapterDetail?>.value(null)
-          : ReaderContentCache.read(widget.bookId, widget.chapterId,
-              ownerUid: cacheOwnerUid),
+          : _readLocalChapter(cacheOwnerUid),
     ]);
     // Preferences and local content are read concurrently, but parsing waits
     // for the selected script mode so a cached chapter is rendered only once.
@@ -1416,7 +1502,7 @@ class _ReaderPageState extends State<ReaderPage>
 
     // 先展示本机已经读过的正文,避免每次打开都等待网络。
     final cached = localState[2] as LKChapterDetail?;
-    if (!mounted) return;
+    if (!mounted || loadSerial != _loadSerial) return;
     if (_readerCacheOwnerUid != cacheOwnerUid ||
         ReaderContentCache.generation != cacheGeneration) {
       unawaited(_load());
@@ -1427,7 +1513,7 @@ class _ReaderPageState extends State<ReaderPage>
           restore: restore,
           restorePosition: true,
           savedPosition: savedPosition);
-      if (!mounted) return;
+      if (!mounted || loadSerial != _loadSerial) return;
       if (_readerCacheOwnerUid != cacheOwnerUid ||
           ReaderContentCache.generation != cacheGeneration) {
         unawaited(_load());
@@ -1435,6 +1521,7 @@ class _ReaderPageState extends State<ReaderPage>
       }
       setState(() => _loading = false);
       _resolveAdjacentOrPrefetch();
+      if (widget.offlineOnly) return;
       // 缓存只负责快速展示,仍在后台向服务端刷新,防止正文过期。
       unawaited(_refreshFromNetwork(restore,
           cacheOwnerUid: cacheOwnerUid,
@@ -1443,6 +1530,13 @@ class _ReaderPageState extends State<ReaderPage>
       return;
     }
 
+    if (widget.offlineOnly) {
+      setState(() {
+        _loading = false;
+        _loadError = '离线正文不存在或已损坏，请到离线下载页面重新下载。';
+      });
+      return;
+    }
     // 没有缓存时保持原来的在线加载流程。
     await _refreshFromNetwork(restore,
         initialLoad: true,
@@ -1451,14 +1545,28 @@ class _ReaderPageState extends State<ReaderPage>
         savedPosition: savedPosition);
   }
 
+  Future<LKChapterDetail?> _readLocalChapter(int ownerUid) async {
+    final downloaded = await OfflineLibrary.shared
+        .read(widget.bookId, widget.chapterId, ownerUid: ownerUid);
+    if (downloaded != null || widget.offlineOnly) return downloaded;
+    return ReaderContentCache.read(widget.bookId, widget.chapterId,
+        ownerUid: ownerUid);
+  }
+
   Future<void> _refreshFromNetwork(double restore,
       {bool initialLoad = false,
       required int? cacheOwnerUid,
       required int cacheGeneration,
       ReadingPosition? savedPosition}) async {
+    final serial = _loadSerial;
+    final accountRevision = LKClient.sessionRev.value;
     try {
       final d = await LKApi.chapterDetail(widget.bookId, widget.chapterId);
-      if (!mounted) return;
+      if (!mounted ||
+          serial != _loadSerial ||
+          accountRevision != LKClient.sessionRev.value) {
+        return;
+      }
       if (_readerCacheOwnerUid != cacheOwnerUid ||
           ReaderContentCache.generation != cacheGeneration) {
         unawaited(_load());
@@ -1500,15 +1608,18 @@ class _ReaderPageState extends State<ReaderPage>
       _resolveAdjacentOrPrefetch();
     } catch (e) {
       // 有缓存时网络失败不覆盖正文;只有首次加载失败才显示错误。
+      if (!mounted ||
+          serial != _loadSerial ||
+          accountRevision != LKClient.sessionRev.value ||
+          _readerCacheOwnerUid != cacheOwnerUid) {
+        return;
+      }
+      if (!initialLoad && mounted) setState(() => _cachedRefreshFailed = true);
       if (initialLoad && mounted) {
-        final accessError = e is LKException && e.accessRestricted;
         setState(() {
-          if (accessError) {
-            _loadError = e.message;
-            _applyBlocks(const []);
-          } else {
-            _applyBlocks([_BodyBlock.text('加载失败: $e')]);
-          }
+          _loadError = e is LKException ? e.message : '正文加载失败，请检查网络后重试。';
+          _accessRestricted = e is LKException && e.accessRestricted;
+          _applyBlocks(const []);
           _loading = false;
         });
       }
@@ -1519,10 +1630,26 @@ class _ReaderPageState extends State<ReaderPage>
       {required double restore,
       required bool restorePosition,
       ReadingPosition? savedPosition}) async {
+    final accountRevision = LKClient.sessionRev.value;
+    final serial = _loadSerial;
     final blocks = await _parseBlocks(d);
-    if (!mounted) return;
+    if (!mounted ||
+        serial != _loadSerial ||
+        accountRevision != LKClient.sessionRev.value) {
+      return;
+    }
+    final existingAnchor = restorePosition
+        ? null
+        : (_paged
+            ? _logicalAnchor
+            : (_captureScrollAnchor() ?? _logicalAnchor));
+    final transitionId = _positionController.transitioning
+        ? _positionController.transitionId
+        : null;
     _updateDetailState(d, blocks: blocks);
-    if (LKClient.shared.session.isLoggedIn && (!d.locked || d.unlocked)) {
+    if (!widget.offlineOnly &&
+        LKClient.shared.session.isLoggedIn &&
+        (!d.locked || d.unlocked)) {
       LKReadingSession.shared.begin(
         bookId: widget.bookId,
         volumeId: d.volumeId > 0 ? d.volumeId : widget.volumeId,
@@ -1537,16 +1664,18 @@ class _ReaderPageState extends State<ReaderPage>
       }());
       _startReadingReportTimer();
     }
-    if (restorePosition) {
-      final anchor =
-          _normalizeAnchor(savedPosition ?? _anchorForProgress(restore));
-      _publishPosition(anchor, persist: false);
+    if (restorePosition || existingAnchor != null) {
+      final anchor = _normalizeAnchor(
+          existingAnchor ?? savedPosition ?? _anchorForProgress(restore));
+      _publishPosition(anchor, transitionId: transitionId, persist: false);
       // 保存值对应正文逻辑位置，不直接换算尚未稳定的滚动总高度。
       if (_paged) {
         _pendingPagedAnchor = anchor;
+        _pendingPositionTransitionId = transitionId;
         _restoringPagedProgress = true;
-      } else if (_progress > 0) {
-        _scheduleRestoreJumps(anchor);
+      } else if (_progress > 0 || transitionId != null) {
+        unawaited(_restoreScrollAnchor(anchor,
+            retainAnchor: true, transitionId: transitionId));
       }
     }
   }
@@ -1571,6 +1700,10 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _resolveAdjacentOrPrefetch() {
+    if (widget.offlineOnly) {
+      unawaited(_resolveOfflineAdjacent());
+      return;
+    }
     if (_prevId == null || _nextId == null) {
       if (_adjacentResolutionFuture != null) return;
       final task = _resolveAdjacent();
@@ -1588,6 +1721,33 @@ class _ReaderPageState extends State<ReaderPage>
       unawaited(_prefetchAdjacentChapters());
       unawaited(_warmCatalogContext());
     }
+  }
+
+  Future<void> _resolveOfflineAdjacent() async {
+    final owner = OfflineLibrary.shared.ownerUid;
+    final books = await OfflineLibrary.shared.books();
+    if (!mounted || owner != OfflineLibrary.shared.ownerUid) return;
+    final book = books.where((b) => b['book_id'] == widget.bookId).firstOrNull;
+    final chapters =
+        (book?['chapters'] as List? ?? []).cast<Map<String, dynamic>>();
+    final index = chapters.indexWhere((c) => c['id'] == widget.chapterId);
+    if (index < 0) return;
+    // 不跳过缺失章节，避免误以为离线目录完整。
+    final prev = index > 0 && chapters[index - 1]['status'] == 'ready'
+        ? chapters[index - 1]
+        : null;
+    final next =
+        index + 1 < chapters.length && chapters[index + 1]['status'] == 'ready'
+            ? chapters[index + 1]
+            : null;
+    setState(() {
+      _prevId = prev?['id'] as int?;
+      _prevTitle = prev?['title'] as String?;
+      _prevVolumeId = prev?['volume'] as int?;
+      _nextId = next?['id'] as int?;
+      _nextTitle = next?['title'] as String?;
+      _nextVolumeId = next?['volume'] as int?;
+    });
   }
 
   /// 预取相邻章正文；插画等进入对应章节后再按阅读位置少量预取。
@@ -1653,11 +1813,6 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   /// 按正文锚点恢复滚动位置，不依赖仍会变化的懒加载总高度。
-  void _scheduleRestoreJumps(_ReadingAnchor anchor) {
-    final normalized = _normalizeAnchor(anchor);
-    unawaited(_restoreScrollAnchor(normalized, retainAnchor: true));
-  }
-
   /// 拉取轻币余额(失败静默,余额显示保持未知)
   Future<void> _refreshCoins() async {
     try {
@@ -1849,9 +2004,8 @@ class _ReaderPageState extends State<ReaderPage>
             mode,
           );
         }
-        blocks = structuredBlocks
-            .map(_BodyBlock.structured)
-            .toList(growable: false);
+        blocks =
+            structuredBlocks.map(_BodyBlock.structured).toList(growable: false);
       }
       if (blocks.isEmpty) {
         var text = d.bodyText;
@@ -1862,9 +2016,8 @@ class _ReaderPageState extends State<ReaderPage>
         }
         final structuredBlocks =
             StructuredContentParser.parseText(text, firstLineIndent: indent);
-        blocks = structuredBlocks
-            .map(_BodyBlock.structured)
-            .toList(growable: false);
+        blocks =
+            structuredBlocks.map(_BodyBlock.structured).toList(growable: false);
       }
     } else {
       var html = d.bodyHtml;
@@ -2115,6 +2268,7 @@ class _ReaderPageState extends State<ReaderPage>
                 chapterId: chapterId,
                 chapterTitle: title,
                 volumeId: volumeId ?? _effectiveVolumeId,
+                offlineOnly: widget.offlineOnly,
               )),
     );
   }
@@ -2269,6 +2423,10 @@ class _ReaderPageState extends State<ReaderPage>
       MaterialPageRoute(
         builder: (_) => MediaViewerPage(
           url: url,
+          urls: _blocks
+              .where((b) => b.image != null)
+              .map((b) => b.image!)
+              .toList(),
           cacheManager: YomiruIllustrationCache.manager,
         ),
       ),
@@ -2430,200 +2588,244 @@ class _ReaderPageState extends State<ReaderPage>
             child: SizedBox(
               height: (MediaQuery.of(sheetCtx).size.height * 0.82)
                   .clamp(0.0, 720.0),
-              child: SafeArea(top: false, child: Column(children: [
-                Container(
-                  width: 32, height: 4,
-                  margin: const EdgeInsets.only(top: 10),
-                  decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(4)),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 8, 0),
-                  child: Row(children: [
-                    const Expanded(child: Text('阅读设置', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600))),
-                    IconButton(tooltip: '关闭阅读设置', onPressed: () => Navigator.pop(sheetCtx), icon: const Icon(Icons.close_rounded, size: 20)),
-                  ]),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: TabBar(
-                    dividerColor: Colors.transparent,
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    indicator: BoxDecoration(color: scheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(14)),
-                    labelColor: scheme.primary,
-                    unselectedLabelColor: scheme.onSurfaceVariant,
-                    labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                    tabs: const [Tab(text: '外观'), Tab(text: '排版'), Tab(text: '操作')],
-                  ),
-                ),
-                Expanded(
-                  child: TabBarView(
-                      physics: AppMotion.isDisabled(context)
-                          ? const NeverScrollableScrollPhysics()
-                          : null,
-                      children: [
-// ---- 外观 ----
-                        ListView(
-                          padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
-                          children: [
-                            ReaderSettingsSection(title: '主题', children: [
-                              const Padding(
-                                padding: EdgeInsets.only(top: 8, bottom: 6),
-                                child: Text('配色', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                              ),
-                              ReaderThemePicker(
-                                presets: _presets,
-                                selected: _bgFollowSystem ? null : _bg,
-                                onSelected: (index) {
-                                  setState(() {
-                                    _bgChosen = true;
-                                    _bgFollowSystem = index == null;
-                                    if (index != null) _bg = index;
-                                  });
-                                  setSheet(() {});
-                                  if (index != null) ReaderPrefs.setBgPreset(index);
-                                  ReaderPrefs.setBgFollowSystem(index == null);
-                                },
-                              ),
-                              const SizedBox(height: 8),
-                              _textColorTile(scheme, setSheet),
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: Text('用于正文和章节标题，可恢复配色默认值。', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-                              ),
-                            ]),
-                            ReaderSettingsSection(title: '显示', children: [
-                              _switchTile(scheme, Icons.brightness_6_outlined,
-                                  '保持屏幕常亮', _keepOn, (v) {
-                                setState(() => _keepOn = v);
-                                setSheet(() {});
-                                ReaderPrefs.setKeepScreenOn(v);
-                                WakelockPlus.toggle(enable: v);
-                              }),
-                              _switchTile(scheme, Icons.hide_image_outlined,
-                                  '隐藏系统状态栏', _hideBar, (v) {
-                                setState(() => _hideBar = v);
-                                setSheet(() {});
-                                ReaderPrefs.setHideStatusBar(v);
-                                _applyImmersive();
-                              }),
-                              _switchTile(scheme, Icons.info_outline,
-                                  '正文指示器', _indicators, (v) {
-                                setState(() => _indicators = v);
-                                setSheet(() {});
-                                ReaderPrefs.setShowIndicators(v);
-                              }),
-                            ]),
-                            ReaderSettingsSection(title: '文字转换', children: [
-                              _switchTile(scheme, Icons.translate_rounded,
-                                  '繁体显示', _traditional, (v) async {
-                                setState(() {
-                                  _traditional = v;
-                                  if (v) _simplified = false;
-                                });
-                                setSheet(() {});
-                                ReaderPrefs.setTraditional(v);
-                                if (v) ReaderPrefs.setSimplified(false);
-                                await _reparseCurrentDetail();
-                              }, subtitle: '简体转为繁体'),
-                              _switchTile(scheme, Icons.translate_rounded,
-                                  '简体显示', _simplified, (v) async {
-                                setState(() {
-                                  _simplified = v;
-                                  if (v) _traditional = false;
-                                });
-                                setSheet(() {});
-                                ReaderPrefs.setSimplified(v);
-                                if (v) ReaderPrefs.setTraditional(false);
-                                await _reparseCurrentDetail();
-                              }, subtitle: '繁体转为简体'),
-                            ]),
-                          ],
-                        ),
-                        // ---- 排版 ----
-                        ReaderTypographySheet(
-                          initialTypography: _typography,
-                          fontSize: _fontSize,
-                          onFontSizeChanged: (v) {
-                            setSheet(() {});
-                            setState(() => _fontSize = v);
-                            ReaderPrefs.setFontSize(v);
-                          },
-                          textColor: _textColor,
-                          backgroundColor: _bgColor,
-                          linkColor: _linkColor,
-                          isDark: isDark,
-                          onPickTextColor: () async {
-                            final result = await showReaderTextColorDialog(
-                              context: context,
-                              initialColor: _textColor,
-                              defaultColor: _presets[_bgEff].$2,
-                              backgroundColor: _bgColor,
-                              isCustom: _customTextColorValue != null,
-                            );
-                            if (result == null) return;
-                            if (result.resetToDefault) {
-                              setState(() => _customTextColorValue = null);
-                              setSheet(() {});
-                              await ReaderPrefs.setTextColor(null);
-                            } else if (result.color != null) {
-                              final argb = result.color!.toARGB32();
-                              setState(() => _customTextColorValue = argb);
-                              setSheet(() {});
-                              await ReaderPrefs.setTextColor(argb);
-                            }
-                          },
-                          onPreviewChange: (t) {},
-                          onCommit: (t) {
-                            setSheet(() {});
-                            _applyTypography(t);
-                          },
-                        ),
-                        // ---- 操作 ----
-                        ListView(
-                          padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
-                          children: [
-                            ReaderSettingsSection(title: '翻页', children: [
-                            _switchTile(scheme, Icons.touch_app_outlined,
-                                '点击翻页', _tapTurn, (v) {
-                              setSheet(() {});
-                              setState(() => _tapTurn = v);
-                              ReaderPrefs.setTapTurnPage(v);
-                            }, subtitle: '点击左右两侧翻页'),
-                            if (ReaderVolumeKeys.supported)
-                              _switchTile(scheme, Icons.volume_up_outlined,
-                                  '音量键翻页', _volumeTurn, (v) {
-                                setState(() => _volumeTurn = v);
-                                setSheet(() {});
-                                ReaderPrefs.setVolumeTurnPage(v);
-                                _syncVolumeKeys();
-                              }),
-                            _switchTile(scheme, Icons.auto_stories_rounded,
-                                '翻页模式', _paged, (v) {
-                              _changeReadingMode(v, setSheet);
-                            }, subtitle: '关闭后使用连续滚动'),
-                            ]),
-                            ReaderSettingsSection(title: '快捷操作', children: [
-                            if (_locked && !_unlocked)
-                              _aaTile(
-                                  scheme,
-                                  Icons.lock_open_rounded,
-                                  _coinPrice > 0
-                                      ? '解锁本章($_coinPrice 轻币)'
-                                      : '解锁本章', () {
-                                Navigator.pop(sheetCtx);
-                                _unlock();
-                              }),
-                            _aaTile(scheme, Icons.arrow_upward_rounded, '回顶部',
-                                () {
-                              Navigator.pop(sheetCtx);
-                              _sc.jumpTo(0);
-                            }),
-                            ]),
-                          ],
-                        ),
+              child: SafeArea(
+                  top: false,
+                  child: Column(children: [
+                    Container(
+                      width: 32,
+                      height: 4,
+                      margin: const EdgeInsets.only(top: 10),
+                      decoration: BoxDecoration(
+                          color: scheme.outlineVariant,
+                          borderRadius: BorderRadius.circular(4)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 8, 0),
+                      child: Row(children: [
+                        const Expanded(
+                            child: Text('阅读设置',
+                                style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600))),
+                        IconButton(
+                            tooltip: '关闭阅读设置',
+                            onPressed: () => Navigator.pop(sheetCtx),
+                            icon: const Icon(Icons.close_rounded, size: 20)),
                       ]),
-                ),
-              ])),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: TabBar(
+                        dividerColor: Colors.transparent,
+                        indicatorSize: TabBarIndicatorSize.tab,
+                        indicator: BoxDecoration(
+                            color: scheme.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(14)),
+                        labelColor: scheme.primary,
+                        unselectedLabelColor: scheme.onSurfaceVariant,
+                        labelStyle: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600),
+                        tabs: const [
+                          Tab(text: '外观'),
+                          Tab(text: '排版'),
+                          Tab(text: '操作')
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: TabBarView(
+                          physics: AppMotion.isDisabled(context)
+                              ? const NeverScrollableScrollPhysics()
+                              : null,
+                          children: [
+// ---- 外观 ----
+                            ListView(
+                              padding:
+                                  const EdgeInsets.fromLTRB(12, 16, 12, 24),
+                              children: [
+                                ReaderSettingsSection(title: '主题', children: [
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 8, bottom: 6),
+                                    child: Text('配色',
+                                        style: TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w600)),
+                                  ),
+                                  ReaderThemePicker(
+                                    presets: _presets,
+                                    selected: _bgFollowSystem ? null : _bg,
+                                    onSelected: (index) {
+                                      setState(() {
+                                        _bgChosen = true;
+                                        _bgFollowSystem = index == null;
+                                        if (index != null) _bg = index;
+                                      });
+                                      setSheet(() {});
+                                      if (index != null) {
+                                        ReaderPrefs.setBgPreset(index);
+                                      }
+                                      ReaderPrefs.setBgFollowSystem(
+                                          index == null);
+                                    },
+                                  ),
+                                  const SizedBox(height: 8),
+                                  _textColorTile(scheme, setSheet),
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: Text('用于正文和章节标题，可恢复配色默认值。',
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: scheme.onSurfaceVariant)),
+                                  ),
+                                ]),
+                                ReaderSettingsSection(title: '显示', children: [
+                                  _switchTile(
+                                      scheme,
+                                      Icons.brightness_6_outlined,
+                                      '保持屏幕常亮',
+                                      _keepOn, (v) {
+                                    setState(() => _keepOn = v);
+                                    setSheet(() {});
+                                    ReaderPrefs.setKeepScreenOn(v);
+                                    WakelockPlus.toggle(enable: v);
+                                  }),
+                                  _switchTile(scheme, Icons.hide_image_outlined,
+                                      '隐藏系统状态栏', _hideBar, (v) {
+                                    setState(() => _hideBar = v);
+                                    setSheet(() {});
+                                    ReaderPrefs.setHideStatusBar(v);
+                                    _applyImmersive();
+                                  }),
+                                  _switchTile(scheme, Icons.info_outline,
+                                      '正文指示器', _indicators, (v) {
+                                    setState(() => _indicators = v);
+                                    setSheet(() {});
+                                    ReaderPrefs.setShowIndicators(v);
+                                  }),
+                                ]),
+                                ReaderSettingsSection(title: '文字转换', children: [
+                                  _switchTile(scheme, Icons.translate_rounded,
+                                      '繁体显示', _traditional, (v) async {
+                                    setState(() {
+                                      _traditional = v;
+                                      if (v) _simplified = false;
+                                    });
+                                    setSheet(() {});
+                                    ReaderPrefs.setTraditional(v);
+                                    if (v) ReaderPrefs.setSimplified(false);
+                                    await _reparseCurrentDetail();
+                                  }, subtitle: '简体转为繁体'),
+                                  _switchTile(scheme, Icons.translate_rounded,
+                                      '简体显示', _simplified, (v) async {
+                                    setState(() {
+                                      _simplified = v;
+                                      if (v) _traditional = false;
+                                    });
+                                    setSheet(() {});
+                                    ReaderPrefs.setSimplified(v);
+                                    if (v) ReaderPrefs.setTraditional(false);
+                                    await _reparseCurrentDetail();
+                                  }, subtitle: '繁体转为简体'),
+                                ]),
+                              ],
+                            ),
+                            // ---- 排版 ----
+                            ReaderTypographySheet(
+                              paged: _paged,
+                              initialTypography: _typography,
+                              fontSize: _fontSize,
+                              onFontSizeChanged: (v) {
+                                setSheet(() {});
+                                _applyTypography(_typography, fontSize: v);
+                              },
+                              textColor: _textColor,
+                              backgroundColor: _bgColor,
+                              linkColor: _linkColor,
+                              isDark: isDark,
+                              onPickTextColor: () async {
+                                final result = await showReaderTextColorDialog(
+                                  context: context,
+                                  initialColor: _textColor,
+                                  defaultColor: _presets[_bgEff].$2,
+                                  backgroundColor: _bgColor,
+                                  isCustom: _customTextColorValue != null,
+                                );
+                                if (result == null) return;
+                                if (result.resetToDefault) {
+                                  setState(() => _customTextColorValue = null);
+                                  setSheet(() {});
+                                  await ReaderPrefs.setTextColor(null);
+                                } else if (result.color != null) {
+                                  final argb = result.color!.toARGB32();
+                                  setState(() => _customTextColorValue = argb);
+                                  setSheet(() {});
+                                  await ReaderPrefs.setTextColor(argb);
+                                }
+                              },
+                              onPreviewChange: (t) {},
+                              onCommit: (t) {
+                                setSheet(() {});
+                                _applyTypography(t);
+                              },
+                            ),
+                            // ---- 操作 ----
+                            ListView(
+                              padding:
+                                  const EdgeInsets.fromLTRB(12, 16, 12, 24),
+                              children: [
+                                ReaderSettingsSection(title: '翻页', children: [
+                                  _switchTile(scheme, Icons.touch_app_outlined,
+                                      '点击翻页', _tapTurn, (v) {
+                                    setSheet(() {});
+                                    setState(() => _tapTurn = v);
+                                    ReaderPrefs.setTapTurnPage(v);
+                                  }, subtitle: '点击左右两侧翻页'),
+                                  if (ReaderVolumeKeys.supported)
+                                    _switchTile(
+                                        scheme,
+                                        Icons.volume_up_outlined,
+                                        '音量键翻页',
+                                        _volumeTurn, (v) {
+                                      setState(() => _volumeTurn = v);
+                                      setSheet(() {});
+                                      ReaderPrefs.setVolumeTurnPage(v);
+                                      _syncVolumeKeys();
+                                    }),
+                                  _switchTile(
+                                      scheme,
+                                      Icons.auto_stories_rounded,
+                                      '翻页模式',
+                                      _paged, (v) {
+                                    _changeReadingMode(v, setSheet);
+                                  }, subtitle: '关闭后使用连续滚动'),
+                                ]),
+                                ReaderSettingsSection(title: '快捷操作', children: [
+                                  if (_locked && !_unlocked)
+                                    _aaTile(
+                                        scheme,
+                                        Icons.lock_open_rounded,
+                                        _coinPrice > 0
+                                            ? '解锁本章($_coinPrice 轻币)'
+                                            : '解锁本章', () {
+                                      Navigator.pop(sheetCtx);
+                                      _unlock();
+                                    }),
+                                  _aaTile(
+                                      scheme, Icons.arrow_upward_rounded, '回顶部',
+                                      () {
+                                    Navigator.pop(sheetCtx);
+                                    if (_paged && _pageController.hasClients) {
+                                      _pageController.jumpToPage(0);
+                                    } else if (_sc.hasClients) {
+                                      _sc.jumpTo(0);
+                                    }
+                                  }),
+                                ]),
+                              ],
+                            ),
+                          ]),
+                    ),
+                  ])),
             ),
           ),
         );
@@ -2637,8 +2839,12 @@ class _ReaderPageState extends State<ReaderPage>
     return SwitchListTile(
       contentPadding: EdgeInsets.zero,
       secondary: Icon(icon, size: 20, color: scheme.onSurfaceVariant),
-      title: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-      subtitle: subtitle == null ? null : Text(subtitle, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+      title: Text(title,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+      subtitle: subtitle == null
+          ? null
+          : Text(subtitle,
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
       value: value,
       onChanged: (v) => onChanged(v),
     );
@@ -2664,7 +2870,13 @@ class _ReaderPageState extends State<ReaderPage>
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(width: 24, height: 24, decoration: BoxDecoration(color: _textColor, shape: BoxShape.circle, border: Border.all(color: scheme.outlineVariant))),
+          Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                  color: _textColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: scheme.outlineVariant))),
           const SizedBox(width: 8),
           if (isCustom)
             TextButton(
@@ -2860,7 +3072,7 @@ class _ReaderPageState extends State<ReaderPage>
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      '已开启流量节省模式',
+                      widget.offlineOnly ? '离线正文 · 插画按需联网加载' : '已开启流量节省模式',
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -2910,7 +3122,7 @@ class _ReaderPageState extends State<ReaderPage>
     final block = _blocks[index];
     if (block.image != null) {
       final imageUrl = block.image!;
-      final isDataSaver = LKStore.dataSaverMode.value &&
+      final isDataSaver = (widget.offlineOnly || LKStore.dataSaverMode.value) &&
           !_manuallyLoadedImages.contains(imageUrl) &&
           !_diskCachedImages.contains(imageUrl);
       final imageHeight = _scrollImageHeight(block, _scrollContentWidth());
@@ -2943,17 +3155,14 @@ class _ReaderPageState extends State<ReaderPage>
                             imageCacheDimension(context, _scrollContentWidth()),
                         fit: BoxFit.contain,
                         alignment: Alignment.center,
-                        placeholder: (_, __) => Container(
-                          color: _isDarkBg
-                              ? Colors.white10
-                              : Colors.black.withValues(alpha: 0.05),
-                          child: const Center(
-                              child: MotionProgressIndicator(strokeWidth: 2)),
-                        ),
-                        errorWidget: (_, __, ___) => Center(
-                          child: Icon(Icons.broken_image_outlined,
-                              color: _textColor.withValues(alpha: 0.5)),
-                        ),
+                        placeholder: (_, __) => ContentStateView(
+                            message: '正在加载图片…',
+                            loading: true,
+                            color: _textColor),
+                        errorWidget: (_, __, ___) => ContentStateView(
+                            message: '图片加载失败，点按进入查看器重试',
+                            icon: Icons.broken_image_outlined,
+                            color: _textColor),
                       ),
                     ),
                   ),
@@ -3105,44 +3314,26 @@ class _ReaderPageState extends State<ReaderPage>
 
   Widget _loadErrorView() {
     final loggedIn = LKClient.shared.session.isLoggedIn;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.lock_outline_rounded,
-                  size: 42, color: _textColor.withValues(alpha: 0.65)),
-              const SizedBox(height: 14),
-              Text(_loadError ?? '正文暂时无法加载',
-                  textAlign: TextAlign.center,
-                  style:
-                      TextStyle(color: _textColor, fontSize: 15, height: 1.6)),
-              const SizedBox(height: 18),
-              if (!loggedIn)
-                FilledButton.icon(
-                  onPressed: () async {
-                    await Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const LoginPage()));
-                    if (mounted && LKClient.shared.session.isLoggedIn) {
-                      _load();
-                    }
-                  },
-                  icon: const Icon(Icons.login_rounded, size: 18),
-                  label: const Text('去登录'),
-                ),
-              if (!loggedIn) const SizedBox(height: 8),
-              TextButton.icon(
-                onPressed: _loading ? null : _load,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                label: const Text('重新加载'),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return ContentStateView(
+      message: _loadError ?? '正文暂时无法加载',
+      color: _textColor,
+      icon: _accessRestricted
+          ? Icons.lock_outline_rounded
+          : Icons.error_outline_rounded,
+      onRetry: _loading ? null : _load,
+      extraAction: !loggedIn && _accessRestricted && !widget.offlineOnly
+          ? FilledButton.icon(
+              onPressed: () async {
+                await Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const LoginPage()));
+                if (mounted && LKClient.shared.session.isLoggedIn) {
+                  _load();
+                }
+              },
+              icon: const Icon(Icons.login_rounded, size: 18),
+              label: const Text('去登录'),
+            )
+          : null,
     );
   }
 
@@ -3303,9 +3494,10 @@ class _ReaderPageState extends State<ReaderPage>
             MediaQuery.of(context).size.width - pad.left - pad.right;
         final availH = contentH - 12;
         final imageUrl = it.image!;
-        final isDataSaver = LKStore.dataSaverMode.value &&
-            !_manuallyLoadedImages.contains(imageUrl) &&
-            !_diskCachedImages.contains(imageUrl);
+        final isDataSaver =
+            (widget.offlineOnly || LKStore.dataSaverMode.value) &&
+                !_manuallyLoadedImages.contains(imageUrl) &&
+                !_diskCachedImages.contains(imageUrl);
 
         if (isDataSaver) {
           return _readerIllustrationPlaceholder(
@@ -3335,36 +3527,23 @@ class _ReaderPageState extends State<ReaderPage>
               width: contentW,
               height: availH,
               clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8)),
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
               child: CachedNetworkImage(
-                fadeOutDuration:
-                    AppMotion.duration(context, 1000),
+                fadeOutDuration: AppMotion.duration(context, 1000),
                 cacheManager: YomiruIllustrationCache.manager,
-                cacheKey:
-                    YomiruIllustrationCache.keyFor(imageUrl),
-                fadeInDuration:
-                    AppMotion.duration(context, 150),
+                cacheKey: YomiruIllustrationCache.keyFor(imageUrl),
+                fadeInDuration: AppMotion.duration(context, 150),
                 imageUrl: imageUrl,
                 width: contentW,
                 height: availH,
-                memCacheWidth:
-                    imageCacheDimension(context, contentW),
+                memCacheWidth: imageCacheDimension(context, contentW),
                 fit: BoxFit.contain,
-                placeholder: (_, __) => Container(
-                  color: _isDarkBg
-                      ? Colors.white10
-                      : Colors.black.withValues(alpha: 0.05),
-                  child: const Center(
-                      child: MotionProgressIndicator(
-                          strokeWidth: 2)),
-                ),
-                errorWidget: (_, __, ___) => Container(
-                  alignment: Alignment.center,
-                  child: Icon(Icons.broken_image_outlined,
-                      color:
-                          _textColor.withValues(alpha: 0.5)),
-                ),
+                placeholder: (_, __) => ContentStateView(
+                    message: '正在加载图片…', loading: true, color: _textColor),
+                errorWidget: (_, __, ___) => ContentStateView(
+                    message: '图片加载失败，点按进入查看器重试',
+                    icon: Icons.broken_image_outlined,
+                    color: _textColor),
               ),
             ),
             GestureDetector(
@@ -3400,9 +3579,8 @@ class _ReaderPageState extends State<ReaderPage>
           onPointerCancel: _textPointerCancel,
           child: SelectionArea(
             child: Builder(builder: (_) {
-              final isLocked = lockedBody &&
-                  it.links.isEmpty &&
-                  it.text == '(本章暂无内容)';
+              final isLocked =
+                  lockedBody && it.links.isEmpty && it.text == '(本章暂无内容)';
               final TextSpan span;
               if (isLocked) {
                 span = const TextSpan(text: '本章需要轻币解锁');
@@ -3444,8 +3622,7 @@ class _ReaderPageState extends State<ReaderPage>
                   decoration: BoxDecoration(
                     border: Border(
                       left: BorderSide(
-                        color:
-                            _linkColor.withValues(alpha: 0.6),
+                        color: _linkColor.withValues(alpha: 0.6),
                         width: 3,
                       ),
                     ),
@@ -3455,8 +3632,7 @@ class _ReaderPageState extends State<ReaderPage>
                 );
               } else if ((it.structured?.indent ?? 0) > 0) {
                 textWidget = Padding(
-                  padding: EdgeInsets.only(
-                      left: it.structured!.indent),
+                  padding: EdgeInsets.only(left: it.structured!.indent),
                   child: textWidget,
                 );
               }
@@ -3584,6 +3760,10 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _showCatalog() {
+    if (widget.offlineOnly) {
+      unawaited(_showOfflineCatalog());
+      return;
+    }
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
@@ -3607,6 +3787,40 @@ class _ReaderPageState extends State<ReaderPage>
         ),
       ),
     );
+  }
+
+  Future<void> _showOfflineCatalog() async {
+    final owner = OfflineLibrary.shared.ownerUid;
+    final books = await OfflineLibrary.shared.books();
+    if (!mounted || owner != OfflineLibrary.shared.ownerUid) return;
+    final book = books.where((b) => b['book_id'] == widget.bookId).firstOrNull;
+    final chapters =
+        (book?['chapters'] as List? ?? []).cast<Map<String, dynamic>>();
+    await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (ctx) => SafeArea(
+            child: SizedBox(
+                height: MediaQuery.sizeOf(ctx).height * .7,
+                child: ListView.builder(
+                    itemCount: chapters.length,
+                    itemBuilder: (_, index) {
+                      final chapter = chapters[index];
+                      return ListTile(
+                          title: Text(chapter['title'] as String),
+                          selected: chapter['id'] == widget.chapterId,
+                          subtitle: chapter['status'] != 'ready'
+                              ? const Text('尚未下载完成')
+                              : null,
+                          onTap: chapter['status'] != 'ready'
+                              ? null
+                              : () {
+                                  Navigator.pop(ctx);
+                                  _open(chapter['id'] as int,
+                                      chapter['title'] as String,
+                                      volumeId: chapter['volume'] as int);
+                                });
+                    }))));
   }
 
   // ==================== 界面 ====================
@@ -3696,16 +3910,16 @@ class _ReaderPageState extends State<ReaderPage>
         ));
       } else if (url != null) {
         out.add(TextSpan(
-          text: text.substring(start, end),
-          style: linkStyle,
-          // 翻页模式短按优先翻页；滚动模式仍可直接打开正文链接。
-          recognizer: _paged
-              ? null
-              : (TapGestureRecognizer()
-                ..onTap = () {
-                  _suppressNextTextTap = true;
-                  _openLink(url);
-                })));
+            text: text.substring(start, end),
+            style: linkStyle,
+            // 翻页模式短按优先翻页；滚动模式仍可直接打开正文链接。
+            recognizer: _paged
+                ? null
+                : (TapGestureRecognizer()
+                  ..onTap = () {
+                    _suppressNextTextTap = true;
+                    _openLink(url);
+                  })));
       }
       pos = end;
     }
@@ -3913,12 +4127,14 @@ class _ReaderPageState extends State<ReaderPage>
       return pages;
     });
     _pages = pages;
+    _builtPagedKey = _pagedKey;
     // 只使用正文锚点定位，不再把旧页码/百分比当作第二个位置来源。
     final currentAnchor = _positionController.value;
     final restoreAnchor = _normalizeAnchor(
         _pendingPagedAnchor ?? currentAnchor ?? _anchorForProgress(_progress));
     final restoreProgress = _progressForAnchor(restoreAnchor);
     final transitionId = _pendingPositionTransitionId;
+    final layoutKey = _pagedKey;
     final total = pages.length - 1;
     final target = _pageForAnchor(restoreAnchor, pages) ??
         (total <= 0 ? 0 : (restoreProgress * total).round().clamp(0, total));
@@ -3928,13 +4144,27 @@ class _ReaderPageState extends State<ReaderPage>
         persist: false,
         syncUi: transitionId == null);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _pageController.hasClients) {
+      if (!mounted ||
+          !_paged ||
+          _pagedKey != layoutKey ||
+          (transitionId != null &&
+              _positionController.transitionId != transitionId)) {
+        return;
+      }
+      if (_pageController.hasClients) {
         _pageController.jumpToPage(target);
       }
       if (_restoringPagedProgress) {
         // PageView 首次挂载会先发出第 0 页回调；等目标页落位后再恢复
         // 正常的翻页进度更新，避免模式切换覆盖保存的百分比。
         WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted ||
+              !_paged ||
+              _pagedKey != layoutKey ||
+              (transitionId != null &&
+                  _positionController.transitionId != transitionId)) {
+            return;
+          }
           if (transitionId != null) {
             _completePositionTransition(transitionId, restoreAnchor);
             if (_pendingPositionTransitionId == transitionId) {
@@ -3952,9 +4182,8 @@ class _ReaderPageState extends State<ReaderPage>
   /// 避免 iOS 上测量高度与最终渲染高度不一致。
   List<({int start, int end, double height})> _textLineRanges(
       _BodyBlock b, double w) {
-    final effectiveW = (b.indent > 0)
-        ? (w - b.indent).clamp(80.0, 2000.0).toDouble()
-        : w;
+    final effectiveW =
+        (b.indent > 0) ? (w - b.indent).clamp(80.0, 2000.0).toDouble() : w;
     final TextSpan span;
     if (b.structured != null) {
       span = b.structured!.buildTextSpan(
@@ -4211,7 +4440,10 @@ class _ReaderPageState extends State<ReaderPage>
                 Positioned.fill(
                   child: RepaintBoundary(
                     child: _loading
-                        ? LkLoadingIndicator(color: _textColor)
+                        ? ContentStateView(
+                            message: '正在加载正文…',
+                            loading: true,
+                            color: _textColor)
                         : _loadError != null
                             ? _loadErrorView()
                             : LayoutBuilder(builder: (ctx, cons) {
@@ -4264,6 +4496,12 @@ class _ReaderPageState extends State<ReaderPage>
                                       }
                                     });
                                   }
+                                  if (_builtPagedKey != key) {
+                                    return ContentStateView(
+                                        message: '正在重新排版…',
+                                        loading: true,
+                                        color: _textColor);
+                                  }
                                   return _pagedBody(effectiveVh, viewTopPadding,
                                       viewBottomPadding, lockedBody);
                                 }
@@ -4272,6 +4510,29 @@ class _ReaderPageState extends State<ReaderPage>
                               }),
                   ),
                 ),
+                if (_cachedRefreshFailed && _chrome)
+                  Positioned(
+                      top: viewTopPadding + 64,
+                      left: 16,
+                      right: 16,
+                      child: Material(
+                          color: _bgColor,
+                          borderRadius: BorderRadius.circular(12),
+                          child: ListTile(
+                              dense: true,
+                              title: Text('正在阅读本地缓存，联网刷新失败',
+                                  style: TextStyle(
+                                      color: _textColor, fontSize: 12)),
+                              trailing: TextButton(
+                                  onPressed: () {
+                                    setState(
+                                        () => _cachedRefreshFailed = false);
+                                    unawaited(_refreshFromNetwork(0,
+                                        cacheOwnerUid: _readerCacheOwnerUid,
+                                        cacheGeneration:
+                                            ReaderContentCache.generation));
+                                  },
+                                  child: const Text('重试'))))),
                 if (_indicators && !_chrome && !_loading)
                   Positioned(
                     top: _hideBar ? 6.0 : padTop + 6,

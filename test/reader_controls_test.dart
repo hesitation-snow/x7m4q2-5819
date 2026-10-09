@@ -14,6 +14,7 @@ import 'package:yomiru/api/reader_cache.dart';
 import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/reader_page.dart';
 import 'package:yomiru/reader/reader_indent.dart';
+import 'package:yomiru/reader/reader_typography.dart';
 import 'package:yomiru/services/app_motion.dart';
 import 'package:yomiru/services/reader_volume_keys.dart';
 import 'package:yomiru/widgets/reader_typography_sheet.dart';
@@ -22,13 +23,18 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   for (final paged in [false, true]) {
     for (final enhanced in [false, true]) {
-      testWidgets('real reader indent and justify: paged=$paged enhanced=$enhanced', (tester) async {
+      testWidgets(
+          'real reader indent and justify: paged=$paged enhanced=$enhanced',
+          (tester) async {
         final previous = LKStore.enhancedContentStyleEnabled.value;
         LKStore.enhancedContentStyleEnabled.value = enhanced;
         try {
-          await withReader(tester, paged: paged, platform: TargetPlatform.android,
+          await withReader(tester,
+              paged: paged,
+              platform: TargetPlatform.android,
               indentAndJustify: true, run: (calls, key) async {
-            final paragraph = find.byWidgetPredicate((widget) => widget is RichText &&
+            final paragraph = find.byWidgetPredicate((widget) =>
+                widget is RichText &&
                 widget.text.toPlainText().startsWith('\u3000\u3000第0段'));
             expect(paragraph, findsOneWidget);
             final render = tester.renderObject<RenderParagraph>(paragraph);
@@ -38,8 +44,10 @@ void main() {
               return true;
             });
             expect(indents, hasLength(2));
-            final first = render.getBoxesForSelection(
-                const TextSelection(baseOffset: 2, extentOffset: 3)).first;
+            final first = render
+                .getBoxesForSelection(
+                    const TextSelection(baseOffset: 2, extentOffset: 3))
+                .first;
             expect(first.left, closeTo(indents.first.em * 2, 1));
             await key('next');
             await tester.pump();
@@ -160,6 +168,15 @@ void main() {
       expect(find.text('段落间距'), findsOneWidget);
       expect(find.text('字符间距'), findsOneWidget);
       expect(find.text('页边留白'), findsOneWidget);
+      final typographySheet = tester
+          .widget<ReaderTypographySheet>(find.byType(ReaderTypographySheet));
+      expect(typographySheet.paged, isTrue);
+      expect(
+          tester
+              .widget<SegmentedButton<ReaderColumnMode>>(
+                  find.byType(SegmentedButton<ReaderColumnMode>))
+              .onSelectionChanged,
+          isNotNull);
       expect(find.text('两端对齐'), findsOneWidget);
       expect(find.text('分栏模式'), findsOneWidget);
 
@@ -190,7 +207,10 @@ void main() {
       await tester.tap(find.text('排版'));
       await tester.pumpAndSettle();
 
-      await tester.drag(find.byType(ReaderTypographySheet), const Offset(0, -300));
+      await tester.drag(
+          find.byType(ReaderTypographySheet), const Offset(0, -300));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('双栏'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('双栏'));
       await tester.pumpAndSettle();
@@ -212,7 +232,10 @@ void main() {
       await tester.tap(find.text('排版'));
       await tester.pumpAndSettle();
 
-      await tester.drag(find.byType(ReaderTypographySheet), const Offset(0, -300));
+      await tester.drag(
+          find.byType(ReaderTypographySheet), const Offset(0, -300));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('单栏'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('单栏'));
       await tester.pumpAndSettle();
@@ -230,6 +253,8 @@ Future<void> withReader(WidgetTester tester,
     required TargetPlatform platform,
     bool indentAndJustify = false,
     bool pushReader = false,
+    bool offlineOnly = false,
+    Future<void> Function(Directory)? prepareLocal,
     required Future<void> Function(
             List<Map<dynamic, dynamic>>, Future<void> Function(String))
         run}) async {
@@ -248,10 +273,12 @@ Future<void> withReader(WidgetTester tester,
     calls.add(call.arguments as Map);
     return null;
   });
-  SharedPreferences.setMockInitialValues(
-      {'r_paged': paged, 'r_vol_turn': true,
-        'r_indent': indentAndJustify ? 2.0 : 0.0,
-        'r_justify': indentAndJustify});
+  SharedPreferences.setMockInitialValues({
+    'r_paged': paged,
+    'r_vol_turn': true,
+    'r_indent': indentAndJustify ? 2.0 : 0.0,
+    'r_justify': indentAndJustify
+  });
   debugDefaultTargetPlatformOverride = platform;
   tester.view.physicalSize = const Size(400, 800);
   tester.view.devicePixelRatio = 1;
@@ -278,19 +305,26 @@ Future<void> withReader(WidgetTester tester,
         headers: {'content-type': 'application/json'});
   }));
   try {
+    if (prepareLocal != null) await tester.runAsync(() => prepareLocal(root!));
     await tester.runAsync(ReaderContentCache.clear);
-    const reader = ReaderPage(
-        bookId: 1338, bookTitle: 'fixture', chapterId: 317815,
-        chapterTitle: 'Controls fixture', volumeId: 1);
+    final reader = ReaderPage(
+        bookId: 1338,
+        bookTitle: 'fixture',
+        chapterId: 317815,
+        chapterTitle: 'Controls fixture',
+        volumeId: 1,
+        offlineOnly: offlineOnly);
     await tester.pumpWidget(MaterialApp(
         navigatorObservers: [readerRouteObserver],
         theme: ThemeData(pageTransitionsTheme: AppMotion.noPageTransitions),
         home: pushReader
-            ? Scaffold(body: Builder(builder: (context) => TextButton(
-                onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(builder: (_) => reader)),
-                child: const Text('打开测试阅读器'),
-              )))
+            ? Scaffold(
+                body: Builder(
+                    builder: (context) => TextButton(
+                          onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(builder: (_) => reader)),
+                          child: const Text('打开测试阅读器'),
+                        )))
             : reader));
     if (pushReader) {
       await tester.tap(find.text('打开测试阅读器'));
