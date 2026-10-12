@@ -1,5 +1,5 @@
 import '../services/app_motion.dart';
-import 'dynamic_feed_source_sheet.dart';
+import '../widgets/dynamic_feed_source_switch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -389,18 +389,8 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 20),
           _sectionTitle(context, '浏览'),
           _settingsGroup(context, [
-            ValueListenableBuilder<DynamicFeedMode>(
-              valueListenable: LKStore.dynamicFeedMode,
-              builder: (context, mode, _) => ListTile(
-                leading: _settingsIcon(context, Icons.dynamic_feed_outlined),
-                title: const Text('动态数据源'),
-                subtitle: Text('当前：${mode.label} · 列表异常时可切换'),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => showModalBottomSheet<void>(
-                  context: context,
-                  builder: (_) => const DynamicFeedSourceSheet(),
-                ),
-              ),
+            DynamicFeedSourceSwitch(
+              secondary: _settingsIcon(context, Icons.dynamic_feed_outlined),
             ),
             ValueListenableBuilder<int>(
               valueListenable: LKStore.gridColumnCount,

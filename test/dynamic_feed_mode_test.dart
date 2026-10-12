@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/dynamic_page.dart';
-import 'package:yomiru/pages/dynamic_feed_source_sheet.dart';
+import 'package:yomiru/widgets/dynamic_feed_source_switch.dart';
 
 void main() {
   setUp(() {
@@ -55,7 +55,7 @@ void main() {
     }, hasLength(3));
   });
   for (final largeText in [false, true]) {
-    testWidgets('sheet switches and saves source, largeText=$largeText',
+    testWidgets('switch toggles and saves source, largeText=$largeText',
         (tester) async {
       tester.view.physicalSize = Size(390, largeText ? 280 : 800);
       tester.view.devicePixelRatio = 1;
@@ -66,22 +66,27 @@ void main() {
               data: MediaQuery.of(context)
                   .copyWith(textScaler: TextScaler.linear(largeText ? 2 : 1)),
               child: child!),
-          home: Scaffold(
-              body: Builder(
-                  builder: (context) => TextButton(
-                      onPressed: () => showModalBottomSheet<void>(
-                          context: context,
-                          builder: (_) => const DynamicFeedSourceSheet()),
-                      child: const Text('选择数据源'))))));
-      await tester.tap(find.text('选择数据源'));
-      await tester.pumpAndSettle();
-      expect(find.text('匿名关注'), findsOneWidget);
-      await tester.ensureVisible(find.text('旧版动态'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('旧版动态'));
+          home: const Scaffold(
+              body: SingleChildScrollView(child: DynamicFeedSourceSwitch()))));
+      expect(find.text('使用旧版动态数据源'), findsOneWidget);
+      expect(find.text('如果动态加载有问题时可以启用'), findsOneWidget);
+      expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+          isFalse);
+      await tester.ensureVisible(find.byType(Switch));
+      await tester.tap(find.byType(Switch));
       await tester.pumpAndSettle();
       expect(LKStore.dynamicFeedMode.value, DynamicFeedMode.legacyMixed);
-      expect(find.byType(DynamicFeedSourceSheet), findsNothing);
+      expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+          isTrue);
+      expect(
+          (await SharedPreferences.getInstance())
+              .getString('dynamic_feed_mode'),
+          'legacyMixed');
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      expect(LKStore.dynamicFeedMode.value, DynamicFeedMode.anonymousFollow);
+      expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+          isFalse);
       expect(tester.takeException(), isNull);
     });
   }
