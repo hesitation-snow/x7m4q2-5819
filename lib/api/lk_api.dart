@@ -647,28 +647,34 @@ class LKApi {
 
   static Future<LKDynamicPage> dynamicFeedPage(
       {String tab = 'mixed',
+      bool anonymous = false,
       String cursor = '',
       int page = 1,
       int pageSize = 20}) async {
-    final d = await client.post(
-        '/api/dynamic/get-feed-v1',
-        client.authed({
-          'tab': tab,
-          'cursor': cursor,
-          'page': page,
-          'page_size': pageSize,
-          'pageSize': pageSize,
-        }));
+    final payload = <String, dynamic>{
+      'tab': tab,
+      'cursor': cursor,
+      'page': page,
+      'page_size': pageSize,
+      'pageSize': pageSize,
+    };
+    final d = await client.post('/api/dynamic/get-feed-v1',
+        anonymous ? payload : client.authed(payload));
     return LKDynamicPage.fromJson(d);
   }
 
   static Future<List<LKDynamicItem>> dynamicFeed(
       {String tab = 'mixed',
+      bool anonymous = false,
       String cursor = '',
       int page = 1,
       int pageSize = 20}) async {
     return (await dynamicFeedPage(
-            tab: tab, cursor: cursor, page: page, pageSize: pageSize))
+            tab: tab,
+            anonymous: anonymous,
+            cursor: cursor,
+            page: page,
+            pageSize: pageSize))
         .items;
   }
 
@@ -1169,7 +1175,8 @@ class LKApi {
     int? progress,
   }) {
     final body = <String, dynamic>{};
-    final resolvedAction = action.trim().isNotEmpty ? action.trim() : 'complete';
+    final resolvedAction =
+        action.trim().isNotEmpty ? action.trim() : 'complete';
     body['action'] = resolvedAction;
     if (boxIndex != null) {
       body['box_index'] = boxIndex;

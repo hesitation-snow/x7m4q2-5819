@@ -23,8 +23,8 @@ import 'user_profile_page.dart';
 
 /// 窄屏单列；平板和开启横屏适配的手机按可用宽度排列。
 int dynamicFeedColumnCount(Size viewport) {
-  final phoneLandscape = LKStore.landscapeEnabled.value &&
-      viewport.width > viewport.height;
+  final phoneLandscape =
+      LKStore.landscapeEnabled.value && viewport.width > viewport.height;
   if ((!phoneLandscape && viewport.shortestSide < 600) ||
       viewport.width < 560) {
     return 1;
@@ -34,6 +34,14 @@ int dynamicFeedColumnCount(Size viewport) {
 
 String normalizedDynamicFeedTab(String tab, {required bool loggedIn}) =>
     !loggedIn && tab == 'follow' ? 'mixed' : tab;
+
+/// 默认广场使用官网游客「关注」数据源；显式关注保留账号关注关系。
+({String tab, bool anonymous}) dynamicFeedSource(String tab,
+        {required bool loggedIn}) =>
+    (
+      tab: tab == 'mixed' ? 'follow' : tab,
+      anonymous: tab == 'mixed' || !loggedIn
+    );
 
 /// 动态广场(本站动态 / 关注动态)
 class DynamicPage extends StatefulWidget {
@@ -135,11 +143,15 @@ class _DynamicPageState extends State<DynamicPage> {
     _loadUnread();
   }
 
-  String _dynamicCacheKey({int? uid, String? feedTab}) => LKStore.pageCacheKey(
-        kind: 'dynamic_feed',
-        uid: uid ?? LKClient.shared.session.uid,
-        variant: feedTab ?? _feedTab,
-      );
+  String _dynamicCacheKey({int? uid, String? feedTab}) {
+    final source = dynamicFeedSource(feedTab ?? _feedTab,
+        loggedIn: LKClient.shared.session.isLoggedIn);
+    return LKStore.pageCacheKey(
+      kind: 'dynamic_feed',
+      uid: source.anonymous ? 0 : uid ?? LKClient.shared.session.uid,
+      variant: source.anonymous ? 'anonymous_follow_v1' : feedTab ?? _feedTab,
+    );
+  }
 
   Future<void> _startLoad() async {
     final request = _requestSerial;
@@ -210,6 +222,8 @@ class _DynamicPageState extends State<DynamicPage> {
     final requestSerial = ++_requestSerial;
     final feedTab = _feedTab;
     final page = append ? _page + 1 : 1;
+    final source = dynamicFeedSource(feedTab,
+        loggedIn: LKClient.shared.session.isLoggedIn);
     final previousCursor = _cursor;
     final cacheKey = _dynamicCacheKey();
     if (mounted) {
@@ -225,7 +239,11 @@ class _DynamicPageState extends State<DynamicPage> {
       Future<LoadedPage<LKDynamicItem>> fetchPage(
           int number, String cursor) async {
         final result = await LKApi.dynamicFeedPage(
-            tab: feedTab, cursor: cursor, page: number, pageSize: 20);
+            tab: source.tab,
+            anonymous: source.anonymous,
+            cursor: cursor,
+            page: number,
+            pageSize: 20);
         return LoadedPage(
             items: result.items,
             page: number,
@@ -676,12 +694,13 @@ class _DynamicPageState extends State<DynamicPage> {
                                                         : null,
                                                     child: CircleAvatar(
                                                         radius: 16,
-                                                        backgroundImage: YomiruAvatarCache
-                                                            .providerOrNull(
-                                                                d.avatar),
+                                                        backgroundImage:
+                                                            YomiruAvatarCache
+                                                                .providerOrNull(
+                                                                    d.avatar),
                                                         child: YomiruAvatarCache
-                                                                    .providerOrNull(
-                                                                        d.avatar) ==
+                                                                    .providerOrNull(d
+                                                                        .avatar) ==
                                                                 null
                                                             ? const Icon(
                                                                 Icons.person,
@@ -724,8 +743,11 @@ class _DynamicPageState extends State<DynamicPage> {
                                                                           .name,
                                                                       child:
                                                                           GestureDetector(
-                                                                        onTap: () =>
-                                                                            showFloatingPrompt(context, medal.name.isEmpty ? '未知勋章' : medal.name),
+                                                                        onTap: () => showFloatingPrompt(
+                                                                            context,
+                                                                            medal.name.isEmpty
+                                                                                ? '未知勋章'
+                                                                                : medal.name),
                                                                         child:
                                                                             CircleAvatar(
                                                                           radius:
