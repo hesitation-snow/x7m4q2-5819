@@ -17,7 +17,6 @@ import 'comments_page.dart';
 import 'search_page.dart';
 import 'user_profile_page.dart';
 import 'epub_maker_page.dart';
-import 'offline_library_page.dart';
 import 'media_viewer_page.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:share_plus/share_plus.dart';
@@ -733,17 +732,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                     _shareBook(b);
                                   } else if (value == 'epub') {
                                     _openEpubMaker();
-                                  } else if (value == 'offline') {
-                                    Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                            builder: (_) =>
-                                                OfflineLibraryPage(book: b)));
                                   }
                                 },
                                 itemBuilder: (context) => [
-                                  const PopupMenuItem(
-                                      value: 'offline', child: Text('离线下载正文')),
                                   const PopupMenuItem(
                                     value: 'share',
                                     child: Row(

@@ -1,5 +1,4 @@
 import '../services/app_motion.dart';
-import 'offline_library_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -63,7 +62,7 @@ class _SettingsPageState extends State<SettingsPage> {
         title: const Text('清除缓存'),
         content: Text(
           '将清除所有缓存图片、$_readerCacheCount 章正文和可重新获取的页面数据。'
-          '不会删除主动下载的离线正文，也不会影响登录状态、本机书架或阅读进度。',
+          '不会影响登录状态、本机书架或阅读进度。',
         ),
         actions: [
           TextButton(
@@ -469,17 +468,6 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 20),
           _sectionTitle(context, '应用'),
           _settingsGroup(context, [
-            ListTile(
-              leading:
-                  _settingsIcon(context, Icons.download_for_offline_outlined),
-              title: const Text('离线下载'),
-              subtitle: const Text('管理主动下载的正文、重试和删除'),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const OfflineLibraryPage())),
-            ),
             ListTile(
               leading: _settingsIcon(context, Icons.offline_bolt_outlined),
               title: const Text('清除缓存'),

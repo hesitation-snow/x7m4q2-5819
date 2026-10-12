@@ -253,7 +253,6 @@ Future<void> withReader(WidgetTester tester,
     required TargetPlatform platform,
     bool indentAndJustify = false,
     bool pushReader = false,
-    bool offlineOnly = false,
     Future<void> Function(Directory)? prepareLocal,
     required Future<void> Function(
             List<Map<dynamic, dynamic>>, Future<void> Function(String))
@@ -305,15 +304,15 @@ Future<void> withReader(WidgetTester tester,
         headers: {'content-type': 'application/json'});
   }));
   try {
-    if (prepareLocal != null) await tester.runAsync(() => prepareLocal(root!));
     await tester.runAsync(ReaderContentCache.clear);
-    final reader = ReaderPage(
-        bookId: 1338,
-        bookTitle: 'fixture',
-        chapterId: 317815,
-        chapterTitle: 'Controls fixture',
-        volumeId: 1,
-        offlineOnly: offlineOnly);
+    if (prepareLocal != null) await tester.runAsync(() => prepareLocal(root!));
+    const reader = ReaderPage(
+      bookId: 1338,
+      bookTitle: 'fixture',
+      chapterId: 317815,
+      chapterTitle: 'Controls fixture',
+      volumeId: 1,
+    );
     await tester.pumpWidget(MaterialApp(
         navigatorObservers: [readerRouteObserver],
         theme: ThemeData(pageTransitionsTheme: AppMotion.noPageTransitions),

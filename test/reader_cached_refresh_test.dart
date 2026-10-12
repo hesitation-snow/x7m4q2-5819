@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -8,6 +8,7 @@ import 'package:http/testing.dart';
 import 'package:yomiru/api/lk_api.dart';
 import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/models.dart';
+import 'package:yomiru/api/reader_cache.dart';
 import 'package:yomiru/api/store.dart';
 import 'reader_controls_test.dart' show withReader;
 
@@ -24,12 +25,11 @@ void main() {
           .join();
       await withReader(tester, paged: paged, platform: TargetPlatform.android,
           prepareLocal: (root) async {
-        final dir = Directory('${root.path}/offline_library');
-        await dir.create();
-        await File('${dir.path}/0_1338_317815.json').writeAsString(jsonEncode(
+        await ReaderContentCache.write(
+            1338,
             LKChapterDetail(
-                    chapterId: 317815, volumeId: 1, bodyHtml: body(false))
-                .toCacheJson()));
+                chapterId: 317815, volumeId: 1, bodyHtml: body(false)),
+            ownerUid: 0);
         LKApi.client =
             LKClient.forTesting(httpClient: MockClient((request) async {
           if (request.url.path.endsWith('/get-chapter-detail')) {

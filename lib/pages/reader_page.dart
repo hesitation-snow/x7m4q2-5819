@@ -20,7 +20,7 @@ import '../api/models.dart';
 import '../api/reader_cache.dart';
 import '../api/reading_session.dart';
 import '../services/reading_progress_reporter.dart';
-import '../services/offline_library.dart';
+
 import '../api/store.dart';
 import '../widgets/common.dart';
 import '../widgets/content_state_view.dart';
@@ -173,15 +173,14 @@ class ReaderPage extends StatefulWidget {
   final int chapterId;
   final String chapterTitle;
   final int volumeId;
-  final bool offlineOnly;
+
   const ReaderPage(
       {super.key,
       required this.bookId,
       required this.bookTitle,
       required this.chapterId,
       required this.chapterTitle,
-      required this.volumeId,
-      this.offlineOnly = false});
+      required this.volumeId});
 
   @override
   State<ReaderPage> createState() => _ReaderPageState();
@@ -342,7 +341,7 @@ class _ReaderPageState extends State<ReaderPage>
   void _syncProgressUi(_ReadingAnchor anchor, {bool updateSession = true}) {
     final progress = _progressForAnchor(anchor);
     _progressN.value = progress;
-    if (updateSession && !widget.offlineOnly) {
+    if (updateSession) {
       LKReadingSession.shared
           .update(volumeId: _effectiveVolumeId, progress: progress);
     }
@@ -764,7 +763,6 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _warmNearbyIllustrations() {
-    if (widget.offlineOnly) return;
     if (!mounted ||
         _illustrationIndexes.isEmpty ||
         LKStore.dataSaverMode.value) {
@@ -1147,7 +1145,6 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _startReadingReportTimer() {
-    if (widget.offlineOnly) return;
     if (_readingReportTimer != null || !LKClient.shared.session.isLoggedIn) {
       assert(() {
         debugPrint(
@@ -1175,7 +1172,6 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   Future<void> _reportReadingProgress({bool force = false}) async {
-    if (widget.offlineOnly) return;
     try {
       await ReadingProgressReporter.shared.flush(force: force);
     } catch (_) {
@@ -1490,7 +1486,8 @@ class _ReaderPageState extends State<ReaderPage>
       ReaderPrefs.readPosFrac(widget.chapterId),
       cacheOwnerUid == null
           ? Future<LKChapterDetail?>.value(null)
-          : _readLocalChapter(cacheOwnerUid),
+          : ReaderContentCache.read(widget.bookId, widget.chapterId,
+              ownerUid: cacheOwnerUid),
     ]);
     // Preferences and local content are read concurrently, but parsing waits
     // for the selected script mode so a cached chapter is rendered only once.
@@ -1521,7 +1518,7 @@ class _ReaderPageState extends State<ReaderPage>
       }
       setState(() => _loading = false);
       _resolveAdjacentOrPrefetch();
-      if (widget.offlineOnly) return;
+
       // 缓存只负责快速展示,仍在后台向服务端刷新,防止正文过期。
       unawaited(_refreshFromNetwork(restore,
           cacheOwnerUid: cacheOwnerUid,
@@ -1530,27 +1527,12 @@ class _ReaderPageState extends State<ReaderPage>
       return;
     }
 
-    if (widget.offlineOnly) {
-      setState(() {
-        _loading = false;
-        _loadError = '离线正文不存在或已损坏，请到离线下载页面重新下载。';
-      });
-      return;
-    }
     // 没有缓存时保持原来的在线加载流程。
     await _refreshFromNetwork(restore,
         initialLoad: true,
         cacheOwnerUid: cacheOwnerUid,
         cacheGeneration: cacheGeneration,
         savedPosition: savedPosition);
-  }
-
-  Future<LKChapterDetail?> _readLocalChapter(int ownerUid) async {
-    final downloaded = await OfflineLibrary.shared
-        .read(widget.bookId, widget.chapterId, ownerUid: ownerUid);
-    if (downloaded != null || widget.offlineOnly) return downloaded;
-    return ReaderContentCache.read(widget.bookId, widget.chapterId,
-        ownerUid: ownerUid);
   }
 
   Future<void> _refreshFromNetwork(double restore,
@@ -1647,9 +1629,7 @@ class _ReaderPageState extends State<ReaderPage>
         ? _positionController.transitionId
         : null;
     _updateDetailState(d, blocks: blocks);
-    if (!widget.offlineOnly &&
-        LKClient.shared.session.isLoggedIn &&
-        (!d.locked || d.unlocked)) {
+    if (LKClient.shared.session.isLoggedIn && (!d.locked || d.unlocked)) {
       LKReadingSession.shared.begin(
         bookId: widget.bookId,
         volumeId: d.volumeId > 0 ? d.volumeId : widget.volumeId,
@@ -1700,10 +1680,6 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _resolveAdjacentOrPrefetch() {
-    if (widget.offlineOnly) {
-      unawaited(_resolveOfflineAdjacent());
-      return;
-    }
     if (_prevId == null || _nextId == null) {
       if (_adjacentResolutionFuture != null) return;
       final task = _resolveAdjacent();
@@ -1721,33 +1697,6 @@ class _ReaderPageState extends State<ReaderPage>
       unawaited(_prefetchAdjacentChapters());
       unawaited(_warmCatalogContext());
     }
-  }
-
-  Future<void> _resolveOfflineAdjacent() async {
-    final owner = OfflineLibrary.shared.ownerUid;
-    final books = await OfflineLibrary.shared.books();
-    if (!mounted || owner != OfflineLibrary.shared.ownerUid) return;
-    final book = books.where((b) => b['book_id'] == widget.bookId).firstOrNull;
-    final chapters =
-        (book?['chapters'] as List? ?? []).cast<Map<String, dynamic>>();
-    final index = chapters.indexWhere((c) => c['id'] == widget.chapterId);
-    if (index < 0) return;
-    // 不跳过缺失章节，避免误以为离线目录完整。
-    final prev = index > 0 && chapters[index - 1]['status'] == 'ready'
-        ? chapters[index - 1]
-        : null;
-    final next =
-        index + 1 < chapters.length && chapters[index + 1]['status'] == 'ready'
-            ? chapters[index + 1]
-            : null;
-    setState(() {
-      _prevId = prev?['id'] as int?;
-      _prevTitle = prev?['title'] as String?;
-      _prevVolumeId = prev?['volume'] as int?;
-      _nextId = next?['id'] as int?;
-      _nextTitle = next?['title'] as String?;
-      _nextVolumeId = next?['volume'] as int?;
-    });
   }
 
   /// 预取相邻章正文；插画等进入对应章节后再按阅读位置少量预取。
@@ -2268,7 +2217,6 @@ class _ReaderPageState extends State<ReaderPage>
                 chapterId: chapterId,
                 chapterTitle: title,
                 volumeId: volumeId ?? _effectiveVolumeId,
-                offlineOnly: widget.offlineOnly,
               )),
     );
   }
@@ -3072,7 +3020,7 @@ class _ReaderPageState extends State<ReaderPage>
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      widget.offlineOnly ? '离线正文 · 插画按需联网加载' : '已开启流量节省模式',
+                      '已开启流量节省模式',
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -3122,7 +3070,7 @@ class _ReaderPageState extends State<ReaderPage>
     final block = _blocks[index];
     if (block.image != null) {
       final imageUrl = block.image!;
-      final isDataSaver = (widget.offlineOnly || LKStore.dataSaverMode.value) &&
+      final isDataSaver = LKStore.dataSaverMode.value &&
           !_manuallyLoadedImages.contains(imageUrl) &&
           !_diskCachedImages.contains(imageUrl);
       final imageHeight = _scrollImageHeight(block, _scrollContentWidth());
@@ -3321,7 +3269,7 @@ class _ReaderPageState extends State<ReaderPage>
           ? Icons.lock_outline_rounded
           : Icons.error_outline_rounded,
       onRetry: _loading ? null : _load,
-      extraAction: !loggedIn && _accessRestricted && !widget.offlineOnly
+      extraAction: !loggedIn && _accessRestricted
           ? FilledButton.icon(
               onPressed: () async {
                 await Navigator.push(context,
@@ -3494,10 +3442,9 @@ class _ReaderPageState extends State<ReaderPage>
             MediaQuery.of(context).size.width - pad.left - pad.right;
         final availH = contentH - 12;
         final imageUrl = it.image!;
-        final isDataSaver =
-            (widget.offlineOnly || LKStore.dataSaverMode.value) &&
-                !_manuallyLoadedImages.contains(imageUrl) &&
-                !_diskCachedImages.contains(imageUrl);
+        final isDataSaver = LKStore.dataSaverMode.value &&
+            !_manuallyLoadedImages.contains(imageUrl) &&
+            !_diskCachedImages.contains(imageUrl);
 
         if (isDataSaver) {
           return _readerIllustrationPlaceholder(
@@ -3760,10 +3707,6 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _showCatalog() {
-    if (widget.offlineOnly) {
-      unawaited(_showOfflineCatalog());
-      return;
-    }
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
@@ -3787,40 +3730,6 @@ class _ReaderPageState extends State<ReaderPage>
         ),
       ),
     );
-  }
-
-  Future<void> _showOfflineCatalog() async {
-    final owner = OfflineLibrary.shared.ownerUid;
-    final books = await OfflineLibrary.shared.books();
-    if (!mounted || owner != OfflineLibrary.shared.ownerUid) return;
-    final book = books.where((b) => b['book_id'] == widget.bookId).firstOrNull;
-    final chapters =
-        (book?['chapters'] as List? ?? []).cast<Map<String, dynamic>>();
-    await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        builder: (ctx) => SafeArea(
-            child: SizedBox(
-                height: MediaQuery.sizeOf(ctx).height * .7,
-                child: ListView.builder(
-                    itemCount: chapters.length,
-                    itemBuilder: (_, index) {
-                      final chapter = chapters[index];
-                      return ListTile(
-                          title: Text(chapter['title'] as String),
-                          selected: chapter['id'] == widget.chapterId,
-                          subtitle: chapter['status'] != 'ready'
-                              ? const Text('尚未下载完成')
-                              : null,
-                          onTap: chapter['status'] != 'ready'
-                              ? null
-                              : () {
-                                  Navigator.pop(ctx);
-                                  _open(chapter['id'] as int,
-                                      chapter['title'] as String,
-                                      volumeId: chapter['volume'] as int);
-                                });
-                    }))));
   }
 
   // ==================== 界面 ====================
