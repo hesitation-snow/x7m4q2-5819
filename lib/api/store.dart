@@ -20,6 +20,16 @@ enum CoverBlurMode {
   none,
 }
 
+/// 默认动态列表的数据源；不影响个人关注与交互操作。
+enum DynamicFeedMode {
+  anonymousFollow('匿名关注', '使用官网未登录状态的关注列表'),
+  legacyMixed('旧版动态', '使用旧版动态列表，按当前登录状态加载');
+
+  const DynamicFeedMode(this.label, this.description);
+  final String label;
+  final String description;
+}
+
 /// 会话与主题持久化
 class LKStore {
   /// 主题模式(ValueNotifier 让 MaterialApp 即时切换)
@@ -30,6 +40,21 @@ class LKStore {
   static final ValueNotifier<bool> dataSaverMode = ValueNotifier(false);
   static final ValueNotifier<bool> animationsEnabled = ValueNotifier(true);
   static final ValueNotifier<bool> landscapeEnabled = ValueNotifier(false);
+  static final ValueNotifier<DynamicFeedMode> dynamicFeedMode =
+      ValueNotifier(DynamicFeedMode.anonymousFollow);
+
+  static DynamicFeedMode parseDynamicFeedMode(String? value) =>
+      value == DynamicFeedMode.legacyMixed.name
+          ? DynamicFeedMode.legacyMixed
+          : DynamicFeedMode.anonymousFollow;
+
+  static Future<void> setDynamicFeedMode(DynamicFeedMode mode) async {
+    final p = await SharedPreferences.getInstance();
+    if (!await p.setString('dynamic_feed_mode', mode.name)) {
+      throw StateError('无法保存动态数据源设置，请重试');
+    }
+    dynamicFeedMode.value = mode;
+  }
 
   /// 书籍封面高斯模糊模式（全部书籍 / 勇者书籍 / 关闭）
   static final ValueNotifier<CoverBlurMode> coverBlurMode =
@@ -141,6 +166,8 @@ class LKStore {
     dataSaverMode.value = p.getBool('data_saver_mode') ?? false;
     animationsEnabled.value = p.getBool('animations_enabled') ?? true;
     landscapeEnabled.value = p.getBool('landscape_enabled') ?? false;
+    dynamicFeedMode.value =
+        parseDynamicFeedMode(p.getString('dynamic_feed_mode'));
     final savedBlurMode = p.getString('cover_blur_mode');
     if (savedBlurMode != null) {
       coverBlurMode.value = switch (savedBlurMode) {

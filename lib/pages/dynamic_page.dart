@@ -37,11 +37,17 @@ String normalizedDynamicFeedTab(String tab, {required bool loggedIn}) =>
 
 /// 默认广场使用官网游客「关注」数据源；显式关注保留账号关注关系。
 ({String tab, bool anonymous}) dynamicFeedSource(String tab,
-        {required bool loggedIn}) =>
-    (
-      tab: tab == 'mixed' ? 'follow' : tab,
-      anonymous: tab == 'mixed' || !loggedIn
-    );
+        {required bool loggedIn,
+        DynamicFeedMode mode = DynamicFeedMode.anonymousFollow}) =>
+    tab == 'mixed' && mode == DynamicFeedMode.legacyMixed
+        ? (tab: 'mixed', anonymous: !loggedIn)
+        : (
+            tab: tab == 'mixed' ? 'follow' : tab,
+            anonymous: tab == 'mixed' || !loggedIn
+          );
+
+String dynamicFeedCacheVariant(({String tab, bool anonymous}) source) =>
+    '${source.anonymous ? 'anonymous' : 'account'}_${source.tab}_v1';
 
 /// 动态广场(本站动态 / 关注动态)
 class DynamicPage extends StatefulWidget {
@@ -109,6 +115,7 @@ class _DynamicPageState extends State<DynamicPage> {
   void initState() {
     super.initState();
     LKClient.sessionRev.addListener(_onSessionChanged);
+    LKStore.dynamicFeedMode.addListener(_onFeedSourceChanged);
     _loadGlobalMedals();
     _loadEmojis();
     _loadUnread();
@@ -118,8 +125,13 @@ class _DynamicPageState extends State<DynamicPage> {
   @override
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionChanged);
+    LKStore.dynamicFeedMode.removeListener(_onFeedSourceChanged);
     _topBarFrac.dispose();
     super.dispose();
+  }
+
+  void _onFeedSourceChanged() {
+    if (_feedTab == 'mixed') _onSessionChanged();
   }
 
   void _onSessionChanged() {
@@ -145,11 +157,12 @@ class _DynamicPageState extends State<DynamicPage> {
 
   String _dynamicCacheKey({int? uid, String? feedTab}) {
     final source = dynamicFeedSource(feedTab ?? _feedTab,
-        loggedIn: LKClient.shared.session.isLoggedIn);
+        loggedIn: LKClient.shared.session.isLoggedIn,
+        mode: LKStore.dynamicFeedMode.value);
     return LKStore.pageCacheKey(
       kind: 'dynamic_feed',
       uid: source.anonymous ? 0 : uid ?? LKClient.shared.session.uid,
-      variant: source.anonymous ? 'anonymous_follow_v1' : feedTab ?? _feedTab,
+      variant: dynamicFeedCacheVariant(source),
     );
   }
 
@@ -223,7 +236,8 @@ class _DynamicPageState extends State<DynamicPage> {
     final feedTab = _feedTab;
     final page = append ? _page + 1 : 1;
     final source = dynamicFeedSource(feedTab,
-        loggedIn: LKClient.shared.session.isLoggedIn);
+        loggedIn: LKClient.shared.session.isLoggedIn,
+        mode: LKStore.dynamicFeedMode.value);
     final previousCursor = _cursor;
     final cacheKey = _dynamicCacheKey();
     if (mounted) {
