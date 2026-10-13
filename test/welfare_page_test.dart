@@ -84,7 +84,7 @@ void main() {
   });
 
   testWidgets(
-      'task center has one dedicated treasure entry without eager treasure requests',
+      'task center excludes treasure boxes and never requests their endpoints',
       (tester) async {
     final paths = <String>[];
     const treasureTask = {
@@ -104,10 +104,27 @@ void main() {
     expect(WelfarePage.filterVisibleTasks([treasureTask]), isEmpty);
     await tester.pumpWidget(const MaterialApp(home: WelfarePage()));
     await tester.pumpAndSettle();
-    expect(find.text('每日开宝箱'), findsOneWidget);
+    expect(find.text('每日开宝箱'), findsNothing);
     expect(find.text('每日签到'), findsOneWidget);
     expect(paths.where((path) => path.contains('treasure')), isEmpty);
     expect(tester.takeException(), isNull);
+  });
+
+  test('treasure tasks cannot reappear as browse rewards', () {
+    expect(
+        WelfarePage.filterVisibleTasks([
+          {'task_id': 300007, 'task_key': 'browse_book', 'title': '浏览一个作品'},
+          {'task_id': 99, 'task_key': 'daily_treasure_box', 'title': '浏览一个作品'},
+          {'task_id': 98, 'task_key': 'browse_book', 'title': '浏览作品开启宝箱'},
+          {
+            'task_id': 97,
+            'task_key': 'browse_book',
+            'task_type': 'treasure_box',
+            'title': '浏览一个作品'
+          },
+          {'task_id': 201, 'task_key': 'browse_work', 'title': '浏览一个作品'},
+        ]).map((task) => task['task_id']),
+        [201]);
   });
 
   group('WelfarePage Task Detection Unit Tests', () {
