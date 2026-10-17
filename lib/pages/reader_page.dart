@@ -286,6 +286,17 @@ class _ReaderPageState extends State<ReaderPage>
   List<double> _blockProgressOffsets = const [0, 1];
   ReaderScrollLayoutIndex? _scrollLayoutIndex;
   String _scrollLayoutIndexKey = '';
+  // Only retain the current fallback measurement, never a whole chapter of
+  // native paragraphs. Its key includes content, typography and viewport.
+  TextPainter? _anchorPainter;
+  String? _anchorPainterKey;
+
+  void _clearAnchorPainter() {
+    _anchorPainter?.dispose();
+    _anchorPainter = null;
+    _anchorPainterKey = null;
+  }
+
   final ReadingPositionController _positionController =
       ReadingPositionController();
   int _positionRestoreSerial = 0;
@@ -597,6 +608,7 @@ class _ReaderPageState extends State<ReaderPage>
     }
 
     _scrollLayoutIndexKey = key;
+    _clearAnchorPainter();
     _scrollLayoutIndex = _scrollLayouts.resolve(key, () {
       final contentWidth = _scrollContentWidth(viewportWidth);
       final extents = <double>[];
@@ -917,9 +929,14 @@ class _ReaderPageState extends State<ReaderPage>
     if (textRender != null && textRender.attached && textRender.hasSize) {
       offset = textRender.getPositionForOffset(Offset(0.5, localY)).offset;
     } else {
-      final painter = _scrollTextPainter(index);
+      final key = '$_scrollLayoutIndexKey|$index';
+      if (_anchorPainterKey != key || _anchorPainter == null) {
+        _clearAnchorPainter();
+        _anchorPainter = _scrollTextPainter(index);
+        _anchorPainterKey = key;
+      }
+      final painter = _anchorPainter!;
       offset = painter.getPositionForOffset(Offset(0.5, localY)).offset;
-      painter.dispose();
     }
     return ReadingPosition.text(
       blockIndex: index,
@@ -1115,6 +1132,7 @@ class _ReaderPageState extends State<ReaderPage>
     _positionPersistTimer?.cancel();
     _savePos();
     _sc.dispose();
+    _clearAnchorPainter();
     _pageController.dispose();
     _progressN.dispose();
     _positionController.dispose();

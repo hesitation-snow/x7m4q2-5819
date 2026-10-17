@@ -54,6 +54,16 @@ void main() {
           sheet.onFontSizeChanged!(24);
           sheet.onFontSizeChanged!(25);
           await tester.pumpAndSettle();
+          for (final weight in ReaderFontWeight.values) {
+            sheet.onPreviewChange(
+                sheet.initialTypography.copyWith(weight: weight));
+            await tester.pumpAndSettle();
+            await tester.pump(const Duration(milliseconds: 600));
+            final afterWeight = await ReaderPrefs.readPosition(317815);
+            expect(afterWeight!.blockIndex, closeTo(before.blockIndex, 1),
+                reason: 'weight=$weight platform=$platform paged=$paged');
+            expect(tester.takeException(), isNull);
+          }
           sheet.onPreviewChange(sheet.initialTypography.copyWith(
               lineHeight: 1.3,
               paragraphSpacing: 8,
