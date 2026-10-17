@@ -78,8 +78,6 @@ class ReaderThemePicker extends StatelessWidget {
               button: true,
               selected: active,
               label: label,
-              excludeSemantics: true,
-              onTap: () => onSelected(value),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
                 onTap: () => onSelected(value),

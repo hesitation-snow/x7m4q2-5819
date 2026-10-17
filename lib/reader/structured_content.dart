@@ -239,8 +239,7 @@ class StructuredBlock {
               backgroundColor: backgroundColor,
             );
             final fontSize = style.fontSize ?? baseStyle.fontSize ?? 16.0;
-            final annotationColor =
-                style.color ?? baseStyle.color ?? Colors.black;
+            final annotationColor = style.color ?? baseStyle.color ?? Colors.black;
             result.add(StructuredRubyAnnotation(
               start: offset,
               end: offset + baseText.length,
@@ -471,8 +470,7 @@ class StructuredBlock {
     }
 
     if (runs.isEmpty) {
-      return withReaderIndent(
-          TextSpan(text: text, style: blockStyle), baseStyle);
+      return withReaderIndent(TextSpan(text: text, style: blockStyle), baseStyle);
     }
 
     final spans = <InlineSpan>[];
@@ -734,7 +732,9 @@ Offset? _verticalAnnotationPosition({
   ui.TextBox? precedingBox;
   if (annotation.alignment == StructuredVerticalAlignment.superscript &&
       annotation.start > 0 &&
-      paragraph.getLineBoundary(TextPosition(offset: annotation.start)).start <
+      paragraph
+              .getLineBoundary(TextPosition(offset: annotation.start))
+              .start <
           annotation.start) {
     final preceding = paragraph.getBoxesForSelection(
       TextSelection(
@@ -845,8 +845,8 @@ class StructuredRubyText extends StatelessWidget {
       child: text,
     );
     if (onFootnoteTap == null ||
-        !verticalAnnotations
-            .any((annotation) => annotation.footnoteReference != null)) {
+        !verticalAnnotations.any((annotation) =>
+            annotation.footnoteReference != null)) {
       return paintedText;
     }
 
@@ -903,15 +903,9 @@ class StructuredRubyText extends StatelessWidget {
               .toDouble(),
           width: hitWidth,
           height: hitHeight,
-          child: Semantics(
-            label: '注释 $reference',
-            button: true,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: () => onFootnoteTap!(reference),
-            child: GestureDetector(
-              excludeFromSemantics: true,
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onFootnoteTap!(reference),
-            ),
           ),
         ));
       }
@@ -1132,12 +1126,10 @@ class StructuredContentParser {
   static const int maxTextBlockLength = 8000;
 
   static final RegExp _resPlaceholderRe = RegExp(r'\[res\][^[]+\[/res\]');
-  static final RegExp _imageWidthRe = RegExp(
-      r'(?:img-width|width)\s*=\s*["\x27]?(\d+)["\x27]?',
-      caseSensitive: false);
-  static final RegExp _imageHeightRe = RegExp(
-      r'(?:img-height|height)\s*=\s*["\x27]?(\d+)["\x27]?',
-      caseSensitive: false);
+  static final RegExp _imageWidthRe =
+      RegExp(r'(?:img-width|width)\s*=\s*["\x27]?(\d+)["\x27]?', caseSensitive: false);
+  static final RegExp _imageHeightRe =
+      RegExp(r'(?:img-height|height)\s*=\s*["\x27]?(\d+)["\x27]?', caseSensitive: false);
 
   /// 解析 HTML 章节内容为结构化正文块列表
   static List<StructuredBlock> parseHtml(String html,
@@ -1183,8 +1175,7 @@ class StructuredContentParser {
               remaining -= run.text.length;
               currentRuns.removeAt(0);
             } else {
-              currentRuns[0] =
-                  run.copyWith(text: run.text.substring(remaining));
+              currentRuns[0] = run.copyWith(text: run.text.substring(remaining));
               remaining = 0;
             }
           }
@@ -1196,8 +1187,7 @@ class StructuredContentParser {
           if (fullText.startsWith('\u3000') || fullText.startsWith(' ')) {
             var stripCount = 0;
             while (stripCount < fullText.length &&
-                (fullText[stripCount] == '\u3000' ||
-                    fullText[stripCount] == ' ')) {
+                (fullText[stripCount] == '\u3000' || fullText[stripCount] == ' ')) {
               stripCount++;
             }
             if (stripCount > 0) {
@@ -1244,8 +1234,7 @@ class StructuredContentParser {
         final raw = node.text;
         if (raw.isNotEmpty) {
           // 压缩并清理实体已在 DOM 解析完成后的纯文本中
-          final normalized =
-              raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+          final normalized = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
           final parts = normalized.split('\n');
           for (var i = 0; i < parts.length; i++) {
             if (i > 0) {
@@ -1315,9 +1304,7 @@ class StructuredContentParser {
         flushCurrentBlock();
         final src = (node.attributes['src'] ?? '').trim();
         final uri = Uri.tryParse(src);
-        if (uri != null &&
-            (uri.scheme == 'https' || uri.scheme == 'http') &&
-            uri.host.isNotEmpty) {
+        if (uri != null && (uri.scheme == 'https' || uri.scheme == 'http') && uri.host.isNotEmpty) {
           final wAttr = node.attributes['img-width'] ??
               node.attributes['width'] ??
               _imageWidthRe.firstMatch(node.outerHtml)?.group(1);
@@ -1605,9 +1592,10 @@ class StructuredContentParser {
               (val.endsWith('em') && !val.endsWith('rem')) ||
               val.endsWith('%');
           updated = updated.copyWith(
-            fontSizeMultiplier: isRelative
-                ? (updated.fontSizeMultiplier ?? 1.0) * multiplier
-                : multiplier,
+            fontSizeMultiplier:
+                isRelative
+                    ? (updated.fontSizeMultiplier ?? 1.0) * multiplier
+                    : multiplier,
           );
         }
       } else if (key == 'vertical-align') {
@@ -1758,8 +1746,7 @@ class StructuredContentParser {
         final g = int.tryParse(parts[1]);
         final b = int.tryParse(parts[2]);
         if (r != null && g != null && b != null) {
-          return Color.fromARGB(
-              255, r.clamp(0, 255), g.clamp(0, 255), b.clamp(0, 255));
+          return Color.fromARGB(255, r.clamp(0, 255), g.clamp(0, 255), b.clamp(0, 255));
         }
       }
     } else if (v.startsWith('rgba(') && v.endsWith(')')) {
@@ -1813,8 +1800,7 @@ class StructuredContentParser {
 
     var start = 0;
     while (start < block.text.length) {
-      var end =
-          (start + maxTextBlockLength).clamp(0, block.text.length).toInt();
+      var end = (start + maxTextBlockLength).clamp(0, block.text.length).toInt();
       if (end < block.text.length) {
         for (var i = end; i > start + (maxTextBlockLength ~/ 2); i--) {
           final code = block.text.codeUnitAt(i - 1);

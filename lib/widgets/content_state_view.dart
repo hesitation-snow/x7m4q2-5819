@@ -33,12 +33,9 @@ class ContentStateView extends StatelessWidget {
             else
               Icon(icon, size: 36, color: foreground.withValues(alpha: .7)),
             const SizedBox(height: 12),
-            Semantics(
-                liveRegion: true,
-                child: Text(message,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: foreground, fontSize: 14, height: 1.5))),
+            Text(message,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: foreground, fontSize: 14, height: 1.5)),
             if (extraAction != null) ...[
               const SizedBox(height: 12),
               extraAction!
