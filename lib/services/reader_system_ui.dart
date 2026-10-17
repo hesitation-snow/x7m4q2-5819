@@ -13,8 +13,14 @@ class ReaderSystemUi {
   void apply(bool hidden) {
     _hidden = hidden;
     if (_readers.isNotEmpty && identical(_readers.last, this)) {
-      SystemChrome.setEnabledSystemUIMode(
-          hidden ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge);
+      // Hide only the status bar. Hiding navigation too enters immersive mode,
+      // which can add an OEM edge-gesture confirmation on top of our back guard.
+      if (hidden) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+            overlays: [SystemUiOverlay.bottom]);
+      } else {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      }
     }
   }
 

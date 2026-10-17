@@ -5,12 +5,17 @@ import 'package:yomiru/services/reader_system_ui.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final modes = <String>[];
+  final overlays = <List<dynamic>>[];
   setUp(() {
     modes.clear();
+    overlays.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
       if (call.method == 'SystemChrome.setEnabledSystemUIMode') {
         modes.add(call.arguments as String);
+      } else if (call.method == 'SystemChrome.setEnabledSystemUIOverlays') {
+        modes.add('statusBarOnly');
+        overlays.add(call.arguments as List<dynamic>);
       }
       return null;
     });
@@ -24,7 +29,8 @@ void main() {
     final old = ReaderSystemUi()..apply(true);
     final next = ReaderSystemUi()..apply(true);
     old.dispose();
-    expect(modes, everyElement('SystemUiMode.immersiveSticky'));
+    expect(modes, everyElement('statusBarOnly'));
+    expect(overlays, everyElement(['SystemUiOverlay.bottom']));
     next.dispose();
     expect(modes.last, 'SystemUiMode.edgeToEdge');
   });
@@ -34,7 +40,7 @@ void main() {
     final next = ReaderSystemUi();
     old.apply(false);
     old.dispose();
-    expect(modes, ['SystemUiMode.immersiveSticky']);
+    expect(modes, ['statusBarOnly']);
     next.apply(true);
     next.apply(false);
     expect(modes.last, 'SystemUiMode.edgeToEdge');
@@ -45,7 +51,7 @@ void main() {
     final old = ReaderSystemUi()..apply(true);
     final next = ReaderSystemUi()..apply(false);
     next.dispose();
-    expect(modes.last, 'SystemUiMode.immersiveSticky');
+    expect(modes.last, 'statusBarOnly');
     old.dispose();
     expect(modes.last, 'SystemUiMode.edgeToEdge');
   });
