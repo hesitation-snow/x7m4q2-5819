@@ -30,6 +30,21 @@ enum ReaderTypographyPreset {
   const ReaderTypographyPreset(this.label);
 }
 
+enum ReaderFontWeight {
+  regular('常规', FontWeight.w400),
+  medium('适中', FontWeight.w500),
+  semibold('加粗', FontWeight.w600),
+  heavy('特粗', FontWeight.w700);
+
+  const ReaderFontWeight(this.label, this.fontWeight);
+  final String label;
+  final FontWeight fontWeight;
+
+  static ReaderFontWeight parse(Object? value, {bool legacyBold = false}) =>
+      values.firstWhere((w) => w.name == value,
+          orElse: () => legacyBold ? semibold : regular);
+}
+
 /// 统一排版配置模型
 @immutable
 class ReaderTypography {
@@ -52,7 +67,8 @@ class ReaderTypography {
   final bool justify;
 
   /// 正文加粗，默认关闭，不随间距预设变化。
-  final bool bold;
+  final ReaderFontWeight weight;
+  bool get bold => weight.index >= ReaderFontWeight.semibold.index;
 
   /// 是否启用自适应留白基线
   final bool autoMargin;
@@ -85,7 +101,8 @@ class ReaderTypography {
     this.wordSpacing = 0.0,
     this.firstLineIndentChars = 0.0,
     this.justify = false,
-    this.bold = false,
+    bool bold = false,
+    ReaderFontWeight? weight,
     this.autoMargin = true,
     this.marginHorizontal = 20.0,
     this.customMargins = false,
@@ -94,7 +111,8 @@ class ReaderTypography {
     this.marginLeft = 20.0,
     this.marginRight = 20.0,
     this.columnMode = ReaderColumnMode.auto,
-  });
+  }) : weight = weight ??
+            (bold ? ReaderFontWeight.semibold : ReaderFontWeight.regular);
 
   /// 标准预设（默认配置）
   factory ReaderTypography.standard() => const ReaderTypography();
@@ -180,6 +198,7 @@ class ReaderTypography {
     double? firstLineIndentChars,
     bool? justify,
     bool? bold,
+    ReaderFontWeight? weight,
     bool? autoMargin,
     double? marginHorizontal,
     bool? customMargins,
@@ -196,7 +215,10 @@ class ReaderTypography {
       wordSpacing: wordSpacing ?? this.wordSpacing,
       firstLineIndentChars: firstLineIndentChars ?? this.firstLineIndentChars,
       justify: justify ?? this.justify,
-      bold: bold ?? this.bold,
+      weight: weight ??
+          (bold == null
+              ? this.weight
+              : (bold ? ReaderFontWeight.semibold : ReaderFontWeight.regular)),
       autoMargin: autoMargin ?? this.autoMargin,
       marginHorizontal: marginHorizontal ?? this.marginHorizontal,
       customMargins: customMargins ?? this.customMargins,
@@ -259,6 +281,7 @@ class ReaderTypography {
         'first_line_indent': firstLineIndentChars,
         'justify': justify,
         'bold': bold,
+        'font_weight': weight.name,
         'auto_margin': autoMargin,
         'margin_horizontal': marginHorizontal,
         'custom_margins': customMargins,
@@ -278,7 +301,8 @@ class ReaderTypography {
       firstLineIndentChars:
           (json['first_line_indent'] as num?)?.toDouble() ?? 0.0,
       justify: json['justify'] == true,
-      bold: json['bold'] == true,
+      weight: ReaderFontWeight.parse(json['font_weight'],
+          legacyBold: json['bold'] == true),
       autoMargin: json['auto_margin'] != false,
       marginHorizontal: (json['margin_horizontal'] as num?)?.toDouble() ?? 20.0,
       customMargins: json['custom_margins'] == true,

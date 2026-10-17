@@ -25,7 +25,7 @@ void main() {
             widget is RichText && widget.text.toPlainText().contains('第0段'));
         expect(paragraph, findsWidgets);
         expect(tester.widget<RichText>(paragraph.first).text.style?.fontWeight,
-            FontWeight.bold);
+            FontWeight.w600);
       });
     });
   }

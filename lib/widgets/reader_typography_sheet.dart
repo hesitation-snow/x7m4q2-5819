@@ -107,12 +107,28 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildSwitchTile(
-                    title: '加粗',
-                    subtitle: '仅加粗阅读正文，不改变应用界面字体',
-                    value: _current.bold,
-                    onChanged: (v) => _commitChange(_current.copyWith(bold: v)),
-                    scheme: scheme,
+                  const Text('字重'),
+                  const SizedBox(height: 6),
+                  Text('仅调整阅读正文；部分字体的档位差异可能不明显',
+                      style: TextStyle(
+                          fontSize: 12, color: scheme.onSurfaceVariant)),
+                  const SizedBox(height: 10),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(children: [
+                      for (final weight in ReaderFontWeight.values)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ChoiceChip(
+                            label: Text(weight.label,
+                                style:
+                                    TextStyle(fontWeight: weight.fontWeight)),
+                            selected: _current.weight == weight,
+                            onSelected: (_) => _commitChange(
+                                _current.copyWith(weight: weight)),
+                          ),
+                        ),
+                    ]),
                   ),
                   const Divider(height: 16, thickness: 0.5),
                   // 字号大小
@@ -478,7 +494,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
     final textStyle = TextStyle(
       fontSize: _fontSize.clamp(13.0, 18.0),
       height: _current.lineHeight,
-      fontWeight: _current.bold ? FontWeight.bold : FontWeight.normal,
+      fontWeight: _current.weight.fontWeight,
       color: widget.textColor,
       letterSpacing: _current.letterSpacing,
       wordSpacing: _current.wordSpacing > 0 ? _current.wordSpacing : null,
@@ -635,7 +651,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                     ReaderTypographyPreset.loose => ReaderTypography.loose(),
                     _ => ReaderTypography.standard(),
                   };
-                  _commitChange(target.copyWith(bold: _current.bold));
+                  _commitChange(target.copyWith(weight: _current.weight));
                 },
                 child: Container(
                   height: 36,

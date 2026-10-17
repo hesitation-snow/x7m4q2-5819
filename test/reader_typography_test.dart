@@ -6,6 +6,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/store.dart';
 
 void main() {
+  test('all weight levels round trip and legacy settings migrate', () async {
+    SharedPreferences.setMockInitialValues({'r_bold': true});
+    expect((await ReaderPrefs.loadAll()).typography.weight,
+        ReaderFontWeight.semibold);
+    expect(ReaderTypography.fromJson(const {'bold': true}).weight,
+        ReaderFontWeight.semibold);
+    for (final weight in ReaderFontWeight.values) {
+      final typography = ReaderTypography(weight: weight);
+      expect(ReaderTypography.fromJson(typography.toJson()).weight, weight);
+      expect(typography.copyWith(lineHeight: 2).weight, weight);
+      await ReaderPrefs.saveTypography(typography);
+      expect((await ReaderPrefs.loadAll()).typography.weight, weight);
+    }
+    expect(ReaderFontWeight.parse('invalid'), ReaderFontWeight.regular);
+  });
   test('bold is backward compatible and persists with typography', () async {
     SharedPreferences.setMockInitialValues({});
     expect((await ReaderPrefs.loadAll()).typography.bold, isFalse);
