@@ -757,6 +757,8 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
               ),
               child: Slider(
+                semanticFormatterCallback: (v) =>
+                    '$label ${v.toStringAsFixed(divisions > 0 && (max - min) / divisions >= 1 ? 0 : 2)}${label == '字号大小' ? ' 点' : ''}',
                 value: clampedValue,
                 min: min,
                 max: max,

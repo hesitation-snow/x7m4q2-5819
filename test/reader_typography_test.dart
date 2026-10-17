@@ -169,6 +169,13 @@ void main() {
       ));
 
       // 常用设置检查
+      final fontSlider = tester.widgetList<Slider>(find.byType(Slider)).first;
+      expect(fontSlider.semanticFormatterCallback!(17), '字号大小 17 点');
+      for (final slider in tester.widgetList<Slider>(find.byType(Slider))) {
+        expect(slider.semanticFormatterCallback, isNotNull);
+        expect(slider.semanticFormatterCallback!(slider.value),
+            isNot(contains('%')));
+      }
       expect(find.text('排版预览'), findsOneWidget);
       await tester.tap(find.text('加粗'));
       await tester.pumpAndSettle();

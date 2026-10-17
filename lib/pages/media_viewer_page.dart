@@ -62,6 +62,7 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
         _transforms.putIfAbsent(index, TransformationController.new);
     Offset tap = Offset.zero;
     return GestureDetector(
+      excludeFromSemantics: true,
       onDoubleTapDown: (details) => tap = details.localPosition,
       onDoubleTap: () {
         final zoom = controller.value.getMaxScaleOnAxis() > 1.01;
@@ -78,32 +79,36 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
         maxScale: 6,
         onInteractionEnd: (_) => setState(
             () => _zoomed = controller.value.getMaxScaleOnAxis() > 1.01),
-        child: Center(
-            child: CachedNetworkImage(
-          key: ValueKey('$url:$_retry'),
-          fadeOutDuration: AppMotion.duration(context, 150),
-          fadeInDuration: AppMotion.duration(context, 150),
-          cacheManager: widget.cacheManager,
-          cacheKey: widget.cacheManager is IllustrationCacheManager
-              ? illustrationCacheKey(url)
-              : null,
-          imageUrl: url,
-          fit: BoxFit.contain,
-          progressIndicatorBuilder: (_, __, ___) => const ContentStateView(
-              message: '正在加载图片…', loading: true, color: Colors.white70),
-          errorWidget: (_, __, ___) => ContentStateView(
-              message: '图片加载失败',
-              color: Colors.white70,
-              icon: Icons.broken_image_outlined,
-              onRetry: () async {
-                await CachedNetworkImage.evictFromCache(url,
-                    cacheManager: widget.cacheManager,
-                    cacheKey: widget.cacheManager is IllustrationCacheManager
-                        ? illustrationCacheKey(url)
-                        : null);
-                if (mounted) setState(() => _retry++);
-              }),
-        )),
+        child: Semantics(
+            image: true,
+            label: '图片，第 ${index + 1} 张，共 ${_urls.length} 张',
+            child: Center(
+                child: CachedNetworkImage(
+              key: ValueKey('$url:$_retry'),
+              fadeOutDuration: AppMotion.duration(context, 150),
+              fadeInDuration: AppMotion.duration(context, 150),
+              cacheManager: widget.cacheManager,
+              cacheKey: widget.cacheManager is IllustrationCacheManager
+                  ? illustrationCacheKey(url)
+                  : null,
+              imageUrl: url,
+              fit: BoxFit.contain,
+              progressIndicatorBuilder: (_, __, ___) => const ContentStateView(
+                  message: '正在加载图片…', loading: true, color: Colors.white70),
+              errorWidget: (_, __, ___) => ContentStateView(
+                  message: '图片加载失败',
+                  color: Colors.white70,
+                  icon: Icons.broken_image_outlined,
+                  onRetry: () async {
+                    await CachedNetworkImage.evictFromCache(url,
+                        cacheManager: widget.cacheManager,
+                        cacheKey:
+                            widget.cacheManager is IllustrationCacheManager
+                                ? illustrationCacheKey(url)
+                                : null);
+                    if (mounted) setState(() => _retry++);
+                  }),
+            ))),
       ),
     );
   }
@@ -206,6 +211,45 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
               label: Text(_saving ? '保存中' : '保存到相册'),
             ),
           ),
+          if (MediaQuery.accessibleNavigationOf(context))
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: bottom + 80,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton(
+                    tooltip: '上一张图片',
+                    color: Colors.white,
+                    onPressed:
+                        _index > 0 ? () => _pages.jumpToPage(_index - 1) : null,
+                    icon: const Icon(Icons.chevron_left_rounded),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      final transform = _transforms.putIfAbsent(
+                          _index, TransformationController.new);
+                      final zoomed = transform.value.getMaxScaleOnAxis() > 1.01;
+                      transform.value = zoomed
+                          ? Matrix4.identity()
+                          : (Matrix4.identity()..scaleByDouble(2.5, 2.5, 1, 1));
+                      setState(() => _zoomed = !zoomed);
+                    },
+                    child: Text(_zoomed ? '恢复原始大小' : '放大图片',
+                        style: const TextStyle(color: Colors.white)),
+                  ),
+                  IconButton(
+                    tooltip: '下一张图片',
+                    color: Colors.white,
+                    onPressed: _index < _urls.length - 1
+                        ? () => _pages.jumpToPage(_index + 1)
+                        : null,
+                    icon: const Icon(Icons.chevron_right_rounded),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

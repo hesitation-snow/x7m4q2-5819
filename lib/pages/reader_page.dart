@@ -212,6 +212,7 @@ class _ReaderPageState extends State<ReaderPage>
   double? _lastTextScale;
   int _loadSerial = 0;
   bool _chrome = true;
+  bool get _accessibleReading => MediaQuery.accessibleNavigationOf(context);
   static const _exitConfirmationDuration = Duration(seconds: 2);
   Timer? _exitConfirmationTimer;
   ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _exitPrompt;
@@ -1380,6 +1381,12 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Assistive users must not have to discover an invisible tap zone to
+    // recover navigation controls after scrolling or changing pages.
+    if (_accessibleReading && !_chrome) {
+      _chrome = true;
+      _applyImmersive();
+    }
     final size = MediaQuery.sizeOf(context);
     final scale = MediaQuery.textScalerOf(context).scale(16);
     final changed = _lastViewport != null &&
@@ -1449,7 +1456,7 @@ class _ReaderPageState extends State<ReaderPage>
   Future<void> _turnByVolume(bool forward) async {
     if (_volumeTurnBusy || !_volumeKeys.isEligible()) return;
     _volumeTurnBusy = true;
-    if (_chrome) {
+    if (_chrome && !_accessibleReading) {
       setState(() => _chrome = false);
       _applyImmersive();
     }
@@ -2952,8 +2959,8 @@ class _ReaderPageState extends State<ReaderPage>
                   ),
                   child: Semantics(
                     label: '本章阅读进度',
-                    value: '$percent%',
                     child: Slider(
+                      semanticFormatterCallback: (v) => '${(v * 100).round()}%',
                       value: value,
                       onChanged: enabled ? (v) => _progressN.value = v : null,
                       onChangeEnd:
@@ -3236,6 +3243,7 @@ class _ReaderPageState extends State<ReaderPage>
       onNotification: (n) {
         if (n is ScrollUpdateNotification &&
             _chrome &&
+            !_accessibleReading &&
             !_restoringScrollAnchor) {
           setState(() => _chrome = false);
           _applyImmersive();
@@ -3350,7 +3358,7 @@ class _ReaderPageState extends State<ReaderPage>
                 ? const NeverScrollableScrollPhysics()
                 : const ClampingScrollPhysics(),
             onPageChanged: (i) {
-              if (_chrome) {
+              if (_chrome && !_accessibleReading) {
                 setState(() => _chrome = false);
                 _applyImmersive();
               }
@@ -4298,6 +4306,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _handleBodyTap(Offset position) {
+    if (_accessibleReading) return;
     final width = MediaQuery.of(context).size.width;
     if (_paged) {
       if (position.dx < width / 3) {
@@ -4355,6 +4364,7 @@ class _ReaderPageState extends State<ReaderPage>
         child: Scaffold(
           backgroundColor: _bgColor,
           body: GestureDetector(
+            excludeFromSemantics: true,
             behavior: HitTestBehavior.opaque,
             onTapUp: (d) {
               if (_textPointerHandled) {
@@ -4580,6 +4590,29 @@ class _ReaderPageState extends State<ReaderPage>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             _readerProgressBar(),
+                            if (_accessibleReading)
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  TextButton.icon(
+                                    onPressed: _loading || _loadError != null
+                                        ? null
+                                        : () => unawaited(_pageUp()),
+                                    icon:
+                                        const Icon(Icons.arrow_upward_rounded),
+                                    label: const Text('上一屏'),
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: _loading || _loadError != null
+                                        ? null
+                                        : () => unawaited(_pageDown()),
+                                    icon: const Icon(
+                                        Icons.arrow_downward_rounded),
+                                    label: const Text('下一屏'),
+                                  ),
+                                ],
+                              ),
                             Padding(
                               padding: const EdgeInsets.symmetric(vertical: 4),
                               child: Row(
