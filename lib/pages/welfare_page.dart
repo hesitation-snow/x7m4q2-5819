@@ -15,6 +15,7 @@ import '../api/lk_client.dart';
 import '../api/reading_session.dart';
 import '../services/reading_progress_reporter.dart';
 import '../services/daily_task_claims.dart';
+import '../services/treasure_task.dart';
 import '../services/deadline_countdown.dart';
 import '../widgets/common.dart';
 import 'book_detail_page.dart';
@@ -197,7 +198,8 @@ class _WelfarePageState extends State<WelfarePage>
     _sleepClock.value = 0;
     setState(() {
       _home = null;
-      _signDetail = _earnCoin = _sleep = const {};
+      _signDetail = _earnCoin = _sleep = _treasure = const {};
+      _selectedTreasureBoxIndex = 0;
       _tasks = const [];
       _action = '';
       _error = null;
@@ -298,7 +300,11 @@ class _WelfarePageState extends State<WelfarePage>
           return LKApi.welfareEarnCoinDetail();
         }()),
         _safeDetail(LKApi.welfareSleepDetail()),
-        _safeDetail(LKApi.welfareTreasureBoxDetail()),
+        _safeDetail(() async {
+          await readingSync;
+          if (!isCurrent()) return <String, dynamic>{};
+          return LKApi.welfareTreasureBoxDetail();
+        }()),
       ]);
       var tasks = _extractTasks(root);
       if (forceTaskList || _visibleTasks(tasks).length < 2) {
@@ -2758,9 +2764,7 @@ class _WelfarePageState extends State<WelfarePage>
 
   // --- 每日开宝箱相关逻辑 ---
 
-  Map<String, dynamic> get _treasureData =>
-      _map(_deepField(_treasure, const ['detail', 'treasure_box', 'data'])) ??
-      const <String, dynamic>{};
+  Map<String, dynamic> get _treasureData => TreasureTask.detail(_treasure);
 
   Map<String, dynamic> get _treasureCard =>
       _map(_deepField(_treasure, const ['card'])) ?? const <String, dynamic>{};
@@ -2818,20 +2822,15 @@ class _WelfarePageState extends State<WelfarePage>
 
   bool _isBoxClaimable(Map<String, dynamic> box) {
     if (_isBoxClaimed(box)) return false;
-    final status = _text(_deepField(box, const ['status', 'box_status'])).toLowerCase();
-    final action = _text(_deepField(box, const ['button_action', 'buttonAction'])).toLowerCase();
-    final completed = _int(_deepField(box, const ['prerequisite_completed', 'prerequisiteCompleted'])) == 1 ||
-        _flag(_deepField(box, const ['prerequisite_completed', 'prerequisiteCompleted']));
-    return status == 'claimable' || action == 'claim' || completed;
+    return TreasureTask.isClaimable(box);
   }
 
   String _boxPrerequisiteShort(Map<String, dynamic> box) {
-    final prereqType = _text(_deepField(box, const ['prerequisite_type', 'prerequisiteType'])).toLowerCase();
-    final prereqText = _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
+    final prereqType = TreasureTask.prerequisite(box);
     final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
-    if (prereqType == 'watch_ad' || prereqText.contains('广告')) return '免广告';
-    if (prereqType == 'read_book' || prereqText.contains('浏览') || prereqText.contains('阅读')) return '去浏览';
-    if (prereqType.contains('collect') || prereqType.contains('shelf') || prereqText.contains('收藏') || prereqText.contains('书架')) return '去收藏';
+    if (prereqType == 'watch_ad') return '免广告';
+    if (prereqType == 'read_book') return '去浏览';
+    if (prereqType.contains('collect') || prereqType.contains('shelf')) return '去收藏';
     if (unlockAt.isNotEmpty) {
       final parts = unlockAt.split(' ');
       if (parts.length > 1) {
@@ -2843,143 +2842,46 @@ class _WelfarePageState extends State<WelfarePage>
     return '待解锁';
   }
 
+  Future<void> _refreshTreasureStatus() async {
+    if (_action.isNotEmpty) return;
+    setState(() => _action = 'treasure-refresh');
+    try {
+      await _load();
+    } finally {
+      if (mounted) setState(() => _action = '');
+    }
+  }
+
   Future<void> _claimTreasureBox(int boxIndex) async {
     if (_action.isNotEmpty) return;
+    // A stale or prerequisite-only state must not issue a reward request.
+    final boxes = _treasureBoxes;
+    final eligible = boxes.asMap().entries.any((entry) =>
+        _boxIndex(entry.value, entry.key + 1) == boxIndex &&
+        _isBoxClaimable(entry.value));
+    if (!eligible) return;
+    final revision = LKClient.sessionRev.value;
     setState(() => _action = 'treasure:$boxIndex');
     try {
       final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
-      if (!mounted) return;
+      if (!mounted || revision != LKClient.sessionRev.value) return;
       final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
           ? _int(_deepField(claimRes, const ['reward', 'coin']))
           : _int(_deepField(claimRes, const ['reward_coin']));
       showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
       await _load();
     } catch (e) {
-      if (mounted) {
-        showLkError(context, _errorText(e));
+      if (mounted && revision == LKClient.sessionRev.value) {
+        showLkError(context, e is LKException && e.code == 6
+            ? '宝箱未开启（code 6）。返回信息/客户端提示：${e.message}。'
+                '领取条件尚未确认，请按页面要求操作后刷新；具体判定规则待核实。'
+            : _errorText(e));
         await _load();
       }
     } finally {
-      if (mounted) setState(() => _action = '');
-    }
-  }
-
-  Future<void> _claimTreasureWithRead(int boxIndex, Map<String, dynamic> box) async {
-    if (_action.isNotEmpty) return;
-    setState(() => _action = 'treasure:$boxIndex');
-    try {
-      final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget'])) ?? const {};
-      final targetBook = _map(_deepField(box, const ['target_book', 'targetBook'])) ?? const {};
-      final bookId = _int(_deepField(readerTarget, const ['book_id', 'bookId'])) > 0
-          ? _int(_deepField(readerTarget, const ['book_id', 'bookId']))
-          : _int(_deepField(targetBook, const ['book_id', 'bookId']));
-      final volumeId = _int(_deepField(readerTarget, const ['volume_id', 'volumeId']));
-      final chapterId = _int(_deepField(readerTarget, const ['chapter_id', 'chapterId']));
-
-      // 确保云端已同步最新历史记录
-      if (bookId > 0) {
-        try {
-          await LKApi.saveHistory(bookId, volumeId, chapterId > 0 ? chapterId : 1, 100, readFinished: 1);
-        } catch (_) {}
+      if (mounted && revision == LKClient.sessionRev.value) {
+        setState(() => _action = '');
       }
-      if (!mounted) return;
-
-      // 请求开启宝箱
-      final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
-      if (!mounted) return;
-      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
-          ? _int(_deepField(claimRes, const ['reward', 'coin']))
-          : _int(_deepField(claimRes, const ['reward_coin']));
-      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
-      await _load();
-    } catch (e) {
-      if (mounted) {
-        if (e is LKException && e.code == 6) {
-          showDialog<void>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('阅读条件提示'),
-              content: const Text('服务端提示该宝箱的阅读进度尚未达标。\n请点击【去浏览】进入作品，在阅读器中停留翻阅片刻后返回开启。'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('我知道了'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _openReaderForTreasure(box);
-                  },
-                  child: const Text('进入阅读'),
-                ),
-              ],
-            ),
-          );
-        } else {
-          showLkError(context, _errorText(e));
-        }
-        await _load();
-      }
-    } finally {
-      if (mounted) setState(() => _action = '');
-    }
-  }
-
-  Future<void> _claimTreasureWithCollect(int boxIndex, Map<String, dynamic> box) async {
-    if (_action.isNotEmpty) return;
-    setState(() => _action = 'treasure:$boxIndex');
-    try {
-      final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget'])) ?? const {};
-      final targetBook = _map(_deepField(box, const ['target_book', 'targetBook'])) ?? const {};
-      final bookId = _int(_deepField(readerTarget, const ['book_id', 'bookId'])) > 0
-          ? _int(_deepField(readerTarget, const ['book_id', 'bookId']))
-          : _int(_deepField(targetBook, const ['book_id', 'bookId']));
-
-      // 如果有明确书籍，自动执行一次加入书架同步
-      if (bookId > 0) {
-        try {
-          await LKApi.toggleShelf(bookId, true);
-        } catch (_) {}
-      }
-      if (!mounted) return;
-
-      final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
-      if (!mounted) return;
-      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
-          ? _int(_deepField(claimRes, const ['reward', 'coin']))
-          : _int(_deepField(claimRes, const ['reward_coin']));
-      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
-      await _load();
-    } catch (e) {
-      if (mounted) {
-        if (e is LKException && e.code == 6) {
-          showDialog<void>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('收藏条件提示'),
-              content: const Text('服务端提示尚未满足收藏条件。\n请先点击【去收藏】将喜欢的作品加入书架，返回后即可开启宝箱。'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('我知道了'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _openCollectForTreasure(box);
-                  },
-                  child: const Text('去书架/选书'),
-                ),
-              ],
-            ),
-          );
-        } else {
-          showLkError(context, _errorText(e));
-        }
-        await _load();
-      }
-    } finally {
-      if (mounted) setState(() => _action = '');
     }
   }
 
@@ -3009,80 +2911,45 @@ class _WelfarePageState extends State<WelfarePage>
     }
   }
 
-  Future<void> _openReaderForTreasure(Map<String, dynamic> box) async {
-    final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget'])) ?? const {};
-    final targetBook = _map(_deepField(box, const ['target_book', 'targetBook'])) ?? const {};
-    final bookId = _int(_deepField(readerTarget, const ['book_id', 'bookId'])) > 0
-        ? _int(_deepField(readerTarget, const ['book_id', 'bookId']))
-        : _int(_deepField(targetBook, const ['book_id', 'bookId']));
-    final volumeId = _int(_deepField(readerTarget, const ['volume_id', 'volumeId']));
-    final chapterId = _int(_deepField(readerTarget, const ['chapter_id', 'chapterId']));
-    final title = _text(_deepField(readerTarget, const ['title'])).isNotEmpty
-        ? _text(_deepField(readerTarget, const ['title']))
-        : _text(_deepField(targetBook, const ['title']));
+  Future<void> _openReaderForTreasure(Map<String, dynamic> box, int boxIndex) =>
+      _openTreasureTarget(box, boxIndex, read: true);
 
-    if (bookId > 0) {
-      // 启动阅读前同步一次历史记录
-      try {
-        await LKApi.saveHistory(
-          bookId,
-          volumeId,
-          chapterId > 0 ? chapterId : 1,
-          10,
-        );
-      } catch (_) {}
-      if (!mounted) return;
+  Future<void> _openCollectForTreasure(Map<String, dynamic> box, int boxIndex) =>
+      _openTreasureTarget(box, boxIndex, read: false);
 
-      if (chapterId > 0 && volumeId > 0) {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ReaderPage(
-              bookId: bookId,
-              bookTitle: title.isNotEmpty ? title : '小说阅读',
-              chapterId: chapterId,
-              chapterTitle: '',
-              volumeId: volumeId,
-            ),
-          ),
-        );
-      } else {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => BookDetailPage(bookId: bookId),
-          ),
-        );
+  Future<void> _openTreasureTarget(Map<String, dynamic> box, int boxIndex,
+      {required bool read}) async {
+    if (_action.isNotEmpty) return;
+    final target = TreasureTask.target(box);
+    final revision = LKClient.sessionRev.value;
+    setState(() => _action = 'treasure-route:$boxIndex');
+    try {
+      // Provenance stays local until the official attribution protocol is known.
+      // Navigation itself neither writes history nor adds a book nor claims coins.
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          settings: RouteSettings(arguments:
+              TreasureTask.routeContext(_treasure, box, boxIndex)),
+          builder: (_) => target.bookId <= 0
+              ? const SearchPage()
+              : read && target.chapterId > 0 && target.volumeId > 0
+                  ? ReaderPage(
+                      bookId: target.bookId,
+                      bookTitle: target.title.isNotEmpty ? target.title : '小说阅读',
+                      chapterId: target.chapterId,
+                      chapterTitle: '',
+                      volumeId: target.volumeId,
+                    )
+                  : BookDetailPage(bookId: target.bookId),
+        ),
+      );
+      if (mounted && revision == LKClient.sessionRev.value) await _load();
+    } finally {
+      if (mounted && revision == LKClient.sessionRev.value) {
+        setState(() => _action = '');
       }
-      if (mounted) _load();
-    } else {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const SearchPage()),
-      );
-      if (mounted) _load();
     }
-  }
-
-  Future<void> _openCollectForTreasure(Map<String, dynamic> box) async {
-    final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget'])) ?? const {};
-    final targetBook = _map(_deepField(box, const ['target_book', 'targetBook'])) ?? const {};
-    final bookId = _int(_deepField(readerTarget, const ['book_id', 'bookId'])) > 0
-        ? _int(_deepField(readerTarget, const ['book_id', 'bookId']))
-        : _int(_deepField(targetBook, const ['book_id', 'bookId']));
-
-    if (bookId > 0) {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => BookDetailPage(bookId: bookId)),
-      );
-    } else {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const SearchPage()),
-      );
-    }
-    if (mounted) _load();
   }
 
   Widget _buildTreasureCard() {
@@ -3220,11 +3087,10 @@ class _WelfarePageState extends State<WelfarePage>
     final reward = _boxReward(box);
     final boxIdx = _boxIndex(box, index);
 
-    final prereqType = _text(_deepField(box, const ['prerequisite_type', 'prerequisiteType'])).toLowerCase();
-    final prereqText = _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
-    final isReadBook = prereqType == 'read_book' || prereqText.contains('浏览') || prereqText.contains('阅读');
-    final isCollectBook = prereqType.contains('collect') || prereqType.contains('shelf') || prereqText.contains('收藏') || prereqText.contains('书架');
-    final isWatchAd = prereqType == 'watch_ad' || prereqText.contains('广告');
+    final prereqType = TreasureTask.prerequisite(box);
+    final isReadBook = prereqType == 'read_book';
+    final isCollectBook = prereqType.contains('collect') || prereqType.contains('shelf');
+    final isWatchAd = prereqType == 'watch_ad';
 
     final Color bgColor;
     final Color borderColor;
@@ -3329,19 +3195,14 @@ class _WelfarePageState extends State<WelfarePage>
     final scheme = Theme.of(context).colorScheme;
     final claimed = _isBoxClaimed(box);
     final claimable = _isBoxClaimable(box);
-    final prereqType = _text(_deepField(box, const ['prerequisite_type', 'prerequisiteType'])).toLowerCase();
+    final prereqType = TreasureTask.prerequisite(box);
     final prereqText = _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
     final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
     final isActing = _action == 'treasure:$boxIdx' || _action == 'treasure-ad:$boxIdx';
 
-    final isReadBook = prereqType == 'read_book' ||
-        prereqText.contains('浏览') ||
-        prereqText.contains('阅读');
-    final isCollectBook = prereqType.contains('collect') ||
-        prereqType.contains('shelf') ||
-        prereqText.contains('收藏') ||
-        prereqText.contains('书架');
-    final isWatchAd = prereqType == 'watch_ad' || prereqText.contains('广告');
+    final isReadBook = prereqType == 'read_book';
+    final isCollectBook = prereqType.contains('collect') || prereqType.contains('shelf');
+    final isWatchAd = prereqType == 'watch_ad';
 
     String promptText = '';
     if (claimed) {
@@ -3448,7 +3309,7 @@ class _WelfarePageState extends State<WelfarePage>
                   ),
                   onPressed: isActing || _action.isNotEmpty
                       ? null
-                      : () => _openReaderForTreasure(box),
+                      : () => _openReaderForTreasure(box, boxIdx),
                   child: const Text('去浏览'),
                 ),
                 const SizedBox(width: 6),
@@ -3459,8 +3320,8 @@ class _WelfarePageState extends State<WelfarePage>
                   ),
                   onPressed: isActing || _action.isNotEmpty
                       ? null
-                      : () => _claimTreasureWithRead(boxIdx, box),
-                  child: Text(isActing ? '开启中' : '开宝箱'),
+                      : _refreshTreasureStatus,
+                  child: const Text('刷新状态'),
                 ),
               ],
             )
@@ -3475,7 +3336,7 @@ class _WelfarePageState extends State<WelfarePage>
                   ),
                   onPressed: isActing || _action.isNotEmpty
                       ? null
-                      : () => _openCollectForTreasure(box),
+                      : () => _openCollectForTreasure(box, boxIdx),
                   child: const Text('去收藏'),
                 ),
                 const SizedBox(width: 6),
@@ -3486,8 +3347,8 @@ class _WelfarePageState extends State<WelfarePage>
                   ),
                   onPressed: isActing || _action.isNotEmpty
                       ? null
-                      : () => _claimTreasureWithCollect(boxIdx, box),
-                  child: Text(isActing ? '开启中' : '开宝箱'),
+                      : _refreshTreasureStatus,
+                  child: const Text('刷新状态'),
                 ),
               ],
             )
