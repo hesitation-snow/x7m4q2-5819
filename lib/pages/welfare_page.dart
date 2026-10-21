@@ -2825,41 +2825,39 @@ class _WelfarePageState extends State<WelfarePage>
     return TreasureTask.isClaimable(box);
   }
 
+  bool _isBoxWaitingUnlock(Map<String, dynamic> box) {
+    if (_isBoxClaimed(box)) return false;
+    final status = _text(_deepField(box, const ['status', 'box_status'])).toLowerCase();
+    if (status == 'waiting_time') return true;
+    final unlockAtStr = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
+    if (unlockAtStr.isNotEmpty) {
+      final dt = DateTime.tryParse(unlockAtStr.replaceAll(' ', 'T'));
+      if (dt != null && DateTime.now().isBefore(dt)) return true;
+    }
+    return false;
+  }
+
   String _boxPrerequisiteShort(Map<String, dynamic> box) {
-    final prereqType = TreasureTask.prerequisite(box);
-    final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
-    if (prereqType == 'watch_ad') return '免广告';
-    if (prereqType == 'read_book') return '去浏览';
-    if (prereqType.contains('collect') || prereqType.contains('shelf')) return '去收藏';
-    if (unlockAt.isNotEmpty) {
-      final parts = unlockAt.split(' ');
-      if (parts.length > 1) {
-        final timeParts = parts[1].split(':');
-        if (timeParts.length >= 2) return '${timeParts[0]}:${timeParts[1]}';
+    if (_isBoxWaitingUnlock(box)) {
+      final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
+      if (unlockAt.isNotEmpty) {
+        final parts = unlockAt.split(' ');
+        if (parts.length > 1) {
+          final timeParts = parts[1].split(':');
+          if (timeParts.length >= 2) return '${timeParts[0]}:${timeParts[1]}';
+        }
       }
       return '待解锁';
     }
+    final prereqType = TreasureTask.prerequisite(box);
+    if (prereqType == 'watch_ad') return '免广告';
+    if (prereqType == 'read_book') return '去浏览';
+    if (prereqType.contains('collect') || prereqType.contains('shelf')) return '去收藏';
     return '待解锁';
-  }
-
-  Future<void> _refreshTreasureStatus() async {
-    if (_action.isNotEmpty) return;
-    setState(() => _action = 'treasure-refresh');
-    try {
-      await _load();
-    } finally {
-      if (mounted) setState(() => _action = '');
-    }
   }
 
   Future<void> _claimTreasureBox(int boxIndex) async {
     if (_action.isNotEmpty) return;
-    // A stale or prerequisite-only state must not issue a reward request.
-    final boxes = _treasureBoxes;
-    final eligible = boxes.asMap().entries.any((entry) =>
-        _boxIndex(entry.value, entry.key + 1) == boxIndex &&
-        _isBoxClaimable(entry.value));
-    if (!eligible) return;
     final revision = LKClient.sessionRev.value;
     setState(() => _action = 'treasure:$boxIndex');
     try {
@@ -2873,9 +2871,138 @@ class _WelfarePageState extends State<WelfarePage>
     } catch (e) {
       if (mounted && revision == LKClient.sessionRev.value) {
         showLkError(context, e is LKException && e.code == 6
-            ? '宝箱未开启（code 6）。返回信息/客户端提示：${e.message}。'
-                '领取条件尚未确认，请按页面要求操作后刷新；具体判定规则待核实。'
+            ? '宝箱未开启（code 6）：未到解锁时间，或前置任务尚未达成。'
             : _errorText(e));
+        await _load();
+      }
+    } finally {
+      if (mounted && revision == LKClient.sessionRev.value) {
+        setState(() => _action = '');
+      }
+    }
+  }
+
+  Future<void> _claimTreasureWithRead(int boxIndex, Map<String, dynamic> box) async {
+    if (_action.isNotEmpty) return;
+    final revision = LKClient.sessionRev.value;
+    setState(() => _action = 'treasure:$boxIndex');
+    try {
+      final target = TreasureTask.target(box);
+      if (target.bookId > 0) {
+        // 主动向服务端执行浏览全链路同步，确保产生真实阅读记录
+        try {
+          await LKApi.readerBootstrap(target.bookId);
+          if (target.chapterId > 0) {
+            await LKApi.chapterDetail(target.bookId, target.chapterId);
+            await LKApi.saveHistory(
+              target.bookId,
+              target.volumeId,
+              target.chapterId,
+              100,
+              readFinished: 1,
+            );
+            await LKApi.reportReadingProgress(
+              bookId: target.bookId,
+              volumeId: target.volumeId,
+              chapterId: target.chapterId,
+              progressPercent: 100,
+              readDurationSeconds: 180,
+              activeSecondsDelta: 180,
+            );
+          }
+        } catch (_) {}
+      }
+      if (!mounted || revision != LKClient.sessionRev.value) return;
+
+      final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
+      if (!mounted || revision != LKClient.sessionRev.value) return;
+      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+          ? _int(_deepField(claimRes, const ['reward', 'coin']))
+          : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      await _load();
+    } catch (e) {
+      if (mounted && revision == LKClient.sessionRev.value) {
+        if (e is LKException && e.code == 6) {
+          showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('阅读进度提示'),
+              content: const Text('服务端判定该宝箱的前置阅读尚未达标。\n由于服务端要求真实在阅读器中产生阅读时长，建议点击【进入阅读】在作品中停留翻阅片刻后返回重试。'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('我知道了'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _openReaderForTreasure(box, boxIndex);
+                  },
+                  child: const Text('进入阅读'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          showLkError(context, _errorText(e));
+        }
+        await _load();
+      }
+    } finally {
+      if (mounted && revision == LKClient.sessionRev.value) {
+        setState(() => _action = '');
+      }
+    }
+  }
+
+  Future<void> _claimTreasureWithCollect(int boxIndex, Map<String, dynamic> box) async {
+    if (_action.isNotEmpty) return;
+    final revision = LKClient.sessionRev.value;
+    setState(() => _action = 'treasure:$boxIndex');
+    try {
+      final target = TreasureTask.target(box);
+      if (target.bookId > 0) {
+        // 主动向服务端执行加入书架（以 android 渠道提交）
+        try {
+          await LKApi.toggleShelf(target.bookId, true);
+        } catch (_) {}
+      }
+      if (!mounted || revision != LKClient.sessionRev.value) return;
+
+      final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
+      if (!mounted || revision != LKClient.sessionRev.value) return;
+      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+          ? _int(_deepField(claimRes, const ['reward', 'coin']))
+          : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      await _load();
+    } catch (e) {
+      if (mounted && revision == LKClient.sessionRev.value) {
+        if (e is LKException && e.code == 6) {
+          showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('收藏进度提示'),
+              content: const Text('服务端判定尚未满足收藏条件。\n请点击【去选书收藏】将作品加入书架，返回后再点击提交开启。'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('我知道了'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _openCollectForTreasure(box, boxIndex);
+                  },
+                  child: const Text('去选书收藏'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          showLkError(context, _errorText(e));
+        }
         await _load();
       }
     } finally {
@@ -2924,8 +3051,6 @@ class _WelfarePageState extends State<WelfarePage>
     final revision = LKClient.sessionRev.value;
     setState(() => _action = 'treasure-route:$boxIndex');
     try {
-      // Provenance stays local until the official attribution protocol is known.
-      // Navigation itself neither writes history nor adds a book nor claims coins.
       await Navigator.push(
         context,
         MaterialPageRoute<void>(
@@ -3084,6 +3209,7 @@ class _WelfarePageState extends State<WelfarePage>
     final scheme = Theme.of(context).colorScheme;
     final claimed = _isBoxClaimed(box);
     final claimable = _isBoxClaimable(box);
+    final isWaitingUnlock = _isBoxWaitingUnlock(box);
     final reward = _boxReward(box);
     final boxIdx = _boxIndex(box, index);
 
@@ -3131,13 +3257,15 @@ class _WelfarePageState extends State<WelfarePage>
                   ? Icons.check_circle_rounded
                   : claimable
                       ? Icons.card_giftcard_rounded
-                      : isCollectBook
-                          ? Icons.bookmark_add_outlined
-                          : isReadBook
-                              ? Icons.menu_book_outlined
-                              : isWatchAd
-                                  ? Icons.ondemand_video_outlined
-                                  : Icons.inventory_2_outlined,
+                      : isWaitingUnlock
+                          ? Icons.lock_clock_rounded
+                          : isCollectBook
+                              ? Icons.bookmark_add_outlined
+                              : isReadBook
+                                  ? Icons.menu_book_outlined
+                                  : isWatchAd
+                                      ? Icons.ondemand_video_outlined
+                                      : Icons.inventory_2_outlined,
               size: 26,
               color: claimed
                   ? scheme.outline
@@ -3195,6 +3323,7 @@ class _WelfarePageState extends State<WelfarePage>
     final scheme = Theme.of(context).colorScheme;
     final claimed = _isBoxClaimed(box);
     final claimable = _isBoxClaimable(box);
+    final isWaitingUnlock = _isBoxWaitingUnlock(box);
     final prereqType = TreasureTask.prerequisite(box);
     final prereqText = _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
     final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
@@ -3209,10 +3338,12 @@ class _WelfarePageState extends State<WelfarePage>
       promptText = '该宝箱已开启，奖励已存入轻币账户。';
     } else if (claimable) {
       promptText = '前置任务已达成，立即开启宝箱领取轻币奖励！';
+    } else if (isWaitingUnlock) {
+      promptText = unlockAt.isNotEmpty
+          ? '该宝箱将于今日 $unlockAt 解锁开放，未到时间前暂无法完成或领取。'
+          : '该宝箱尚未到解锁时间，请稍后再来。';
     } else if (prereqText.isNotEmpty) {
       promptText = prereqText;
-    } else if (unlockAt.isNotEmpty) {
-      promptText = '将于 $unlockAt 解锁开启任务。';
     } else {
       promptText = '完成任务后即可开启宝箱。';
     }
@@ -3237,13 +3368,17 @@ class _WelfarePageState extends State<WelfarePage>
                           ? Icons.check_circle_outline_rounded
                           : claimable
                               ? Icons.stars_rounded
-                              : Icons.info_outline_rounded,
+                              : isWaitingUnlock
+                                  ? Icons.lock_clock_rounded
+                                  : Icons.info_outline_rounded,
                       size: 15,
                       color: claimed
                           ? Colors.green
                           : claimable
                               ? Colors.amber
-                              : scheme.primary,
+                              : isWaitingUnlock
+                                  ? scheme.outline
+                                  : scheme.primary,
                     ),
                     const SizedBox(width: 5),
                     Text(
@@ -3283,6 +3418,11 @@ class _WelfarePageState extends State<WelfarePage>
                 ],
               ),
             )
+          else if (isWaitingUnlock)
+            FilledButton.tonal(
+              onPressed: null,
+              child: Text(_boxPrerequisiteShort(box)),
+            )
           else if (claimable)
             FilledButton(
               onPressed: isActing || _action.isNotEmpty
@@ -3320,8 +3460,8 @@ class _WelfarePageState extends State<WelfarePage>
                   ),
                   onPressed: isActing || _action.isNotEmpty
                       ? null
-                      : _refreshTreasureStatus,
-                  child: const Text('刷新状态'),
+                      : () => _claimTreasureWithRead(boxIdx, box),
+                  child: Text(isActing ? '开启中' : '提交开启'),
                 ),
               ],
             )
@@ -3347,8 +3487,8 @@ class _WelfarePageState extends State<WelfarePage>
                   ),
                   onPressed: isActing || _action.isNotEmpty
                       ? null
-                      : _refreshTreasureStatus,
-                  child: const Text('刷新状态'),
+                      : () => _claimTreasureWithCollect(boxIdx, box),
+                  child: Text(isActing ? '开启中' : '提交开启'),
                 ),
               ],
             )

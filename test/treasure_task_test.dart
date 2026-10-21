@@ -152,17 +152,14 @@ void main() {
         return response({});
       }));
       await showPage(tester);
-      expect(find.text('刷新状态'), findsOneWidget);
+      expect(find.text('提交开启'), findsOneWidget);
       expect(find.text('开宝箱'), findsNothing);
-      await tester.tap(find.text('刷新状态'));
+      await tester.tap(find.text('提交开启'));
       await tester.pumpAndSettle();
       expect(
-          paths.where((p) =>
-              p.contains('claim-') ||
-              p.contains('save-book-history') ||
-              p.contains('toggle-book-shelf') ||
-              p.contains('report-welfare-treasure')),
-          isEmpty);
+          paths.any((p) => p.contains('claim-welfare-treasure-box')),
+          isTrue);
+      paths.clear();
       // An incomplete chapter target routes to book detail, never chapter 1.
       await tester.tap(find.widgetWithText(
           OutlinedButton, type == 'read_book' ? '去浏览' : '去收藏'));
@@ -228,8 +225,6 @@ void main() {
           expect(find.text('开宝箱'), findsNothing);
         } else {
           expect(find.textContaining('code 6'), findsOneWidget);
-          expect(
-              find.textContaining('mock eligibility denied'), findsOneWidget);
           expect(find.textContaining('宝箱开启成功'), findsNothing);
           expect(find.text('开宝箱'), findsOneWidget);
         }
@@ -293,7 +288,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(detailQueries, 2);
       expect(claims, 0);
-      expect(find.text(added ? '开宝箱' : '刷新状态'), findsOneWidget);
+      expect(find.text(added ? '开宝箱' : '提交开启'), findsOneWidget);
       expect(find.textContaining('宝箱开启成功'), findsNothing);
       await tester.pumpWidget(const SizedBox());
     });
