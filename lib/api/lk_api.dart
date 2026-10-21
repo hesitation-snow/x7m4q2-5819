@@ -497,7 +497,7 @@ class LKApi {
         client.authed({
           'book_id': bookId,
           'action': add ? 'add' : 'remove',
-          'source': 'pc_web',
+          'source': 'android',
         }));
     final uid = client.session.uid;
     await Future.wait([
@@ -527,7 +527,8 @@ class LKApi {
   }
 
   static Future<void> saveHistory(
-          int bookId, int volumeId, int chapterId, int progressPercent) =>
+          int bookId, int volumeId, int chapterId, int progressPercent,
+          {int readFinished = 0}) =>
       client.post(
           '/api/new-content-read/save-book-history',
           client.authed({
@@ -535,6 +536,8 @@ class LKApi {
             'volume_id': volumeId,
             'chapter_id': chapterId,
             'progress_percent': progressPercent,
+            'read_finished': readFinished,
+            'source': 'android',
           }));
 
   /// 上报真实阅读会话的进度。服务器是否计入阅读任务、是否产生奖励，
@@ -557,6 +560,7 @@ class LKApi {
             'read_duration_seconds': readDurationSeconds.clamp(0, 86400),
             'active_seconds_delta':
                 (activeSecondsDelta ?? readDurationSeconds).clamp(0, 86400),
+            'source': 'android',
           }));
 
   static Future<void> deleteHistory(int bookId) => client.post(

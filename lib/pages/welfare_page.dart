@@ -2827,9 +2827,11 @@ class _WelfarePageState extends State<WelfarePage>
 
   String _boxPrerequisiteShort(Map<String, dynamic> box) {
     final prereqType = _text(_deepField(box, const ['prerequisite_type', 'prerequisiteType'])).toLowerCase();
+    final prereqText = _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
     final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
-    if (prereqType == 'watch_ad') return '免广告';
-    if (prereqType == 'read_book') return '去浏览';
+    if (prereqType == 'watch_ad' || prereqText.contains('广告')) return '免广告';
+    if (prereqType == 'read_book' || prereqText.contains('浏览') || prereqText.contains('阅读')) return '去浏览';
+    if (prereqType.contains('collect') || prereqType.contains('shelf') || prereqText.contains('收藏') || prereqText.contains('书架')) return '去收藏';
     if (unlockAt.isNotEmpty) {
       final parts = unlockAt.split(' ');
       if (parts.length > 1) {
@@ -2855,6 +2857,125 @@ class _WelfarePageState extends State<WelfarePage>
     } catch (e) {
       if (mounted) {
         showLkError(context, _errorText(e));
+        await _load();
+      }
+    } finally {
+      if (mounted) setState(() => _action = '');
+    }
+  }
+
+  Future<void> _claimTreasureWithRead(int boxIndex, Map<String, dynamic> box) async {
+    if (_action.isNotEmpty) return;
+    setState(() => _action = 'treasure:$boxIndex');
+    try {
+      final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget'])) ?? const {};
+      final targetBook = _map(_deepField(box, const ['target_book', 'targetBook'])) ?? const {};
+      final bookId = _int(_deepField(readerTarget, const ['book_id', 'bookId'])) > 0
+          ? _int(_deepField(readerTarget, const ['book_id', 'bookId']))
+          : _int(_deepField(targetBook, const ['book_id', 'bookId']));
+      final volumeId = _int(_deepField(readerTarget, const ['volume_id', 'volumeId']));
+      final chapterId = _int(_deepField(readerTarget, const ['chapter_id', 'chapterId']));
+
+      // 确保云端已同步最新历史记录
+      if (bookId > 0) {
+        try {
+          await LKApi.saveHistory(bookId, volumeId, chapterId > 0 ? chapterId : 1, 100, readFinished: 1);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+
+      // 请求开启宝箱
+      final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
+      if (!mounted) return;
+      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+          ? _int(_deepField(claimRes, const ['reward', 'coin']))
+          : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        if (e is LKException && e.code == 6) {
+          showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('阅读条件提示'),
+              content: const Text('服务端提示该宝箱的阅读进度尚未达标。\n请点击【去浏览】进入作品，在阅读器中停留翻阅片刻后返回开启。'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('我知道了'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _openReaderForTreasure(box);
+                  },
+                  child: const Text('进入阅读'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          showLkError(context, _errorText(e));
+        }
+        await _load();
+      }
+    } finally {
+      if (mounted) setState(() => _action = '');
+    }
+  }
+
+  Future<void> _claimTreasureWithCollect(int boxIndex, Map<String, dynamic> box) async {
+    if (_action.isNotEmpty) return;
+    setState(() => _action = 'treasure:$boxIndex');
+    try {
+      final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget'])) ?? const {};
+      final targetBook = _map(_deepField(box, const ['target_book', 'targetBook'])) ?? const {};
+      final bookId = _int(_deepField(readerTarget, const ['book_id', 'bookId'])) > 0
+          ? _int(_deepField(readerTarget, const ['book_id', 'bookId']))
+          : _int(_deepField(targetBook, const ['book_id', 'bookId']));
+
+      // 如果有明确书籍，自动执行一次加入书架同步
+      if (bookId > 0) {
+        try {
+          await LKApi.toggleShelf(bookId, true);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+
+      final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
+      if (!mounted) return;
+      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+          ? _int(_deepField(claimRes, const ['reward', 'coin']))
+          : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        if (e is LKException && e.code == 6) {
+          showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('收藏条件提示'),
+              content: const Text('服务端提示尚未满足收藏条件。\n请先点击【去收藏】将喜欢的作品加入书架，返回后即可开启宝箱。'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('我知道了'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _openCollectForTreasure(box);
+                  },
+                  child: const Text('去书架/选书'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          showLkError(context, _errorText(e));
+        }
         await _load();
       }
     } finally {
@@ -2889,8 +3010,8 @@ class _WelfarePageState extends State<WelfarePage>
   }
 
   Future<void> _openReaderForTreasure(Map<String, dynamic> box) async {
-    final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget']));
-    final targetBook = _map(_deepField(box, const ['target_book', 'targetBook']));
+    final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget'])) ?? const {};
+    final targetBook = _map(_deepField(box, const ['target_book', 'targetBook'])) ?? const {};
     final bookId = _int(_deepField(readerTarget, const ['book_id', 'bookId'])) > 0
         ? _int(_deepField(readerTarget, const ['book_id', 'bookId']))
         : _int(_deepField(targetBook, const ['book_id', 'bookId']));
@@ -2901,6 +3022,17 @@ class _WelfarePageState extends State<WelfarePage>
         : _text(_deepField(targetBook, const ['title']));
 
     if (bookId > 0) {
+      // 启动阅读前同步一次历史记录
+      try {
+        await LKApi.saveHistory(
+          bookId,
+          volumeId,
+          chapterId > 0 ? chapterId : 1,
+          10,
+        );
+      } catch (_) {}
+      if (!mounted) return;
+
       if (chapterId > 0 && volumeId > 0) {
         await Navigator.push(
           context,
@@ -2930,6 +3062,27 @@ class _WelfarePageState extends State<WelfarePage>
       );
       if (mounted) _load();
     }
+  }
+
+  Future<void> _openCollectForTreasure(Map<String, dynamic> box) async {
+    final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget'])) ?? const {};
+    final targetBook = _map(_deepField(box, const ['target_book', 'targetBook'])) ?? const {};
+    final bookId = _int(_deepField(readerTarget, const ['book_id', 'bookId'])) > 0
+        ? _int(_deepField(readerTarget, const ['book_id', 'bookId']))
+        : _int(_deepField(targetBook, const ['book_id', 'bookId']));
+
+    if (bookId > 0) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => BookDetailPage(bookId: bookId)),
+      );
+    } else {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const SearchPage()),
+      );
+    }
+    if (mounted) _load();
   }
 
   Widget _buildTreasureCard() {
@@ -3067,6 +3220,12 @@ class _WelfarePageState extends State<WelfarePage>
     final reward = _boxReward(box);
     final boxIdx = _boxIndex(box, index);
 
+    final prereqType = _text(_deepField(box, const ['prerequisite_type', 'prerequisiteType'])).toLowerCase();
+    final prereqText = _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
+    final isReadBook = prereqType == 'read_book' || prereqText.contains('浏览') || prereqText.contains('阅读');
+    final isCollectBook = prereqType.contains('collect') || prereqType.contains('shelf') || prereqText.contains('收藏') || prereqText.contains('书架');
+    final isWatchAd = prereqType == 'watch_ad' || prereqText.contains('广告');
+
     final Color bgColor;
     final Color borderColor;
     if (claimed) {
@@ -3106,7 +3265,13 @@ class _WelfarePageState extends State<WelfarePage>
                   ? Icons.check_circle_rounded
                   : claimable
                       ? Icons.card_giftcard_rounded
-                      : Icons.inventory_2_outlined,
+                      : isCollectBook
+                          ? Icons.bookmark_add_outlined
+                          : isReadBook
+                              ? Icons.menu_book_outlined
+                              : isWatchAd
+                                  ? Icons.ondemand_video_outlined
+                                  : Icons.inventory_2_outlined,
               size: 26,
               color: claimed
                   ? scheme.outline
@@ -3168,6 +3333,15 @@ class _WelfarePageState extends State<WelfarePage>
     final prereqText = _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
     final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
     final isActing = _action == 'treasure:$boxIdx' || _action == 'treasure-ad:$boxIdx';
+
+    final isReadBook = prereqType == 'read_book' ||
+        prereqText.contains('浏览') ||
+        prereqText.contains('阅读');
+    final isCollectBook = prereqType.contains('collect') ||
+        prereqType.contains('shelf') ||
+        prereqText.contains('收藏') ||
+        prereqText.contains('书架');
+    final isWatchAd = prereqType == 'watch_ad' || prereqText.contains('广告');
 
     String promptText = '';
     if (claimed) {
@@ -3243,7 +3417,8 @@ class _WelfarePageState extends State<WelfarePage>
                 children: [
                   Icon(Icons.check_rounded, size: 14, color: scheme.outline),
                   const SizedBox(width: 2),
-                  Text('已开启', style: TextStyle(fontSize: 12, color: scheme.outline)),
+                  Text('已开启',
+                      style: TextStyle(fontSize: 12, color: scheme.outline)),
                 ],
               ),
             )
@@ -3254,7 +3429,7 @@ class _WelfarePageState extends State<WelfarePage>
                   : () => _claimTreasureBox(boxIdx),
               child: Text(isActing ? '开启中' : '开宝箱'),
             )
-          else if (prereqType == 'watch_ad')
+          else if (isWatchAd)
             FilledButton.tonalIcon(
               onPressed: isActing || _action.isNotEmpty
                   ? null
@@ -3262,17 +3437,66 @@ class _WelfarePageState extends State<WelfarePage>
               icon: const Icon(Icons.bolt_rounded, size: 16),
               label: Text(isActing ? '开启中' : '免广告开启'),
             )
-          else if (prereqType == 'read_book')
-            FilledButton.tonal(
-              onPressed: isActing || _action.isNotEmpty
-                  ? null
-                  : () => _openReaderForTreasure(box),
-              child: const Text('去浏览'),
+          else if (isReadBook)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(60, 36),
+                  ),
+                  onPressed: isActing || _action.isNotEmpty
+                      ? null
+                      : () => _openReaderForTreasure(box),
+                  child: const Text('去浏览'),
+                ),
+                const SizedBox(width: 6),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    minimumSize: const Size(64, 36),
+                  ),
+                  onPressed: isActing || _action.isNotEmpty
+                      ? null
+                      : () => _claimTreasureWithRead(boxIdx, box),
+                  child: Text(isActing ? '开启中' : '开宝箱'),
+                ),
+              ],
+            )
+          else if (isCollectBook)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(60, 36),
+                  ),
+                  onPressed: isActing || _action.isNotEmpty
+                      ? null
+                      : () => _openCollectForTreasure(box),
+                  child: const Text('去收藏'),
+                ),
+                const SizedBox(width: 6),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    minimumSize: const Size(64, 36),
+                  ),
+                  onPressed: isActing || _action.isNotEmpty
+                      ? null
+                      : () => _claimTreasureWithCollect(boxIdx, box),
+                  child: Text(isActing ? '开启中' : '开宝箱'),
+                ),
+              ],
             )
           else
-            const FilledButton.tonal(
-              onPressed: null,
-              child: Text("待解锁"),
+            FilledButton(
+              onPressed: isActing || _action.isNotEmpty
+                  ? null
+                  : () => _claimTreasureBox(boxIdx),
+              child: Text(isActing ? '开启中' : '开宝箱'),
             ),
         ],
       ),
