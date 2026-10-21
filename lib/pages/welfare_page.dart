@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -635,22 +636,26 @@ class _WelfarePageState extends State<WelfarePage>
   /// 判定是否属于“浏览一个作品”任务
   bool _isBrowseWorkTask(Map<String, dynamic> task) {
     if (_isInvalidTestTask(task)) return false;
-    final title = _taskTitle(task);
-    final normTitle = title.replaceAll(RegExp(r'\s+'), '');
     final key = _taskKey(task).toLowerCase();
     final type = _taskType(task).toLowerCase();
+    if (key.contains('goods') || type.contains('goods')) return false;
+
+    final title = _taskTitle(task);
+    final normTitle = title.replaceAll(RegExp(r'\s+'), '');
+    if (normTitle.contains('商品')) return false;
 
     return normTitle == '浏览一个作品' ||
-        normTitle == '浏览作品' ||
-        normTitle == '浏览' ||
         normTitle == '其它任务' ||
         normTitle == '其他任务' ||
-        (normTitle.contains('浏览') && !normTitle.contains('网')) ||
-        (key.contains('browse') && !key.contains('web')) ||
-        (type.contains('browse') && !type.contains('web'));
+        normTitle == '浏览作品' ||
+        normTitle == '浏览' ||
+        normTitle == '发现好书' ||
+        normTitle == '去探索' ||
+        (normTitle.contains('浏览') && !normTitle.contains('网') && !normTitle.contains('商品')) ||
+        (key.contains('browse') && !key.contains('web') && !key.contains('goods')) ||
+        (type.contains('browse') && !type.contains('web') && !type.contains('goods'));
   }
 
-  /// 判定是否属于“收藏一个作品”任务
   bool _isCollectWorkTask(Map<String, dynamic> task) {
     if (_isInvalidTestTask(task)) return false;
     final title = _taskTitle(task);
@@ -671,14 +676,67 @@ class _WelfarePageState extends State<WelfarePage>
   }
 
   /// 任务中心仅允许“浏览一个作品”与“收藏一个作品”
-  bool _isAllowedRewardTask(Map<String, dynamic> task) =>
-      _taskId(task) != 300007 &&
-      !_taskKey(task).toLowerCase().contains('treasure') &&
-      !_taskType(task).toLowerCase().contains('treasure') &&
-      !_taskTitle(task).contains('宝箱') &&
-      (_isBrowseWorkTask(task) || _isCollectWorkTask(task));
+  /// 判断任务是否允许在普通任务列表中展示
+  /// （过滤掉测试任务、已在上方独立展示的宝箱、签到、阅读奖励和睡眠任务）
+  bool _isAllowedRewardTask(Map<String, dynamic> task) {
+    if (!_hasTaskIdentity(task)) return false;
+    if (_isInvalidTestTask(task)) return false;
+    if (_taskId(task) == 300007) return false;
+    final key = _taskKey(task).toLowerCase();
+    final type = _taskType(task).toLowerCase();
+    final title = _taskTitle(task);
+    if (key.contains('treasure') ||
+        type.contains('treasure') ||
+        title.contains('宝箱')) {
+      return false;
+    }
+    if (_isSignTask(task) || _isEarnCoinTask(task) || _isSleepTask(task)) {
+      return false;
+    }
+    return true;
+  }
 
-  /// 过滤出任务奖励板块允许展示的任务，并进行同类去重，至多展示 2 个
+  String _taskCategory(Map<String, dynamic> task) {
+    if (_isBrowseWorkTask(task)) return 'browse';
+    if (_isCollectWorkTask(task)) return 'collect';
+    final key = _taskKey(task).toLowerCase();
+    final type = _taskType(task).toLowerCase();
+    final title = _taskTitle(task);
+    if (key.contains('notify') ||
+        type.contains('notify') ||
+        title.contains('提醒') ||
+        title.contains('通知')) {
+      return 'notify';
+    }
+    if (key.contains('invite') ||
+        type.contains('invite') ||
+        title.contains('邀请')) {
+      return 'invite';
+    }
+    if (key.contains('share') ||
+        type.contains('share') ||
+        title.contains('分享')) {
+      return 'share';
+    }
+    if (key.contains('comment') ||
+        type.contains('comment') ||
+        title.contains('评论') ||
+        title.contains('书评')) {
+      return 'comment';
+    }
+    if (key.contains('dynamic') ||
+        type.contains('dynamic') ||
+        title.contains('动态')) {
+      return 'dynamic';
+    }
+    if (key.contains('goods') || title.contains('商品')) {
+      return 'goods';
+    }
+    final id = _taskId(task);
+    return id > 0 ? 'id:$id' : (key.isNotEmpty ? 'key:$key' : 'title:$title');
+  }
+
+  /// 过滤出可在福利中心展示的日常任务，按同类归并最优状态
   List<Map<String, dynamic>> _visibleTasks(
       Iterable<Map<String, dynamic>> tasks) {
     final candidates = tasks.where((task) =>
@@ -689,8 +747,7 @@ class _WelfarePageState extends State<WelfarePage>
         !_isSleepTask(task) &&
         _isAllowedRewardTask(task));
 
-    Map<String, dynamic>? bestBrowse;
-    Map<String, dynamic>? bestCollect;
+    final categoryMap = <String, Map<String, dynamic>>{};
 
     Map<String, dynamic> pickBest(
         Map<String, dynamic>? current, Map<String, dynamic> incoming) {
@@ -699,11 +756,11 @@ class _WelfarePageState extends State<WelfarePage>
       final currentStatus = _taskStatus(current);
       final incomingStatus = _taskStatus(incoming);
 
-      // 1. 已领取的任务具有最高权威性（当日任务已完成），绝不能被未刷新的可领取或进行中覆盖
+      // 1. 已领取最高优先级保留（避免因状态延迟刷新被误覆盖）
       if (currentStatus == _TaskItemStatus.claimed) return current;
       if (incomingStatus == _TaskItemStatus.claimed) return incoming;
 
-      // 2. 其次优先可领取（已完成待领），高于普通进行中/去完成
+      // 2. 其次优先展示可领取（已完成待领）优于普通进行中
       if (incomingStatus == _TaskItemStatus.claimable &&
           currentStatus != _TaskItemStatus.claimable) {
         return incoming;
@@ -724,17 +781,11 @@ class _WelfarePageState extends State<WelfarePage>
             }
           : task;
 
-      if (_isBrowseWorkTask(normalizedTask)) {
-        bestBrowse = pickBest(bestBrowse, normalizedTask);
-      } else if (_isCollectWorkTask(normalizedTask)) {
-        bestCollect = pickBest(bestCollect, normalizedTask);
-      }
+      final cat = _taskCategory(normalizedTask);
+      categoryMap[cat] = pickBest(categoryMap[cat], normalizedTask);
     }
 
-    final result = <Map<String, dynamic>>[];
-    if (bestBrowse != null) result.add(bestBrowse);
-    if (bestCollect != null) result.add(bestCollect);
-    return result;
+    return categoryMap.values.toList();
   }
 
   List<Map<String, dynamic>> get _displayTasks => _visibleTasks(_tasks);
@@ -1779,6 +1830,17 @@ class _WelfarePageState extends State<WelfarePage>
         title.contains('逛')) {
       return '去浏览';
     }
+    if (type.contains('notify') ||
+        title.contains('提醒') ||
+        title.contains('通知')) {
+      return '去开启';
+    }
+    if (type.contains('invite') || title.contains('邀请')) {
+      return '去邀请';
+    }
+    if (type.contains('dynamic') || title.contains('动态')) {
+      return '去动态';
+    }
     return '去完成';
   }
 
@@ -1831,6 +1893,20 @@ class _WelfarePageState extends State<WelfarePage>
         title.contains('作品')) {
       return Icons.explore_outlined;
     }
+    if (type.contains('notify') ||
+        title.contains('提醒') ||
+        title.contains('通知')) {
+      return Icons.notifications_active_outlined;
+    }
+    if (type.contains('invite') || title.contains('邀请')) {
+      return Icons.group_add_outlined;
+    }
+    if (type.contains('dynamic') || title.contains('动态')) {
+      return Icons.dynamic_feed_outlined;
+    }
+    if (type.contains('goods') || title.contains('商品')) {
+      return Icons.storefront_outlined;
+    }
     if (type.contains('sign') || title.contains('签到')) {
       return Icons.event_available_rounded;
     }
@@ -1851,21 +1927,50 @@ class _WelfarePageState extends State<WelfarePage>
             .toLowerCase()
             .trim();
     final taskKey = _taskKey(task).toLowerCase();
+    final taskType = _taskType(task).toLowerCase();
     final title = _taskTitle(task);
+    final buttonAction = _text(_deepField(task, const ['button_action', 'buttonAction'])).toLowerCase();
 
-    // 1. 浏览与收藏作品任务：进入对应书籍详情或搜索选书
+    // 0. 特殊状态判断（如即将开放）
+    if (buttonAction == 'none' && (title.contains('商品') || taskKey.contains('goods'))) {
+      showLkError(context, '该功能暂未开放，敬请期待');
+      return;
+    }
+
+    // 1. 宝箱类任务
+    if (taskKey.contains('treasure') || title.contains('宝箱')) {
+      _showTreasureWeekPlan();
+      return;
+    }
+
+    // 2. 消息提醒任务
+    if (taskKey.contains('notify') || taskType.contains('notify') || title.contains('提醒') || title.contains('通知')) {
+      await _handleNotifyTask(task);
+      return;
+    }
+
+    // 3. 邀请好友任务
+    if (taskKey.contains('invite') || taskType.contains('invite') || title.contains('邀请')) {
+      await _handleInviteTask(task);
+      return;
+    }
+
+    // 4. 浏览与收藏作品任务：进入对应书籍详情或搜索选书
     if (_isBrowseWorkTask(task) ||
         _isCollectWorkTask(task) ||
         jumpType == 'browse' ||
         jumpType == 'collect' ||
         jumpType == 'favorite' ||
         jumpType == 'shelf' ||
+        buttonAction == 'open_bookshelf' ||
         title.contains('浏览') ||
         title.contains('收藏') ||
         title.contains('作品') ||
         title.contains('书架')) {
-      final bookId = _int(_deepField(
-          task, const ['book_id', 'bookId', 'target_id', 'targetId']));
+      final readerTarget = _map(_deepField(task, const ['reader_target', 'readerTarget'])) ?? const {};
+      final bookId = _int(_deepField(task, const ['book_id', 'bookId', 'target_id', 'targetId'])) > 0
+          ? _int(_deepField(task, const ['book_id', 'bookId', 'target_id', 'targetId']))
+          : _int(_deepField(readerTarget, const ['book_id', 'bookId']));
       if (bookId > 0) {
         await Navigator.push(
           context,
@@ -1881,7 +1986,7 @@ class _WelfarePageState extends State<WelfarePage>
       return;
     }
 
-    // 2. 如果有明确的外部或应用链接
+    // 5. 外部或应用链接
     if (jumpUrl.isNotEmpty) {
       final uri = Uri.tryParse(jumpUrl);
       if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
@@ -1893,17 +1998,20 @@ class _WelfarePageState extends State<WelfarePage>
       }
     }
 
-    // 2. 阅读类任务：进入阅读器或小说详情
+    // 6. 阅读类任务：进入阅读器或小说详情
     if (jumpType == 'reader' ||
+        buttonAction == 'open_reader' ||
         taskKey.contains('read') ||
         title.contains('阅读') ||
         title.contains('看书') ||
         title.contains('小说') ||
         title.contains('章节')) {
       final snapshot = LKReadingSession.shared.snapshot();
+      final readerTarget = _map(_deepField(task, const ['reader_target', 'readerTarget'])) ?? const {};
       final bookId = snapshot?.bookId ??
-          _int(_deepField(
-              task, const ['book_id', 'bookId', 'target_id', 'targetId']));
+          (_int(_deepField(task, const ['book_id', 'bookId', 'target_id', 'targetId'])) > 0
+              ? _int(_deepField(task, const ['book_id', 'bookId', 'target_id', 'targetId']))
+              : _int(_deepField(readerTarget, const ['book_id', 'bookId'])));
       if (bookId > 0) {
         if (snapshot != null &&
             snapshot.bookId == bookId &&
@@ -1930,29 +2038,6 @@ class _WelfarePageState extends State<WelfarePage>
           );
         }
       } else {
-        if (Navigator.canPop(context)) {
-          Navigator.pop(context);
-        }
-      }
-      if (mounted) _load();
-      return;
-    }
-
-    // 3. 浏览/找书类任务：进入书籍详情或搜索页
-    if (jumpType == 'browse' ||
-        jumpType == 'book' ||
-        taskKey.contains('browse') ||
-        title.contains('浏览') ||
-        title.contains('作品') ||
-        title.contains('找书')) {
-      final bookId = _int(_deepField(
-          task, const ['book_id', 'bookId', 'target_id', 'targetId']));
-      if (bookId > 0) {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => BookDetailPage(bookId: bookId)),
-        );
-      } else {
         await Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const SearchPage()),
@@ -1962,7 +2047,7 @@ class _WelfarePageState extends State<WelfarePage>
       return;
     }
 
-    // 4. 动态/社区/评论类任务：进入动态广场
+    // 7. 动态/社区/评论类任务：进入动态广场
     if (jumpType == 'dynamic' ||
         jumpType == 'comment' ||
         taskKey.contains('comment') ||
@@ -1978,7 +2063,7 @@ class _WelfarePageState extends State<WelfarePage>
       return;
     }
 
-    // 5. 分享类任务提示
+    // 8. 分享类任务提示
     if (jumpType == 'share' ||
         taskKey.contains('share') ||
         title.contains('分享')) {
@@ -1986,12 +2071,7 @@ class _WelfarePageState extends State<WelfarePage>
       return;
     }
 
-    // 6. 签到类任务
-    if (taskKey.contains('treasure') || title.contains('宝箱')) {
-      _showTreasureWeekPlan();
-      return;
-    }
-
+    // 9. 签到类任务
     if (taskKey.contains('sign') || title.contains('签到')) {
       if (!_signed) {
         await _claimSign();
@@ -2002,6 +2082,131 @@ class _WelfarePageState extends State<WelfarePage>
     }
 
     showLkError(context, '请完成对应任务后返回领取奖励');
+  }
+
+  Future<void> _handleNotifyTask(Map<String, dynamic> task) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('消息提醒'),
+        content: const Text('系统消息与更新提醒已启用。若任务尚未标记为可领取，请在稍后刷新后领取。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) _load();
+  }
+
+  Future<void> _handleInviteTask(Map<String, dynamic> task) async {
+    Map<String, dynamic> inviteInfo = const {};
+    try {
+      inviteInfo = await LKApi.inviteMyCode();
+    } catch (_) {}
+
+    if (!mounted) return;
+    final inviteData = _map(inviteInfo['data']) ?? inviteInfo;
+    final code = _text(inviteData['invite_code']).isNotEmpty
+        ? _text(inviteData['invite_code'])
+        : _text(inviteData['share_code']);
+    final shareText = _text(inviteData['share_text']);
+    final ruleText = _text(inviteData['rule_text']);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.group_add_rounded, color: Colors.amber),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        '邀请好友得轻币',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  ruleText.isNotEmpty
+                      ? ruleText
+                      : '每成功邀请一位好友可获得 50 轻币奖励，好友亦可获赠轻币。',
+                  style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.4)),
+                  ),
+                  child: Row(
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('我的专属邀请码', style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+                          const SizedBox(height: 3),
+                          Text(
+                            code.isNotEmpty ? code : '——',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 2.0,
+                              color: scheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      FilledButton.tonalIcon(
+                        onPressed: () {
+                          final textToCopy = shareText.isNotEmpty
+                              ? shareText
+                              : (code.isNotEmpty ? '邀请码: $code' : '');
+                          if (textToCopy.isNotEmpty) {
+                            Clipboard.setData(ClipboardData(text: textToCopy));
+                            showLkError(context, '邀请文案已复制到剪贴板');
+                          }
+                        },
+                        icon: const Icon(Icons.copy_rounded, size: 16),
+                        label: const Text('复制文案'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Center(
+                  child: Text(
+                    '好友注册并完成阅读后，奖励自动发放到轻币账户',
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (mounted) _load();
   }
 
   bool _taskProgressComplete(Map<String, dynamic> task) {
@@ -3662,6 +3867,9 @@ class _WelfarePageState extends State<WelfarePage>
                   const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
         );
       case _TaskItemStatus.actionable:
+        final isUnavailable = _int(_deepField(task, const ['available'])) == 0 &&
+                _deepField(task, const ['available']) != null ||
+            btnText == '即将开放';
         return FilledButton.tonal(
           style: FilledButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
@@ -3669,7 +3877,7 @@ class _WelfarePageState extends State<WelfarePage>
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
           ),
-          onPressed: isActing || _action.isNotEmpty
+          onPressed: isActing || _action.isNotEmpty || isUnavailable
               ? null
               : () => _openTaskTarget(task),
           child: Text(btnText, style: const TextStyle(fontSize: 13)),

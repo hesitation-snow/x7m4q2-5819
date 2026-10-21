@@ -1139,6 +1139,10 @@ class LKApi {
       client.post('/api/bff/report-welfare-treasure-box-progress-v1',
           client.authed({'box_index': boxIndex, 'action': action}));
 
+  /// 获取我的专属邀请码与分享文案
+  static Future<Map<String, dynamic>> inviteMyCode() =>
+      client.post('/api/bff/invite-my-code-v1', client.authed());
+
   static Future<Map<String, dynamic>> claimWelfareTask(
       {int taskId = 0, String taskKey = ''}) {
     final body = <String, dynamic>{};
