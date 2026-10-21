@@ -94,6 +94,8 @@ class _WelfarePageState extends State<WelfarePage>
   Map<String, dynamic> _signDetail = const {};
   Map<String, dynamic> _earnCoin = const {};
   Map<String, dynamic> _sleep = const {};
+  Map<String, dynamic> _treasure = const {};
+  int _selectedTreasureBoxIndex = 0;
   List<Map<String, dynamic>> _tasks = const [];
   bool _loading = true;
   String? _error;
@@ -225,10 +227,13 @@ class _WelfarePageState extends State<WelfarePage>
           final tasks = _orderTasks(_visibleTasks(_extractTasks(root)));
           final homeEarnCoin = _section(
               root, const ['earn_coin', 'earnCoin', 'welfare_earn_coin']);
+          final homeTreasure = _section(root,
+              const ['treasure', 'treasure_box', 'daily_treasure_box']);
           setState(() {
             _home = map;
             _tasks = tasks;
             _earnCoin = homeEarnCoin;
+            if (homeTreasure.isNotEmpty) _treasure = homeTreasure;
             _loading = false;
           });
         }
@@ -292,6 +297,7 @@ class _WelfarePageState extends State<WelfarePage>
           return LKApi.welfareEarnCoinDetail();
         }()),
         _safeDetail(LKApi.welfareSleepDetail()),
+        _safeDetail(LKApi.welfareTreasureBoxDetail()),
       ]);
       var tasks = _extractTasks(root);
       if (forceTaskList || _visibleTasks(tasks).length < 2) {
@@ -312,6 +318,9 @@ class _WelfarePageState extends State<WelfarePage>
           _section(root, const ['earn_coin', 'earnCoin', 'welfare_earn_coin']);
       final earnCoin = details[1].isNotEmpty ? details[1] : homeEarnCoin;
       final sleep = details[2];
+      final homeTreasure = _section(
+          root, const ['treasure', 'treasure_box', 'daily_treasure_box']);
+      final treasure = details[3].isNotEmpty ? details[3] : homeTreasure;
       if (!isCurrent()) return;
       final seconds = _sleepRemainingSecondsFrom(sleep);
       _sleepCountdownExpired = false;
@@ -319,6 +328,7 @@ class _WelfarePageState extends State<WelfarePage>
         _signDetail = signDetail;
         _earnCoin = earnCoin;
         _sleep = sleep;
+        _treasure = treasure;
         _tasks = tasks;
         _loading = false;
       });
@@ -1977,6 +1987,11 @@ class _WelfarePageState extends State<WelfarePage>
     }
 
     // 6. 签到类任务
+    if (taskKey.contains('treasure') || title.contains('宝箱')) {
+      _showTreasureWeekPlan();
+      return;
+    }
+
     if (taskKey.contains('sign') || title.contains('签到')) {
       if (!_signed) {
         await _claimSign();
@@ -2184,6 +2199,10 @@ class _WelfarePageState extends State<WelfarePage>
                           valueListenable: _sleepClock,
                           builder: (_, __, ___) => _buildSleepCard(),
                         ),
+                      ],
+                      if (_hasTreasureData) ...[
+                        const SizedBox(height: 10),
+                        _buildTreasureCard(),
                       ],
                       if (_displayTasks.isNotEmpty) ...[
                         const SizedBox(height: 10),
@@ -2529,6 +2548,646 @@ class _WelfarePageState extends State<WelfarePage>
           ],
         ),
       ),
+    );
+  }
+
+  // --- 每日开宝箱相关逻辑 ---
+
+  Map<String, dynamic> get _treasureData =>
+      _map(_deepField(_treasure, const ['detail', 'treasure_box', 'data'])) ??
+      const <String, dynamic>{};
+
+  Map<String, dynamic> get _treasureCard =>
+      _map(_deepField(_treasure, const ['card'])) ?? const <String, dynamic>{};
+
+  List<Map<String, dynamic>> get _treasureBoxes {
+    final raw = _deepField(_treasureData, const ['boxes', 'box_list', 'list']);
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    return const [];
+  }
+
+  bool get _hasTreasureData =>
+      _treasureBoxes.isNotEmpty ||
+      _treasure.isNotEmpty ||
+      _int(_deepField(_treasure, const ['task_id'])) == 300007;
+
+  int get _treasureOpenedCount =>
+      _int(_deepField(_treasureData, const ['opened_boxes', 'openedBoxes'])) > 0
+          ? _int(_deepField(_treasureData, const ['opened_boxes', 'openedBoxes']))
+          : _int(_deepField(_treasureCard, const ['opened_boxes', 'openedBoxes']));
+
+  int get _treasureTotalCount =>
+      _int(_deepField(_treasureData, const ['today_total_boxes', 'todayTotalBoxes'])) > 0
+          ? _int(_deepField(_treasureData, const ['today_total_boxes', 'todayTotalBoxes']))
+          : (_int(_deepField(_treasureCard, const ['today_total_boxes', 'todayTotalBoxes'])) > 0
+              ? _int(_deepField(_treasureCard, const ['today_total_boxes', 'todayTotalBoxes']))
+              : 3);
+
+  int get _treasureTodayReward =>
+      _int(_deepField(_treasure, const ['reward_amount', 'rewardAmount'])) > 0
+          ? _int(_deepField(_treasure, const ['reward_amount', 'rewardAmount']))
+          : _int(_deepField(_treasureCard, const ['total_reward', 'today_reward']));
+
+  int _boxIndex(Map<String, dynamic> box, int fallback) {
+    final idx = _int(_deepField(box, const ['box_index', 'boxIndex', 'index']));
+    return idx > 0 ? idx : fallback;
+  }
+
+  int _boxReward(Map<String, dynamic> box) => _int(_deepField(
+      box, const ['reward_coin', 'rewardCoin', 'coin', 'reward_amount']));
+
+  bool _isBoxClaimed(Map<String, dynamic> box) {
+    final status = _text(_deepField(box, const ['status', 'box_status'])).toLowerCase();
+    final openedAt = _text(_deepField(box, const ['opened_at', 'openedAt']));
+    return status == 'claimed' ||
+        status == 'opened' ||
+        status == 'received' ||
+        openedAt.isNotEmpty ||
+        _flag(_deepField(box, const ['claimed', 'is_claimed']));
+  }
+
+  bool _isBoxClaimable(Map<String, dynamic> box) {
+    if (_isBoxClaimed(box)) return false;
+    final status = _text(_deepField(box, const ['status', 'box_status'])).toLowerCase();
+    final action = _text(_deepField(box, const ['button_action', 'buttonAction'])).toLowerCase();
+    final completed = _int(_deepField(box, const ['prerequisite_completed', 'prerequisiteCompleted'])) == 1 ||
+        _flag(_deepField(box, const ['prerequisite_completed', 'prerequisiteCompleted']));
+    return status == 'claimable' || action == 'claim' || completed;
+  }
+
+  String _boxPrerequisiteShort(Map<String, dynamic> box) {
+    final prereqType = _text(_deepField(box, const ['prerequisite_type', 'prerequisiteType'])).toLowerCase();
+    final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
+    if (prereqType == 'watch_ad') return '免广告';
+    if (prereqType == 'read_book') return '去浏览';
+    if (unlockAt.isNotEmpty) {
+      final parts = unlockAt.split(' ');
+      if (parts.length > 1) {
+        final timeParts = parts[1].split(':');
+        if (timeParts.length >= 2) return '${timeParts[0]}:${timeParts[1]}';
+      }
+      return '待解锁';
+    }
+    return '待解锁';
+  }
+
+  Future<void> _claimTreasureBox(int boxIndex) async {
+    if (_action.isNotEmpty) return;
+    setState(() => _action = 'treasure:$boxIndex');
+    try {
+      final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
+      if (!mounted) return;
+      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+          ? _int(_deepField(claimRes, const ['reward', 'coin']))
+          : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        showLkError(context, _errorText(e));
+        await _load();
+      }
+    } finally {
+      if (mounted) setState(() => _action = '');
+    }
+  }
+
+  Future<void> _completeWatchAdAndClaim(int boxIndex) async {
+    if (_action.isNotEmpty) return;
+    setState(() => _action = 'treasure-ad:$boxIndex');
+    try {
+      await LKApi.reportWelfareTreasureBoxProgress(
+        boxIndex: boxIndex,
+        action: 'watch_ad_completed',
+      );
+      if (!mounted) return;
+      final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
+      if (!mounted) return;
+      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+          ? _int(_deepField(claimRes, const ['reward', 'coin']))
+          : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(context, rewardCoin > 0 ? '免广告开箱成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        showLkError(context, _errorText(e));
+        await _load();
+      }
+    } finally {
+      if (mounted) setState(() => _action = '');
+    }
+  }
+
+  Future<void> _openReaderForTreasure(Map<String, dynamic> box) async {
+    final readerTarget = _map(_deepField(box, const ['reader_target', 'readerTarget']));
+    final targetBook = _map(_deepField(box, const ['target_book', 'targetBook']));
+    final bookId = _int(_deepField(readerTarget, const ['book_id', 'bookId'])) > 0
+        ? _int(_deepField(readerTarget, const ['book_id', 'bookId']))
+        : _int(_deepField(targetBook, const ['book_id', 'bookId']));
+    final volumeId = _int(_deepField(readerTarget, const ['volume_id', 'volumeId']));
+    final chapterId = _int(_deepField(readerTarget, const ['chapter_id', 'chapterId']));
+    final title = _text(_deepField(readerTarget, const ['title'])).isNotEmpty
+        ? _text(_deepField(readerTarget, const ['title']))
+        : _text(_deepField(targetBook, const ['title']));
+
+    if (bookId > 0) {
+      if (chapterId > 0 && volumeId > 0) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ReaderPage(
+              bookId: bookId,
+              bookTitle: title.isNotEmpty ? title : '小说阅读',
+              chapterId: chapterId,
+              chapterTitle: '',
+              volumeId: volumeId,
+            ),
+          ),
+        );
+      } else {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => BookDetailPage(bookId: bookId),
+          ),
+        );
+      }
+      if (mounted) _load();
+    } else {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const SearchPage()),
+      );
+      if (mounted) _load();
+    }
+  }
+
+  Widget _buildTreasureCard() {
+    final boxes = _treasureBoxes;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final opened = _treasureOpenedCount;
+    final total = _treasureTotalCount;
+    final reward = _treasureTodayReward;
+    final allClaimed = opened >= total && total > 0;
+
+    var activeIndex = _selectedTreasureBoxIndex;
+    if (activeIndex <= 0 || activeIndex > boxes.length) {
+      final firstActionable = boxes.indexWhere((b) => !_isBoxClaimed(b));
+      activeIndex = firstActionable >= 0 ? _boxIndex(boxes[firstActionable], firstActionable + 1) : 1;
+    }
+    final selectedBox = boxes.isNotEmpty
+        ? boxes.firstWhere(
+            (b) => _boxIndex(b, 0) == activeIndex,
+            orElse: () => boxes.first,
+          )
+        : const <String, dynamic>{};
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: Colors.amber.withValues(alpha: 0.18),
+                  child: const Icon(
+                    Icons.inventory_2_rounded,
+                    color: Colors.amber,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            '每日开宝箱',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: allClaimed
+                                  ? Colors.green.withValues(alpha: 0.15)
+                                  : scheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              allClaimed ? '全部开启' : '$opened / $total 个',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: allClaimed
+                                    ? Colors.green
+                                    : scheme.onPrimaryContainer,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        reward > 0
+                            ? '今日最高 +$reward 轻币'
+                            : '每日共3个宝箱，分时完成任务开启',
+                        style: TextStyle(
+                          color: scheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _showTreasureWeekPlan,
+                  icon: const Icon(Icons.calendar_month_outlined, size: 16),
+                  label: const Text('周计划'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+              ],
+            ),
+            if (boxes.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  for (var i = 0; i < boxes.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    Expanded(
+                      child: _buildTreasureBoxTile(
+                        box: boxes[i],
+                        index: i + 1,
+                        isSelected: _boxIndex(boxes[i], i + 1) == activeIndex,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+            if (selectedBox.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildTreasureBoxDetailArea(selectedBox, activeIndex),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTreasureBoxTile({
+    required Map<String, dynamic> box,
+    required int index,
+    required bool isSelected,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final claimed = _isBoxClaimed(box);
+    final claimable = _isBoxClaimable(box);
+    final reward = _boxReward(box);
+    final boxIdx = _boxIndex(box, index);
+
+    final Color bgColor;
+    final Color borderColor;
+    if (claimed) {
+      bgColor = scheme.surfaceContainerHighest.withValues(alpha: 0.35);
+      borderColor = Colors.transparent;
+    } else if (claimable) {
+      bgColor = scheme.primaryContainer.withValues(alpha: 0.6);
+      borderColor = isSelected ? scheme.primary : scheme.primary.withValues(alpha: 0.4);
+    } else if (isSelected) {
+      bgColor = scheme.surfaceContainerHighest;
+      borderColor = scheme.primary;
+    } else {
+      bgColor = scheme.surfaceContainerHighest.withValues(alpha: 0.5);
+      borderColor = Colors.transparent;
+    }
+
+    return InkWell(
+      onTap: () {
+        setState(() => _selectedTreasureBoxIndex = boxIdx);
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: borderColor,
+            width: isSelected ? 1.5 : 1.0,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              claimed
+                  ? Icons.check_circle_rounded
+                  : claimable
+                      ? Icons.card_giftcard_rounded
+                      : Icons.inventory_2_outlined,
+              size: 26,
+              color: claimed
+                  ? scheme.outline
+                  : claimable
+                      ? Colors.amber
+                      : isSelected
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 5),
+            Text(
+              '第$boxIdx个',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                color: claimed ? scheme.outline : scheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              reward > 0 ? '+$reward' : '轻币',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: claimed
+                    ? scheme.outline
+                    : claimable
+                        ? Colors.amber
+                        : scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              claimed
+                  ? '已开启'
+                  : claimable
+                      ? '可开启'
+                      : _boxPrerequisiteShort(box),
+              style: TextStyle(
+                fontSize: 10,
+                color: claimed
+                    ? scheme.outline
+                    : claimable
+                        ? scheme.primary
+                        : scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTreasureBoxDetailArea(Map<String, dynamic> box, int boxIdx) {
+    final scheme = Theme.of(context).colorScheme;
+    final claimed = _isBoxClaimed(box);
+    final claimable = _isBoxClaimable(box);
+    final prereqType = _text(_deepField(box, const ['prerequisite_type', 'prerequisiteType'])).toLowerCase();
+    final prereqText = _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
+    final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
+    final isActing = _action == 'treasure:$boxIdx' || _action == 'treasure-ad:$boxIdx';
+
+    String promptText = '';
+    if (claimed) {
+      promptText = '该宝箱已开启，奖励已存入轻币账户。';
+    } else if (claimable) {
+      promptText = '前置任务已达成，立即开启宝箱领取轻币奖励！';
+    } else if (prereqText.isNotEmpty) {
+      promptText = prereqText;
+    } else if (unlockAt.isNotEmpty) {
+      promptText = '将于 $unlockAt 解锁开启任务。';
+    } else {
+      promptText = '完成任务后即可开启宝箱。';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      claimed
+                          ? Icons.check_circle_outline_rounded
+                          : claimable
+                              ? Icons.stars_rounded
+                              : Icons.info_outline_rounded,
+                      size: 15,
+                      color: claimed
+                          ? Colors.green
+                          : claimable
+                              ? Colors.amber
+                              : scheme.primary,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      '宝箱 $boxIdx 状态',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  promptText,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          if (claimed)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.check_rounded, size: 14, color: scheme.outline),
+                  const SizedBox(width: 2),
+                  Text('已开启', style: TextStyle(fontSize: 12, color: scheme.outline)),
+                ],
+              ),
+            )
+          else if (claimable)
+            FilledButton(
+              onPressed: isActing || _action.isNotEmpty
+                  ? null
+                  : () => _claimTreasureBox(boxIdx),
+              child: Text(isActing ? '开启中' : '开宝箱'),
+            )
+          else if (prereqType == 'watch_ad')
+            FilledButton.tonalIcon(
+              onPressed: isActing || _action.isNotEmpty
+                  ? null
+                  : () => _completeWatchAdAndClaim(boxIdx),
+              icon: const Icon(Icons.bolt_rounded, size: 16),
+              label: Text(isActing ? '开启中' : '免广告开启'),
+            )
+          else if (prereqType == 'read_book')
+            FilledButton.tonal(
+              onPressed: isActing || _action.isNotEmpty
+                  ? null
+                  : () => _openReaderForTreasure(box),
+              child: const Text('去浏览'),
+            )
+          else
+            const FilledButton.tonal(
+              onPressed: null,
+              child: Text("待解锁"),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showTreasureWeekPlan() {
+    final weekPlan = _listFor(_treasureCard, const ['week_plan', 'weekPlan']);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.calendar_month_rounded, color: Colors.amber),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        '宝箱 7 天奖励计划',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '每天完成宝箱任务即可开启对应数量宝箱并领取轻币。',
+                  style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 16),
+                if (weekPlan.isNotEmpty)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(ctx).height * 0.45,
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: weekPlan.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, index) {
+                        final dayData = Map<String, dynamic>.from(weekPlan[index] as Map);
+                        final dayNo = _int(_deepField(dayData, const ['day'])) > 0
+                            ? _int(_deepField(dayData, const ['day']))
+                            : index + 1;
+                        final isToday = _flag(_deepField(dayData, const ['is_today', 'isToday']));
+                        final totalReward = _int(_deepField(dayData, const ['total_reward', 'totalReward']));
+                        final totalBoxes = _int(_deepField(dayData, const ['total_boxes', 'totalBoxes']));
+                        final date = _text(_deepField(dayData, const ['date']));
+
+                        return ListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          leading: CircleAvatar(
+                            radius: 16,
+                            backgroundColor: isToday ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+                            child: Text(
+                              'D$dayNo',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: isToday ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          title: Row(
+                            children: [
+                              Text('第 $dayNo 天 ${date.isNotEmpty ? '($date)' : ''}'),
+                              if (isToday) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: scheme.primary,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Text(
+                                    '今日',
+                                    style: TextStyle(color: Colors.white, fontSize: 10),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          subtitle: Text('$totalBoxes 个宝箱'),
+                          trailing: Text(
+                            '+$totalReward 轻币',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.amber,
+                              fontSize: 14,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                Center(
+                  child: FilledButton.tonal(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('我知道了'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

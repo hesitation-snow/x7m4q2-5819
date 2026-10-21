@@ -83,8 +83,8 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets(
-      'task center excludes treasure boxes and never requests their endpoints',
+    testWidgets(
+      'task center excludes treasure boxes from task list and shows dedicated treasure box card',
       (tester) async {
     final paths = <String>[];
     const treasureTask = {
@@ -94,6 +94,35 @@ void main() {
     };
     LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
       paths.add(request.url.path);
+      if (request.url.path.contains('welfare-treasure-box-detail')) {
+        return _jsonResponse({
+          'code': 0,
+          'data': {
+            'task_id': 300007,
+            'title': '每日开宝箱',
+            'detail': {
+              'today_total_boxes': 3,
+              'opened_boxes': 1,
+              'boxes': [
+                {
+                  'box_index': 1,
+                  'status': 'claimed',
+                  'reward_coin': 244,
+                  'button_text': '已开启',
+                  'button_action': 'none',
+                },
+                {
+                  'box_index': 2,
+                  'status': 'claimable',
+                  'reward_coin': 290,
+                  'button_text': '开宝箱',
+                  'button_action': 'claim',
+                },
+              ]
+            }
+          }
+        });
+      }
       return _jsonResponse({
         'code': 0,
         'data': {
@@ -104,9 +133,9 @@ void main() {
     expect(WelfarePage.filterVisibleTasks([treasureTask]), isEmpty);
     await tester.pumpWidget(const MaterialApp(home: WelfarePage()));
     await tester.pumpAndSettle();
-    expect(find.text('每日开宝箱'), findsNothing);
+    expect(find.text('每日开宝箱'), findsOneWidget);
     expect(find.text('每日签到'), findsOneWidget);
-    expect(paths.where((path) => path.contains('treasure')), isEmpty);
+    expect(paths.any((path) => path.contains('welfare-treasure-box-detail')), isTrue);
     expect(tester.takeException(), isNull);
   });
 
@@ -812,6 +841,136 @@ void main() {
       // Error message "今日已领取" handled, flips to '已领取'
       expect(find.text('已领取'), findsOneWidget);
       expect(find.text('领取'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    });
+    testWidgets('Tapping claimable treasure box triggers claim and refreshes',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      var claimCalled = false;
+      final mock = MockClient((request) async {
+        if (request.url.path.contains('claim-welfare-treasure-box')) {
+          claimCalled = true;
+          return _jsonResponse({
+            'code': 0,
+            'data': {
+              'box_index': 1,
+              'reward': {'coin': 244},
+            }
+          });
+        }
+        if (request.url.path.contains('welfare-treasure-box-detail')) {
+          return _jsonResponse({
+            'code': 0,
+            'data': {
+              'task_id': 300007,
+              'detail': {
+                'today_total_boxes': 3,
+                'opened_boxes': claimCalled ? 1 : 0,
+                'boxes': [
+                  {
+                    'box_index': 1,
+                    'status': claimCalled ? 'claimed' : 'claimable',
+                    'reward_coin': 244,
+                    'button_text': claimCalled ? '已开启' : '开宝箱',
+                    'button_action': claimCalled ? 'none' : 'claim',
+                  },
+                ]
+              }
+            }
+          });
+        }
+        return _jsonResponse({'code': 0, 'data': {}});
+      });
+      LKApi.client = LKClient.forTesting(httpClient: mock);
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: WelfarePage())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('每日开宝箱'), findsOneWidget);
+      expect(find.text('开宝箱'), findsOneWidget);
+
+      await tester.tap(find.text('开宝箱'));
+      await tester.pump();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(claimCalled, isTrue);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    });
+
+    testWidgets('Tapping watch_ad treasure box triggers ad report and claim',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      var adReported = false;
+      var claimCalled = false;
+      final mock = MockClient((request) async {
+        if (request.url.path.contains('report-welfare-treasure-box-progress')) {
+          adReported = true;
+          return _jsonResponse({'code': 0, 'data': {}});
+        }
+        if (request.url.path.contains('claim-welfare-treasure-box')) {
+          claimCalled = true;
+          return _jsonResponse({
+            'code': 0,
+            'data': {
+              'box_index': 2,
+              'reward': {'coin': 290},
+            }
+          });
+        }
+        if (request.url.path.contains('welfare-treasure-box-detail')) {
+          return _jsonResponse({
+            'code': 0,
+            'data': {
+              'task_id': 300007,
+              'detail': {
+                'today_total_boxes': 3,
+                'opened_boxes': claimCalled ? 1 : 0,
+                'boxes': [
+                  {
+                    'box_index': 2,
+                    'status': claimCalled ? 'claimed' : 'waiting_task',
+                    'prerequisite_type': 'watch_ad',
+                    'reward_coin': 290,
+                    'button_text': claimCalled ? '已开启' : '去完成任务',
+                    'button_action': claimCalled ? 'none' : 'watch_ad',
+                  },
+                ]
+              }
+            }
+          });
+        }
+        return _jsonResponse({'code': 0, 'data': {}});
+      });
+      LKApi.client = LKClient.forTesting(httpClient: mock);
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: WelfarePage())),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('免广告开启'), findsOneWidget);
+      await tester.tap(find.text('免广告开启'));
+      await tester.pump();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(adReported, isTrue);
+      expect(claimCalled, isTrue);
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump();

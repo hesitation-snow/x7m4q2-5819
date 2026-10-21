@@ -1116,8 +1116,28 @@ class LKApi {
   static Future<Map<String, dynamic>> claimWelfareSleep() =>
       client.post('/api/bff/claim-welfare-sleep-v1', client.authed());
 
+  static Future<Map<String, dynamic>> finishWelfareSleep() =>
+      client.post('/api/bff/finish-welfare-sleep-v1', client.authed());
+
   static Future<Map<String, dynamic>> claimWelfareSign() =>
       client.post('/api/bff/claim-welfare-sign-v1', client.authed());
+
+  /// 获取每日开宝箱详情（今日 3 个宝箱、解锁时间、奖励轻币与任务状态）
+  static Future<Map<String, dynamic>> welfareTreasureBoxDetail() =>
+      client.post('/api/bff/welfare-treasure-box-detail-v1', client.authed());
+
+  /// 开启宝箱并领取轻币奖励
+  static Future<Map<String, dynamic>> claimWelfareTreasureBox(int boxIndex) =>
+      client.post('/api/bff/claim-welfare-treasure-box-v1',
+          client.authed({'box_index': boxIndex}));
+
+  /// 上报宝箱任务进度（如观看广告完成 watch_ad_completed）
+  static Future<Map<String, dynamic>> reportWelfareTreasureBoxProgress({
+    required int boxIndex,
+    required String action,
+  }) =>
+      client.post('/api/bff/report-welfare-treasure-box-progress-v1',
+          client.authed({'box_index': boxIndex, 'action': action}));
 
   static Future<Map<String, dynamic>> claimWelfareTask(
       {int taskId = 0, String taskKey = ''}) {
