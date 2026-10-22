@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../api/lk_api.dart';
 import '../api/models.dart';
+import '../api/store.dart';
 import '../widgets/common.dart';
 
 class AppUpdateInfo {
@@ -52,6 +53,7 @@ class YomiruUpdateService {
 
   /// 每次冷启动只检查一次；网络异常和“已是最新”均保持静默。
   static Future<void> checkAtStartup(BuildContext context) async {
+    if (!LKStore.autoCheckUpdateEnabled.value) return;
     if (_startupCheckStarted) return;
     _startupCheckStarted = true;
     try {

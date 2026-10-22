@@ -40,7 +40,7 @@ void main() {
     expect(find.text('反馈问题'), findsOneWidget);
     final style = find.widgetWithText(SwitchListTile, '原文格式');
     expect(tester.widget<SwitchListTile>(style).value, isTrue);
-    expect(find.text('如原文支持，显示注音、文字样式与注释'), findsOneWidget);
+    expect(find.text('如原文支持，显示文字样式'), findsOneWidget);
 
     await tester.tap(style);
     await tester.pump();
@@ -93,5 +93,31 @@ void main() {
     expect(find.byType(TextField), findsNothing);
     expect(githubIssuesUrl, 'https://github.com/hesitation-snow/Yomiru/issues');
     expect(telegramFeedbackUrl, 'https://t.me/FurippuFurappazu');
+  });
+
+  testWidgets('auto check update switch toggles store and shared preferences',
+      (tester) async {
+    await showSettings(tester);
+
+    final autoUpdate = find.widgetWithText(SwitchListTile, '自动检查更新');
+    expect(autoUpdate, findsOneWidget);
+    expect(tester.widget<SwitchListTile>(autoUpdate).value, isTrue);
+    expect(find.text('启动时自动检测新版本'), findsOneWidget);
+
+    await tester.tap(autoUpdate);
+    await tester.pump();
+    expect(LKStore.autoCheckUpdateEnabled.value, isFalse);
+    expect(
+        (await SharedPreferences.getInstance())
+            .getBool('auto_check_update_enabled'),
+        isFalse);
+
+    await tester.tap(autoUpdate);
+    await tester.pump();
+    expect(LKStore.autoCheckUpdateEnabled.value, isTrue);
+    expect(
+        (await SharedPreferences.getInstance())
+            .getBool('auto_check_update_enabled'),
+        isTrue);
   });
 }

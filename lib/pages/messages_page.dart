@@ -382,12 +382,17 @@ class _MessagesPageState extends State<_MessagesPageBody>
           tabs: [for (final category in _messageCategories) _tab(category)],
         ),
       ),
-      body: AnimatedSwitcher(
-        duration: AppMotion.duration(context, 180),
-        child: KeyedSubtree(
-          key: ValueKey(type),
-          child: type == 'dm' ? _buildDmBody() : _buildNotificationBody(type),
-        ),
+      body: TabBarView(
+        controller: _tabs,
+        children: [
+          for (final category in _messageCategories)
+            KeyedSubtree(
+              key: ValueKey(category.type),
+              child: category.type == 'dm'
+                  ? _buildDmBody()
+                  : _buildNotificationBody(category.type),
+            ),
+        ],
       ),
     );
   }

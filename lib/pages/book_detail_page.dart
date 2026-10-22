@@ -21,6 +21,62 @@ import 'media_viewer_page.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:share_plus/share_plus.dart';
 
+// Matches the shelf's compact rounded menu without coupling page state.
+PopupMenuItem<T> _detailMenuItem<T>(
+  BuildContext context, {
+  required T value,
+  required String label,
+  required IconData icon,
+  bool? selected,
+  String? subtitle,
+}) {
+  final colors = Theme.of(context).colorScheme;
+  final foreground =
+      selected == true ? colors.onSecondaryContainer : colors.onSurface;
+  return PopupMenuItem<T>(
+    value: value,
+    height: 48,
+    padding: const EdgeInsets.symmetric(horizontal: 8),
+    child: Semantics(
+      selected: selected,
+      child: Ink(
+        decoration: BoxDecoration(
+          color:
+              selected == true ? colors.secondaryContainer : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(children: [
+          Icon(icon, size: 20, color: foreground),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: foreground)),
+              if (subtitle != null)
+                Text(subtitle,
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelSmall
+                        ?.copyWith(color: colors.onSurfaceVariant)),
+            ],
+          )),
+          if (selected != null) ...[
+            const SizedBox(width: 8),
+            Icon(selected ? Icons.check_rounded : null,
+                size: 20, color: foreground),
+          ],
+        ]),
+      ),
+    ),
+  );
+}
+
 int _bookDetailInt(dynamic value) {
   if (value is num) return value.toInt();
   return int.tryParse(value?.toString() ?? '') ?? 0;
@@ -727,6 +783,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
                             builder: (context, enabled, _) {
                               return PopupMenuButton<String>(
                                 tooltip: '更多操作',
+                                constraints: const BoxConstraints(
+                                    minWidth: 224, maxWidth: 288),
+                                menuPadding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                color: scheme.surfaceContainer,
+                                surfaceTintColor: Colors.transparent,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20)),
                                 onSelected: (value) {
                                   if (value == 'share') {
                                     _shareBook(b);
@@ -735,34 +799,17 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                   }
                                 },
                                 itemBuilder: (context) => [
-                                  const PopupMenuItem(
-                                    value: 'share',
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          Icons.share_outlined,
-                                          size: 20,
-                                        ),
-                                        SizedBox(width: 8),
-                                        Text('分享书籍'),
-                                      ],
-                                    ),
-                                  ),
+                                  _detailMenuItem(context,
+                                      value: 'share',
+                                      label: '分享书籍',
+                                      icon: Icons.share_outlined),
                                   if (enabled &&
                                       LKClient.shared.session.isLoggedIn)
-                                    const PopupMenuItem(
-                                      value: 'epub',
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            Icons.download_for_offline_outlined,
-                                            size: 20,
-                                          ),
-                                          SizedBox(width: 8),
-                                          Text('书籍导出'),
-                                        ],
-                                      ),
-                                    ),
+                                    _detailMenuItem(context,
+                                        value: 'epub',
+                                        label: '书籍导出',
+                                        icon: Icons
+                                            .download_for_offline_outlined),
                                 ],
                               );
                             },
@@ -1768,26 +1815,22 @@ class _ChaptersPageState extends State<ChaptersPage> {
               tooltip: '切换分卷',
               icon: const Icon(Icons.library_books_outlined),
               onSelected: _selectVolume,
+              constraints: const BoxConstraints(minWidth: 224, maxWidth: 288),
+              menuPadding: const EdgeInsets.symmetric(vertical: 8),
+              color: Theme.of(context).colorScheme.surfaceContainer,
+              surfaceTintColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
               itemBuilder: (_) => _availableVolumes
-                  .map((volume) => CheckedPopupMenuItem<int>(
+                  .map((volume) => _detailMenuItem<int>(
+                        context,
                         value: volume.volumeId,
-                        checked: volume.volumeId == _volumeId,
-                        child: SizedBox(
-                          width: 240,
-                          child: Row(children: [
-                            Expanded(
-                              child: Text(volume.title,
-                                  maxLines: 2, overflow: TextOverflow.ellipsis),
-                            ),
-                            if (volume.chapterCount > 0) ...[
-                              const SizedBox(width: 8),
-                              Text('${volume.chapterCount} 章',
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.grey.shade500)),
-                            ],
-                          ]),
-                        ),
+                        label: volume.title,
+                        icon: Icons.library_books_outlined,
+                        selected: volume.volumeId == _volumeId,
+                        subtitle: volume.chapterCount > 0
+                            ? '${volume.chapterCount} 章'
+                            : null,
                       ))
                   .toList(growable: false),
             ),

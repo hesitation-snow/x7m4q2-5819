@@ -497,6 +497,16 @@ class _SettingsPageState extends State<SettingsPage> {
                   : const Icon(Icons.chevron_right_rounded),
               onTap: _checkingUpdate ? null : _checkForUpdate,
             ),
+            ValueListenableBuilder<bool>(
+              valueListenable: LKStore.autoCheckUpdateEnabled,
+              builder: (context, enabled, _) => SwitchListTile(
+                secondary: _settingsIcon(context, Icons.update_outlined),
+                title: const Text('自动检查更新'),
+                subtitle: const Text('启动时自动检测新版本'),
+                value: enabled,
+                onChanged: LKStore.setAutoCheckUpdateEnabled,
+              ),
+            ),
             ListTile(
               leading: _settingsIcon(context, Icons.feedback_outlined),
               title: const Text('反馈问题'),

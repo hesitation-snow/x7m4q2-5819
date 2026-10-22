@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/lk_api.dart';
 import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/models.dart';
+import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/messages_page.dart';
 
 http.Response _utf8Response(Map<String, dynamic> data, [int status = 200]) {
@@ -197,6 +198,102 @@ void main() {
     tearDown(() {
       LKApi.client = LKClient.shared;
       LKClient.shared.session.clear();
+    });
+
+    testWidgets('Category taps and bidirectional swipes keep tabs in sync',
+        (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final requests = <String>[];
+      LKApi.client =
+          LKClient.forTesting(httpClient: MockClient((request) async {
+        requests.add(request.url.path);
+        return _utf8Response({
+          'code': 0,
+          'data': {
+            'items': [],
+            'pagination': {'total': 0, 'page_size': 20, 'has_next': 0},
+          },
+        });
+      }));
+      await tester.pumpWidget(const MaterialApp(home: MessagesPage()));
+      await tester.pumpAndSettle();
+
+      TabController controller() =>
+          tester.widget<TabBar>(find.byType(TabBar)).controller!;
+      Future<void> swipe(double dx) async {
+        await tester.drag(find.byType(TabBarView), Offset(dx, 0));
+        await tester.pumpAndSettle();
+      }
+
+      expect(controller().index, 0);
+      expect(find.text('暂时没有回复消息'), findsOneWidget);
+      await swipe(-300);
+      expect(controller().index, 1);
+      expect(find.text('暂时没有提及消息'), findsOneWidget);
+      await swipe(300);
+      expect(controller().index, 0);
+      expect(find.text('暂时没有回复消息'), findsOneWidget);
+
+      requests.clear();
+      await tester.ensureVisible(find.text('点赞'));
+      await tester.tap(find.text('点赞'));
+      await tester.pumpAndSettle();
+      expect(controller().index, 2);
+      expect(find.text('暂无点赞消息'), findsOneWidget);
+      expect(requests, [endsWith('/api/bff/message-likes-v1')]);
+
+      // Swiping content also scrolls the narrow tab strip to the selected tab.
+      await swipe(-300);
+      expect(controller().index, 3);
+      await swipe(-300);
+      expect(controller().index, 4);
+      await swipe(-300);
+      expect(controller().index, 5);
+      expect(find.text('暂时没有关注消息'), findsOneWidget);
+      expect(find.text('关注').hitTestable(), findsOneWidget);
+      await swipe(300);
+      expect(controller().index, 4);
+      expect(find.text('暂时没有系统消息'), findsOneWidget);
+      expect(find.text('系统').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Disabled motion keeps swipes and skips intermediate loads',
+        (tester) async {
+      final animationsEnabled = LKStore.animationsEnabled.value;
+      LKStore.animationsEnabled.value = false;
+      addTearDown(() => LKStore.animationsEnabled.value = animationsEnabled);
+      final requests = <String>[];
+      LKApi.client =
+          LKClient.forTesting(httpClient: MockClient((request) async {
+        requests.add(request.url.path);
+        return _utf8Response({
+          'code': 0,
+          'data': {
+            'items': [],
+            'pagination': {'total': 0, 'page_size': 20, 'has_next': 0},
+          },
+        });
+      }));
+      await tester.pumpWidget(const MaterialApp(home: MessagesPage()));
+      await tester.pumpAndSettle();
+      requests.clear();
+      await tester.tap(find.text('关注'));
+      await tester.pumpAndSettle();
+      expect(find.text('暂时没有关注消息'), findsOneWidget);
+      expect(requests, [endsWith('/api/bff/message-fans-v1')]);
+      await tester.drag(find.byType(TabBarView), const Offset(650, 0));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TabBar>(find.byType(TabBar)).controller!.index, 4);
+      expect(find.text('暂时没有系统消息'), findsOneWidget);
+      await tester.drag(find.byType(TabBarView), const Offset(-650, 0));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TabBar>(find.byType(TabBar)).controller!.index, 5);
+      expect(find.text('暂时没有关注消息'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('Renders empty state with official text 暂无点赞消息',

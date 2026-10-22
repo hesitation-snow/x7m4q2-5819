@@ -80,6 +80,10 @@ class LKStore {
   static final ValueNotifier<bool> enhancedContentStyleEnabled =
       ValueNotifier(true);
 
+  /// 自动检查更新开关，默认开启
+  static final ValueNotifier<bool> autoCheckUpdateEnabled =
+      ValueNotifier(true);
+
   /// 已确认需勇者权限的小说 ID 缓存（内置预置 14162 标杆书籍）
   static final Set<int> _braveBookIds = {14162};
 
@@ -189,6 +193,8 @@ class LKStore {
     epubDownloadEnabled.value = p.getBool('epub_download_enabled') ?? false;
     enhancedContentStyleEnabled.value =
         p.getBool('reader_enhanced_content_style') ?? true;
+    autoCheckUpdateEnabled.value =
+        p.getBool('auto_check_update_enabled') ?? true;
     setBraveBookChecker(isBraveBook);
     final storedBraveIds = p.getStringList('known_brave_book_ids');
     if (storedBraveIds != null) {
@@ -284,6 +290,13 @@ class LKStore {
     enhancedContentStyleEnabled.value = enable;
     final p = await SharedPreferences.getInstance();
     await p.setBool('reader_enhanced_content_style', enable);
+  }
+
+  static Future<void> setAutoCheckUpdateEnabled(bool enable) async {
+    if (autoCheckUpdateEnabled.value == enable) return;
+    autoCheckUpdateEnabled.value = enable;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('auto_check_update_enabled', enable);
   }
 
   static Future<void> clear() async {
@@ -550,8 +563,9 @@ class LKStore {
     final books = (await localShelf()).toList();
     books.removeWhere((item) => item.bookId == book.bookId);
     if (added) books.insert(0, book);
-    await (await SharedPreferences.getInstance()).setString(
+    final saved = await (await SharedPreferences.getInstance()).setString(
         _localShelfKey, jsonEncode(books.map((e) => e.toJson()).toList()));
+    if (!saved) throw StateError('本机书架保存失败');
     localShelfRev.value++;
   }
 

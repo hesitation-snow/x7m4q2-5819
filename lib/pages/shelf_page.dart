@@ -44,6 +44,8 @@ class _ShelfPageState extends State<ShelfPage> {
   _ShelfSort _sort = _ShelfSort.serverOrder;
   _ShelfFilter _filter = _ShelfFilter.all;
   int _loadSerial = 0;
+  final _removing = <int>{};
+  bool _updatingLocalShelf = false;
   final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
   static const double _topBarFlex = 56.0;
 
@@ -160,6 +162,7 @@ class _ShelfPageState extends State<ShelfPage> {
   }
 
   void _onLocalShelfRev() {
+    if (_updatingLocalShelf) return;
     if (!mounted) return;
     if (!_localMode && LKClient.shared.session.isLoggedIn) {
       if (_loading) {
@@ -470,6 +473,7 @@ class _ShelfPageState extends State<ShelfPage> {
   }
 
   void _toggleShelfSource() {
+    if (_removing.isNotEmpty) return;
     if (!LKClient.shared.session.isLoggedIn) {
       if (!_localMode) setState(() => _localMode = true);
       return;
@@ -539,47 +543,161 @@ class _ShelfPageState extends State<ShelfPage> {
           }
         });
       },
+      constraints: const BoxConstraints(minWidth: 224, maxWidth: 288),
+      padding: const EdgeInsets.all(8),
+      menuPadding: const EdgeInsets.symmetric(vertical: 8),
+      color: Theme.of(context).colorScheme.surfaceContainer,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       itemBuilder: (_) => [
-        const PopupMenuItem(enabled: false, child: Text('筛选')),
-        CheckedPopupMenuItem(
-          value: 'filter:all',
-          checked: _filter == _ShelfFilter.all,
-          child: const Text('全部作品'),
-        ),
-        CheckedPopupMenuItem(
-          value: 'filter:unread',
-          checked: _filter == _ShelfFilter.unread,
-          child: const Text('有更新'),
-        ),
-        CheckedPopupMenuItem(
-          value: 'filter:serializing',
-          checked: _filter == _ShelfFilter.serializing,
-          child: const Text('连载中'),
-        ),
-        CheckedPopupMenuItem(
-          value: 'filter:completed',
-          checked: _filter == _ShelfFilter.completed,
-          child: const Text('已完结'),
-        ),
-        const PopupMenuDivider(),
-        const PopupMenuItem(enabled: false, child: Text('排序')),
-        CheckedPopupMenuItem(
-          value: 'sort:server',
-          checked: _sort == _ShelfSort.serverOrder,
-          child: const Text('默认顺序'),
-        ),
-        CheckedPopupMenuItem(
-          value: 'sort:updated',
-          checked: _sort == _ShelfSort.recentlyUpdated,
-          child: const Text('最近更新'),
-        ),
-        CheckedPopupMenuItem(
-          value: 'sort:title',
-          checked: _sort == _ShelfSort.title,
-          child: const Text('按书名'),
-        ),
+        _menuHeading('筛选'),
+        _menuChoice('filter:all', '全部作品', Icons.library_books_outlined,
+            _filter == _ShelfFilter.all),
+        _menuChoice('filter:unread', '有更新', Icons.new_releases_outlined,
+            _filter == _ShelfFilter.unread),
+        _menuChoice('filter:serializing', '连载中', Icons.edit_note_rounded,
+            _filter == _ShelfFilter.serializing),
+        _menuChoice('filter:completed', '已完结', Icons.task_alt_rounded,
+            _filter == _ShelfFilter.completed),
+        const PopupMenuDivider(height: 16),
+        _menuHeading('排序'),
+        _menuChoice('sort:server', '默认顺序', Icons.format_list_numbered_rounded,
+            _sort == _ShelfSort.serverOrder),
+        _menuChoice('sort:updated', '最近更新', Icons.update_rounded,
+            _sort == _ShelfSort.recentlyUpdated),
+        _menuChoice('sort:title', '按书名', Icons.sort_by_alpha_rounded,
+            _sort == _ShelfSort.title),
       ],
     );
+  }
+
+  PopupMenuItem<String> _menuHeading(String label) {
+    final theme = Theme.of(context);
+    return PopupMenuItem<String>(
+      enabled: false,
+      height: 32,
+      child: Text(label,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          )),
+    );
+  }
+
+  PopupMenuItem<String> _menuChoice(
+      String value, String label, IconData icon, bool selected) {
+    final colors = Theme.of(context).colorScheme;
+    final foreground =
+        selected ? colors.onSecondaryContainer : colors.onSurface;
+    return PopupMenuItem<String>(
+      value: value,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      height: 48,
+      child: Semantics(
+        selected: selected,
+        child: Ink(
+          decoration: BoxDecoration(
+            color: selected ? colors.secondaryContainer : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(children: [
+            Icon(icon, size: 20, color: foreground),
+            const SizedBox(width: 12),
+            Expanded(child: Text(label, style: TextStyle(color: foreground))),
+            const SizedBox(width: 8),
+            Icon(selected ? Icons.check_rounded : null,
+                size: 20, color: foreground),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _withShelfActions(LKBook book, Widget child) => Semantics(
+        hint: '长按管理书架',
+        child: GestureDetector(
+          onLongPress: () => _showBookActions(book),
+          child: child,
+        ),
+      );
+
+  Future<void> _showBookActions(LKBook book) async {
+    if (_removing.isNotEmpty) return;
+    final remove = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: ListTile(
+            leading: const Icon(Icons.playlist_remove_rounded),
+            title: const Text('从书架移除'),
+            subtitle: Text(book.title),
+            onTap: () => Navigator.pop(context, true),
+          ),
+        ),
+      ),
+    );
+    if (remove != true || !mounted || !_removing.add(book.bookId)) return;
+    final local = _localMode;
+    final uid = LKClient.shared.session.uid;
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('从书架移除？'),
+          content: Text(
+              '将《${book.title}》移出${local ? '本机' : '云端及本机'}书架。\n仅移出书架，不删除阅读记录、正文或下载文件。'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('确认移除')),
+          ],
+        ),
+      );
+      if (confirmed != true ||
+          !mounted ||
+          local != _localMode ||
+          uid != LKClient.shared.session.uid) {
+        return;
+      }
+      if (!local) await LKApi.toggleShelf(book.bookId, false);
+      if (!mounted || uid != LKClient.shared.session.uid) return;
+      _updatingLocalShelf = true;
+      try {
+        await LKStore.setLocalShelf(book, false);
+      } finally {
+        _updatingLocalShelf = false;
+      }
+      if (!mounted ||
+          local != _localMode ||
+          uid != LKClient.shared.session.uid) {
+        return;
+      }
+      // Discard an older in-flight snapshot rather than restoring the removed book.
+      _loadSerial++;
+      setState(() {
+        _items = _items.where((item) => item.bookId != book.bookId).toList();
+        // Offset-based pages shift after deletion. Overlap the next existing
+        // load by one page; mergePagedItems deduplicates without a new request now.
+        if (!local && _hasMore) _page = (_page - 1).clamp(0, _page);
+        _loading = false;
+      });
+      if (!local) await LKStore.cacheBooksPage(_shelfCacheKey(uid), _items);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('移除失败，请重试'),
+          action: SnackBarAction(
+              label: '重试', onPressed: () => _showBookActions(book)),
+        ));
+      }
+    } finally {
+      _removing.remove(book.bookId);
+    }
   }
 
   Widget _shelfLoadMoreFooter() {
@@ -622,81 +740,86 @@ class _ShelfPageState extends State<ShelfPage> {
             )
           : _loading && _items.isEmpty
               ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: MediaQuery.sizeOf(context).height * 0.65,
-                        child: const Center(child: LkLoadingIndicator()),
-                      ),
-                    ],
-                  )
-                : visibleItems.isEmpty
-                    ? ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: [
-                          SizedBox(
-                            height: MediaQuery.sizeOf(context).height * 0.55,
-                            child: Center(
-                              child: Text(
-                                _items.isEmpty ? '书架还是空的' : '没有符合当前筛选的作品',
-                                style: const TextStyle(color: Colors.grey),
-                              ),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: [
+                    SizedBox(
+                      height: MediaQuery.sizeOf(context).height * 0.65,
+                      child: const Center(child: LkLoadingIndicator()),
+                    ),
+                  ],
+                )
+              : visibleItems.isEmpty
+                  ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        SizedBox(
+                          height: MediaQuery.sizeOf(context).height * 0.55,
+                          child: Center(
+                            child: Text(
+                              _items.isEmpty ? '书架还是空的' : '没有符合当前筛选的作品',
+                              style: const TextStyle(color: Colors.grey),
                             ),
                           ),
-                          if (_hasMore) _shelfLoadMoreFooter(),
-                        ],
-                      )
-                    : _listMode
-                        ? ListView.builder(
-                            scrollCacheExtent:
-                                const ScrollCacheExtent.viewport(1.0),
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: EdgeInsets.fromLTRB(8, 4, 8,
-                                12 + MediaQuery.of(context).padding.bottom),
-                            itemCount: visibleItems.length + (_hasMore ? 1 : 0),
-                            itemBuilder: (_, i) {
-                              if (i >= visibleItems.length) {
-                                return _shelfLoadMoreFooter();
-                              }
-                              final b = visibleItems[i];
-                              return BookCard(
-                                book: b,
-                                onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) =>
-                                          BookDetailPage(bookId: b.bookId)),
-                                ),
-                              );
-                            },
-                          )
-                        : GridView.builder(
-                            controller: _gridScrollController,
-                            scrollCacheExtent:
-                                const ScrollCacheExtent.viewport(1.0),
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: EdgeInsets.fromLTRB(12, 8, 12,
-                                12 + MediaQuery.of(context).padding.bottom),
-                            gridDelegate: bookGridDelegate(context, isShelf: true),
-                            itemCount: visibleItems.length + (_hasMore ? 1 : 0),
-                            itemBuilder: (_, i) {
-                              if (i >= visibleItems.length) {
-                                return _shelfLoadMoreFooter();
-                              }
-                              final b = visibleItems[i];
-                              return BookGridCard(
-                                book: b,
-                                isShelf: true,
-                                onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) =>
-                                          BookDetailPage(bookId: b.bookId)),
-                                ),
-                              );
-                            },
-                          ),
-          );
+                        ),
+                        if (_hasMore) _shelfLoadMoreFooter(),
+                      ],
+                    )
+                  : _listMode
+                      ? ListView.builder(
+                          scrollCacheExtent:
+                              const ScrollCacheExtent.viewport(1.0),
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: EdgeInsets.fromLTRB(8, 4, 8,
+                              12 + MediaQuery.of(context).padding.bottom),
+                          itemCount: visibleItems.length + (_hasMore ? 1 : 0),
+                          itemBuilder: (_, i) {
+                            if (i >= visibleItems.length) {
+                              return _shelfLoadMoreFooter();
+                            }
+                            final b = visibleItems[i];
+                            return _withShelfActions(
+                                b,
+                                BookCard(
+                                  book: b,
+                                  onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) =>
+                                            BookDetailPage(bookId: b.bookId)),
+                                  ),
+                                ));
+                          },
+                        )
+                      : GridView.builder(
+                          controller: _gridScrollController,
+                          scrollCacheExtent:
+                              const ScrollCacheExtent.viewport(1.0),
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: EdgeInsets.fromLTRB(12, 8, 12,
+                              12 + MediaQuery.of(context).padding.bottom),
+                          gridDelegate:
+                              bookGridDelegate(context, isShelf: true),
+                          itemCount: visibleItems.length + (_hasMore ? 1 : 0),
+                          itemBuilder: (_, i) {
+                            if (i >= visibleItems.length) {
+                              return _shelfLoadMoreFooter();
+                            }
+                            final b = visibleItems[i];
+                            return _withShelfActions(
+                                b,
+                                BookGridCard(
+                                  book: b,
+                                  isShelf: true,
+                                  onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) =>
+                                            BookDetailPage(bookId: b.bookId)),
+                                  ),
+                                ));
+                          },
+                        ),
+    );
     if (!widget.embedded) {
       return Scaffold(
         appBar: AppBar(
@@ -707,9 +830,7 @@ class _ShelfPageState extends State<ShelfPage> {
             GestureDetector(
               onLongPress: () => showGridColumnsSheet(context),
               child: IconButton(
-                tooltip: _listMode
-                    ? '切换为网格（长按设置列数）'
-                    : '切换为列表（长按设置列数）',
+                tooltip: _listMode ? '切换为网格（长按设置列数）' : '切换为列表（长按设置列数）',
                 icon: Icon(_listMode
                     ? Icons.grid_view_rounded
                     : Icons.view_agenda_outlined),
