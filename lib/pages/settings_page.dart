@@ -562,34 +562,117 @@ class _SettingsPageState extends State<SettingsPage> {
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
-      builder: (sheetCtx) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Padding(
-              padding: EdgeInsets.all(14),
-              child: Text('主题模式',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ),
-            for (final (label, value) in [
-              ('跟随系统', ThemeMode.system),
-              ('浅色', ThemeMode.light),
-              ('深色', ThemeMode.dark),
-            ])
-              ListTile(
-                title: Text(label),
-                trailing: LKStore.themeMode.value == value
-                    ? Icon(Icons.check_circle_rounded,
-                        color: Theme.of(context).colorScheme.primary)
-                    : const Icon(Icons.circle_outlined, color: Colors.grey),
-                onTap: () {
-                  LKStore.setThemeMode(value);
-                  Navigator.pop(sheetCtx);
-                },
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        final scheme = Theme.of(sheetCtx).colorScheme;
+        return Container(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainer,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
+            16 + MediaQuery.of(sheetCtx).padding.bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: scheme.outlineVariant.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
               ),
-            const SizedBox(height: 8),
-          ]),
-        ),
-      ),
+              const SizedBox(height: 14),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.palette_outlined,
+                        size: 20, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Text(
+                      '主题模式',
+                      style:
+                          Theme.of(sheetCtx).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              for (final (label, value, icon) in [
+                ('跟随系统', ThemeMode.system, Icons.brightness_auto_outlined),
+                ('浅色模式', ThemeMode.light, Icons.light_mode_outlined),
+                ('深色模式', ThemeMode.dark, Icons.dark_mode_outlined),
+              ]) ...[
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Material(
+                    color: LKStore.themeMode.value == value
+                        ? scheme.secondaryContainer
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(14),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () {
+                        LKStore.setThemeMode(value);
+                        Navigator.pop(sheetCtx);
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        child: Row(
+                          children: [
+                            Icon(
+                              icon,
+                              size: 20,
+                              color: LKStore.themeMode.value == value
+                                  ? scheme.onSecondaryContainer
+                                  : scheme.onSurface,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                label,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight:
+                                      LKStore.themeMode.value == value
+                                          ? FontWeight.bold
+                                          : FontWeight.w500,
+                                  color: LKStore.themeMode.value == value
+                                      ? scheme.onSecondaryContainer
+                                      : scheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            if (LKStore.themeMode.value == value)
+                              Icon(
+                                Icons.check_rounded,
+                                size: 20,
+                                color: scheme.onSecondaryContainer,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -597,34 +680,134 @@ class _SettingsPageState extends State<SettingsPage> {
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
-      builder: (sheetCtx) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Padding(
-              padding: EdgeInsets.all(14),
-              child: Text('封面模糊',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ),
-            for (final (label, value) in [
-              ('全部书籍', CoverBlurMode.all),
-              ('勇者书籍', CoverBlurMode.brave),
-              ('关闭', CoverBlurMode.none),
-            ])
-              ListTile(
-                title: Text(label),
-                trailing: LKStore.coverBlurMode.value == value
-                    ? Icon(Icons.check_circle_rounded,
-                        color: Theme.of(context).colorScheme.primary)
-                    : const Icon(Icons.circle_outlined, color: Colors.grey),
-                onTap: () {
-                  LKStore.setCoverBlurMode(value);
-                  Navigator.pop(sheetCtx);
-                },
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        final scheme = Theme.of(sheetCtx).colorScheme;
+        return Container(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainer,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
+            16 + MediaQuery.of(sheetCtx).padding.bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: scheme.outlineVariant.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
               ),
-            const SizedBox(height: 8),
-          ]),
-        ),
-      ),
+              const SizedBox(height: 14),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.blur_on_rounded,
+                        size: 20, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Text(
+                      '封面模糊',
+                      style:
+                          Theme.of(sheetCtx).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              for (final (label, sub, value, icon) in [
+                ('全部书籍', '所有小说的封面均进行模糊处理', CoverBlurMode.all,
+                    Icons.blur_on_rounded),
+                ('勇者书籍', '仅针对可能涉及敏感的勇者书籍进行模糊', CoverBlurMode.brave,
+                    Icons.visibility_off_outlined),
+                ('关闭', '直接展示原始小说封面海报', CoverBlurMode.none,
+                    Icons.blur_off_rounded),
+              ]) ...[
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Material(
+                    color: LKStore.coverBlurMode.value == value
+                        ? scheme.secondaryContainer
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(14),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () {
+                        LKStore.setCoverBlurMode(value);
+                        Navigator.pop(sheetCtx);
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        child: Row(
+                          children: [
+                            Icon(
+                              icon,
+                              size: 20,
+                              color: LKStore.coverBlurMode.value == value
+                                  ? scheme.onSecondaryContainer
+                                  : scheme.onSurface,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    label,
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight:
+                                          LKStore.coverBlurMode.value == value
+                                              ? FontWeight.bold
+                                              : FontWeight.w500,
+                                      color:
+                                          LKStore.coverBlurMode.value == value
+                                              ? scheme.onSecondaryContainer
+                                              : scheme.onSurface,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    sub,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (LKStore.coverBlurMode.value == value)
+                              Icon(
+                                Icons.check_rounded,
+                                size: 20,
+                                color: scheme.onSecondaryContainer,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

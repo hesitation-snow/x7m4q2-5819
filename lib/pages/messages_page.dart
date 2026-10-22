@@ -379,6 +379,8 @@ class _MessagesPageState extends State<_MessagesPageBody>
         bottom: TabBar(
           controller: _tabs,
           isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          padding: EdgeInsets.zero,
           tabs: [for (final category in _messageCategories) _tab(category)],
         ),
       ),

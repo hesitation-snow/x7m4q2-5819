@@ -783,6 +783,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
                             builder: (context, enabled, _) {
                               return PopupMenuButton<String>(
                                 tooltip: '更多操作',
+                                position: PopupMenuPosition.under,
+                                offset: const Offset(0, 8),
                                 constraints: const BoxConstraints(
                                     minWidth: 224, maxWidth: 288),
                                 menuPadding:
@@ -1813,6 +1815,8 @@ class _ChaptersPageState extends State<ChaptersPage> {
           if (_availableVolumes.length > 1)
             PopupMenuButton<int>(
               tooltip: '切换分卷',
+              position: PopupMenuPosition.under,
+              offset: const Offset(0, 8),
               icon: const Icon(Icons.library_books_outlined),
               onSelected: _selectVolume,
               constraints: const BoxConstraints(minWidth: 224, maxWidth: 288),

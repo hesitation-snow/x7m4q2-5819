@@ -511,6 +511,8 @@ class _ShelfPageState extends State<ShelfPage> {
         _filter != _ShelfFilter.all || _sort != _ShelfSort.serverOrder;
     return PopupMenuButton<String>(
       tooltip: '筛选与排序',
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, 8),
       icon: Badge(
         isLabelVisible: active,
         smallSize: 7,
@@ -625,18 +627,87 @@ class _ShelfPageState extends State<ShelfPage> {
     if (_removing.isNotEmpty) return;
     final remove = await showModalBottomSheet<bool>(
       context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: ListTile(
-            leading: const Icon(Icons.playlist_remove_rounded),
-            title: const Text('从书架移除'),
-            subtitle: Text(book.title),
-            onTap: () => Navigator.pop(context, true),
+      sheetAnimationStyle: AppMotion.style(context),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        final scheme = Theme.of(sheetCtx).colorScheme;
+        return Container(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainer,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
-        ),
-      ),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
+            16 + MediaQuery.of(sheetCtx).padding.bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: scheme.outlineVariant.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => Navigator.pop(sheetCtx, true),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.playlist_remove_rounded,
+                            size: 22, color: scheme.error),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '从书架移除',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: scheme.error,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                book.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.chevron_right_rounded,
+                            size: 18, color: scheme.onSurfaceVariant),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
     if (remove != true || !mounted || !_removing.add(book.bookId)) return;
     final local = _localMode;
