@@ -1512,17 +1512,27 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
   List<dynamic> _items = [];
   String? _error;
   bool _loading = true;
+  final Set<int> _pendingDeletes = {};
+  final Map<int, int> _itemGenerations = {};
+  int _epoch = 0;
+  int _loadRevision = 0;
+  int _mutationRevision = 0;
+
+  (int, String) get _identity =>
+      (LKClient.shared.session.uid, LKClient.shared.session.securityKey);
 
   @override
   void initState() {
     super.initState();
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
+    LKClient.sessionRev.addListener(_onSessionChanged);
     _load();
   }
 
   @override
   void dispose() {
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    LKClient.sessionRev.removeListener(_onSessionChanged);
     super.dispose();
   }
 
@@ -1530,8 +1540,29 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
     if (mounted) setState(() {});
   }
 
+  void _onSessionChanged() {
+    _epoch++;
+    _items = [];
+    _pendingDeletes.clear();
+    _itemGenerations.clear();
+    _load();
+  }
+
   Future<void> _load() async {
-    setState(() => _loading = true);
+    final epoch = _epoch;
+    final identity = _identity;
+    final revision = ++_loadRevision;
+    final mutation = _mutationRevision;
+    final hadPendingDeletes = _pendingDeletes.isNotEmpty;
+    bool isCurrent() =>
+        mounted &&
+        epoch == _epoch &&
+        identity == _identity &&
+        revision == _loadRevision;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       if (!LKClient.shared.session.isLoggedIn) {
         setState(() {
@@ -1541,12 +1572,54 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
         return;
       }
       final items = await LKApi.cloudHistory(1);
-      if (!mounted) return;
-      setState(() => _items = items);
+      if (!isCurrent()) return;
+      // A snapshot fetched across a deletion may be older than the local list.
+      // Keep the ordered local entries until all overlapping deletes settle.
+      if (!hadPendingDeletes &&
+          _pendingDeletes.isEmpty &&
+          mutation == _mutationRevision) {
+        setState(() => _items = items);
+      }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (isCurrent()) setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (isCurrent()) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _deleteHistory(dynamic item) async {
+    final int bookId = item.bookId;
+    if (_pendingDeletes.contains(bookId)) return;
+    final epoch = _epoch;
+    final identity = _identity;
+    bool isCurrent() => mounted && epoch == _epoch && identity == _identity;
+    setState(() {
+      _pendingDeletes.add(bookId);
+      _mutationRevision++;
+    });
+    try {
+      await LKApi.deleteHistory(bookId);
+      if (!mounted || !isCurrent()) return;
+      setState(() {
+        _pendingDeletes.remove(bookId);
+        _items.removeWhere((h) => h.bookId == bookId);
+        _mutationRevision++;
+      });
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('已删除《${item.title}》的阅读记录'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ));
+    } catch (e) {
+      if (!mounted || !isCurrent()) return;
+      setState(() {
+        _pendingDeletes.remove(bookId);
+        // Even an immediate failure must create a fresh Dismissible state.
+        _itemGenerations[bookId] = (_itemGenerations[bookId] ?? 0) + 1;
+        _mutationRevision++;
+      });
+      showLkError(context, e);
     }
   }
 
@@ -1573,11 +1646,11 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
           child: Text(_error!, style: const TextStyle(color: Colors.grey)));
     }
     final hideBrave = LKStore.hideBraveBooks.value;
-    final visibleItems = hideBrave
-        ? _items
-            .where((h) => h is! LKHistoryItem || !h.isBrave)
-            .toList(growable: true)
-        : _items;
+    final visibleItems = _items
+        .where((h) =>
+            !_pendingDeletes.contains(h.bookId) &&
+            (!hideBrave || h is! LKHistoryItem || !h.isBrave))
+        .toList();
 
     if (visibleItems.isEmpty) {
       return MotionRefreshIndicator(
@@ -1615,7 +1688,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
           final h = visibleItems[i];
           final bookId = h.bookId;
           return Dismissible(
-            key: ValueKey('history-$bookId'),
+            key: ValueKey('history-$_epoch-$bookId-${_itemGenerations[bookId] ?? 0}'),
             direction: DismissDirection.endToStart,
             background: Container(
               margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1642,32 +1715,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                 ],
               ),
             ),
-            confirmDismiss: (direction) async {
-              try {
-                await LKApi.deleteHistory(bookId);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).clearSnackBars();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('已删除《${h.title}》的阅读记录'),
-                      behavior: SnackBarBehavior.floating,
-                      duration: const Duration(seconds: 3),
-                    ),
-                  );
-                }
-                return true;
-              } catch (e) {
-                if (context.mounted) {
-                  showLkError(context, e);
-                }
-                return false;
-              }
-            },
-            onDismissed: (direction) {
-              setState(() {
-                _items.remove(h);
-              });
-            },
+            onDismissed: (_) => _deleteHistory(h),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: Material(

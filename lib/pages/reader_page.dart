@@ -38,6 +38,8 @@ import '../reader/reader_indent.dart';
 import '../services/reader_volume_keys.dart';
 import '../services/reader_system_ui.dart';
 import '../widgets/reader_device_status.dart';
+import '../widgets/reader_indicators.dart';
+import '../reader/indicator_position.dart';
 import '../reader/structured_content.dart';
 import '../reader/reader_typography.dart';
 import '../widgets/reader_typography_sheet.dart';
@@ -258,6 +260,7 @@ class _ReaderPageState extends State<ReaderPage>
   late final ReaderVolumeKeys _volumeKeys;
   ModalRoute<dynamic>? _observedRoute;
   bool _indicators = true;
+  IndicatorPosition _indicatorPosition = const IndicatorPosition();
   bool _traditional = false;
   bool _simplified = false;
 
@@ -1276,6 +1279,7 @@ class _ReaderPageState extends State<ReaderPage>
       _tapTurn = prefs.tapTurnPage;
       _volumeTurn = ReaderVolumeKeys.supported && prefs.volumeTurnPage;
       _indicators = prefs.showIndicators;
+      _indicatorPosition = prefs.indicatorPosition;
       _traditional = prefs.traditional;
       _simplified = prefs.simplified;
       _paged = prefs.pagedMode;
@@ -2668,6 +2672,17 @@ class _ReaderPageState extends State<ReaderPage>
                                     setSheet(() {});
                                     ReaderPrefs.setShowIndicators(v);
                                   }),
+                                  IndicatorPositionSettings(
+                                    value: _indicatorPosition,
+                                    onChanged: (value) {
+                                      setState(
+                                          () => _indicatorPosition = value);
+                                      setSheet(() {});
+                                      unawaited(
+                                          ReaderPrefs.saveIndicatorPosition(
+                                              value));
+                                    },
+                                  ),
                                 ]),
                                 ReaderSettingsSection(title: '文字转换', children: [
                                   _switchTile(scheme, Icons.translate_rounded,
@@ -4461,55 +4476,26 @@ class _ReaderPageState extends State<ReaderPage>
                                   },
                                   child: const Text('重试'))))),
                 if (_indicators && !_chrome && !_loading)
-                  Positioned(
-                    top: _hideBar ? 6.0 : padTop + 6,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: Text(
-                        _title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: _textColor.withValues(alpha: 0.45)),
-                      ),
-                    ),
-                  ),
-                if (_indicators && !_chrome && !_loading)
-                  Positioned(
-                    bottom: 8,
-                    right: 16 + MediaQuery.of(context).padding.right,
-                    child: RepaintBoundary(
-                      child: _paged
-                          ? Text(
-                              '第 ${_pageIndex + 1}/${_pages.length} 页',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: _textColor.withValues(alpha: 0.45)),
-                            )
-                          : ValueListenableBuilder<double>(
-                              valueListenable: _progressN,
-                              builder: (_, v, __) => Text(
-                                '${(v * 100).toStringAsFixed(1)}%',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: _textColor.withValues(alpha: 0.45)),
-                              ),
-                            ),
-                    ),
-                  ),
-                if (_indicators &&
-                    _hideBar &&
-                    !_chrome &&
-                    !_loading &&
-                    _loadError == null)
-                  Positioned(
-                    bottom: 8,
-                    left: 16 + MediaQuery.of(context).padding.left,
-                    child: RepaintBoundary(
-                      child: ReaderDeviceStatus(
-                        color: _textColor.withValues(alpha: 0.45),
+                  Positioned.fill(
+                    child: DefaultTextStyle(
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: _textColor.withValues(alpha: 0.45)),
+                      child: ReaderIndicators(
+                        position: _indicatorPosition,
+                        title: _title,
+                        progress: RepaintBoundary(
+                            child: _paged
+                                ? Text('第 ${_pageIndex + 1}/${_pages.length} 页')
+                                : ValueListenableBuilder<double>(
+                                    valueListenable: _progressN,
+                                    builder: (_, v, __) => Text(
+                                        '${(v * 100).toStringAsFixed(1)}%'))),
+                        deviceStatus: _hideBar && _loadError == null
+                            ? RepaintBoundary(
+                                child: ReaderDeviceStatus(
+                                    color: _textColor.withValues(alpha: 0.45)))
+                            : null,
                       ),
                     ),
                   ),

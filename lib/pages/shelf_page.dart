@@ -1,3 +1,4 @@
+import '../widgets/m3_menu_sheet.dart';
 import '../services/app_motion.dart';
 import '../services/background_work_queue.dart';
 import 'dart:async';
@@ -632,80 +633,57 @@ class _ShelfPageState extends State<ShelfPage> {
       isScrollControlled: true,
       builder: (sheetCtx) {
         final scheme = Theme.of(sheetCtx).colorScheme;
-        return Container(
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainer,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: EdgeInsets.fromLTRB(
-            16,
-            12,
-            16,
-            16 + MediaQuery.of(sheetCtx).padding.bottom,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: scheme.outlineVariant.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Material(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                  onTap: () => Navigator.pop(sheetCtx, true),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 12),
-                    child: Row(
-                      children: [
-                        Icon(Icons.playlist_remove_rounded,
-                            size: 22, color: scheme.error),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '从书架移除',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
-                                  color: scheme.error,
-                                ),
+        return M3MenuSheet(
+          title: '书架操作',
+          icon: Icons.library_books_outlined,
+          children: [
+            Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: () => Navigator.pop(sheetCtx, true),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  child: Row(
+                    children: [
+                      Icon(Icons.playlist_remove_rounded,
+                          size: 22, color: scheme.error),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '从书架移除',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: scheme.error,
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                book.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: scheme.onSurfaceVariant,
-                                ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              book.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: scheme.onSurfaceVariant,
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                        Icon(Icons.chevron_right_rounded,
-                            size: 18, color: scheme.onSurfaceVariant),
-                      ],
-                    ),
+                      ),
+                      Icon(Icons.chevron_right_rounded,
+                          size: 18, color: scheme.onSurfaceVariant),
+                    ],
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );

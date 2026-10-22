@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -82,7 +83,10 @@ void main() {
       handler: (req) async {
         if (req.url.path.endsWith('/history-v1')) {
           return http.Response(
-            jsonEncode({'code': 0, 'data': {'list': mockHistoryItems}}),
+            jsonEncode({
+              'code': 0,
+              'data': {'list': mockHistoryItems}
+            }),
             200,
             headers: {'content-type': 'application/json; charset=utf-8'},
           );
@@ -110,7 +114,10 @@ void main() {
       handler: (req) async {
         if (req.url.path.endsWith('/history-v1')) {
           return http.Response(
-            jsonEncode({'code': 0, 'data': {'list': mockHistoryItems}}),
+            jsonEncode({
+              'code': 0,
+              'data': {'list': mockHistoryItems}
+            }),
             200,
             headers: {'content-type': 'application/json; charset=utf-8'},
           );
@@ -119,7 +126,10 @@ void main() {
           final body = jsonDecode(req.body) as Map<String, dynamic>;
           deletedBookIds.add(body['book_id'] as int);
           return http.Response(
-            jsonEncode({'code': 0, 'data': {'status': 'success'}}),
+            jsonEncode({
+              'code': 0,
+              'data': {'status': 'success'}
+            }),
             200,
             headers: {'content-type': 'application/json; charset=utf-8'},
           );
@@ -138,14 +148,18 @@ void main() {
     expect(find.text('已删除《测试历史作品一》的阅读记录'), findsOneWidget);
   });
 
-  testWidgets('swipe deletion failure restores the history item and shows error',
+  testWidgets(
+      'swipe deletion failure restores the history item and shows error',
       (tester) async {
     await pumpHistoryTab(
       tester,
       handler: (req) async {
         if (req.url.path.endsWith('/history-v1')) {
           return http.Response(
-            jsonEncode({'code': 0, 'data': {'list': mockHistoryItems}}),
+            jsonEncode({
+              'code': 0,
+              'data': {'list': mockHistoryItems}
+            }),
             200,
             headers: {'content-type': 'application/json; charset=utf-8'},
           );
@@ -177,14 +191,20 @@ void main() {
       handler: (req) async {
         if (req.url.path.endsWith('/history-v1')) {
           return http.Response(
-            jsonEncode({'code': 0, 'data': {'list': singleItem}}),
+            jsonEncode({
+              'code': 0,
+              'data': {'list': singleItem}
+            }),
             200,
             headers: {'content-type': 'application/json; charset=utf-8'},
           );
         }
         if (req.url.path.endsWith('/delete-book-history')) {
           return http.Response(
-            jsonEncode({'code': 0, 'data': {'status': 'success'}}),
+            jsonEncode({
+              'code': 0,
+              'data': {'status': 'success'}
+            }),
             200,
             headers: {'content-type': 'application/json; charset=utf-8'},
           );
@@ -199,5 +219,184 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('暂无阅读历史'), findsOneWidget);
+  });
+  http.Response response(Object data) => http.Response(jsonEncode(data), 200,
+      headers: {'content-type': 'application/json; charset=utf-8'});
+
+  testWidgets(
+      'long press does not delete and brave visibility remains reactive',
+      (tester) async {
+    var deletes = 0;
+    LKStore.hideBraveBooks.value = false;
+    addTearDown(() => LKStore.hideBraveBooks.value = false);
+    await pumpHistoryTab(tester, handler: (req) async {
+      if (req.url.path.endsWith('/history-v1')) {
+        return response({
+          'code': 0,
+          'data': {
+            'list': [
+              mockHistoryItems.first,
+              {...mockHistoryItems.last, 'is_brave': 1},
+            ]
+          }
+        });
+      }
+      if (req.url.path.endsWith('/delete-book-history')) deletes++;
+      return response({'code': 0, 'data': {}});
+    });
+    await tester.longPress(find.text('测试历史作品一 · 作者一'));
+    await tester.pumpAndSettle();
+    expect(deletes, 0);
+    // InkWell may recognize release as a tap; return from detail if so.
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator).first);
+    if (navigator.canPop()) {
+      navigator.pop();
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('测试历史作品一 · 作者一'), findsOneWidget);
+    LKStore.hideBraveBooks.value = true;
+    await tester.pumpAndSettle();
+    expect(find.text('测试历史作品二 · 作者二'), findsNothing);
+    LKStore.hideBraveBooks.value = false;
+    await tester.pumpAndSettle();
+    expect(find.text('测试历史作品二 · 作者二'), findsOneWidget);
+  });
+
+  Future<void> swipe(WidgetTester tester, int id) async {
+    await tester.drag(find.text(id == 101 ? '测试历史作品一 · 作者一' : '测试历史作品二 · 作者二'),
+        const Offset(-500, 0));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  }
+
+  testWidgets(
+      'pending delete disappears before response and stale refresh stays hidden',
+      (tester) async {
+    final pending = Completer<http.Response>();
+    await pumpHistoryTab(tester, handler: (req) async {
+      if (req.url.path.endsWith('/history-v1')) {
+        return response({
+          'code': 0,
+          'data': {'list': mockHistoryItems}
+        });
+      }
+      return pending.future;
+    });
+    await swipe(tester, 101);
+    expect(pending.isCompleted, isFalse);
+    expect(find.text('测试历史作品一 · 作者一'), findsNothing);
+    final refresh =
+        tester.widget<RefreshIndicator>(find.byType(RefreshIndicator));
+    await refresh.onRefresh();
+    await tester.pumpAndSettle();
+    expect(find.text('测试历史作品一 · 作者一'), findsNothing);
+    pending.complete(response({'code': 0, 'data': {}}));
+    await tester.pumpAndSettle();
+    expect(find.text('已删除《测试历史作品一》的阅读记录'), findsOneWidget);
+  });
+
+  testWidgets('immediate failure creates fresh dismissible and supports retry',
+      (tester) async {
+    var requests = 0;
+    await pumpHistoryTab(tester, handler: (req) async {
+      if (req.url.path.endsWith('/history-v1')) {
+        return response({
+          'code': 0,
+          'data': {'list': mockHistoryItems}
+        });
+      }
+      requests++;
+      return response({'code': 500, 'message': '删除失败'});
+    });
+    await swipe(tester, 101);
+    expect(find.text('测试历史作品一 · 作者一'), findsOneWidget);
+    await swipe(tester, 101);
+    expect(requests, 2);
+    expect(find.text('测试历史作品一 · 作者一'), findsOneWidget);
+  });
+
+  testWidgets(
+      'concurrent failures restore original order without duplicates and retry',
+      (tester) async {
+    final pending = <int, Completer<http.Response>>{};
+    await pumpHistoryTab(tester, handler: (req) async {
+      if (req.url.path.endsWith('/history-v1')) {
+        return response({
+          'code': 0,
+          'data': {'list': mockHistoryItems}
+        });
+      }
+      final id = jsonDecode(req.body)['book_id'] as int;
+      return (pending[id] = Completer<http.Response>()).future;
+    });
+    await swipe(tester, 101);
+    await swipe(tester, 102);
+    expect(find.text('暂无阅读历史'), findsOneWidget);
+    pending[102]!.complete(response({'code': 500, 'message': '删除失败'}));
+    await tester.pumpAndSettle();
+    pending[101]!.complete(response({'code': 500, 'message': '删除失败'}));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('测试历史作品一 · 作者一'), findsOneWidget);
+    expect(find.text('测试历史作品二 · 作者二'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('测试历史作品一 · 作者一')).dy,
+        lessThan(tester.getTopLeft(find.text('测试历史作品二 · 作者二')).dy));
+    await swipe(tester, 101);
+    pending[101]!.complete(response({'code': 0, 'data': {}}));
+    await tester.pumpAndSettle();
+  });
+
+  for (final logout in [false, true]) {
+    testWidgets(
+        'old pending completion ignored after ${logout ? 'logout' : 'account switch'}',
+        (tester) async {
+      final pending = Completer<http.Response>();
+      await pumpHistoryTab(tester, handler: (req) async {
+        if (req.url.path.endsWith('/history-v1')) {
+          return response({
+            'code': 0,
+            'data': {
+              'list':
+                  LKClient.shared.session.uid == 12345 ? mockHistoryItems : []
+            }
+          });
+        }
+        return pending.future;
+      });
+      await swipe(tester, 101);
+      if (logout) {
+        LKClient.shared.session.clear();
+      } else {
+        LKClient.shared.session
+          ..uid = 67890
+          ..securityKey = 'other-key';
+      }
+      LKClient.sessionRev.value++;
+      await tester.pumpAndSettle();
+      pending.complete(response({'code': 500, 'message': '旧请求失败'}));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('测试历史作品一 · 作者一'), findsNothing);
+      expect(find.textContaining('旧请求失败'), findsNothing);
+    });
+  }
+
+  testWidgets('pending failure after disposal does not update disposed state',
+      (tester) async {
+    final pending = Completer<http.Response>();
+    await pumpHistoryTab(tester, handler: (req) async {
+      if (req.url.path.endsWith('/history-v1')) {
+        return response({
+          'code': 0,
+          'data': {'list': mockHistoryItems}
+        });
+      }
+      return pending.future;
+    });
+    await swipe(tester, 101);
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    pending.complete(response({'code': 500, 'message': '删除失败'}));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   });
 }

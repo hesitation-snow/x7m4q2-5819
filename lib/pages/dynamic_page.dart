@@ -1,3 +1,4 @@
+import '../widgets/m3_menu_sheet.dart';
 import '../services/app_motion.dart';
 import 'dart:async';
 
@@ -967,196 +968,151 @@ class _DynamicPageState extends State<DynamicPage> {
       isScrollControlled: true,
       builder: (sheetContext) {
         final scheme = Theme.of(sheetContext).colorScheme;
-        return Container(
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainer,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: EdgeInsets.fromLTRB(
-            16,
-            12,
-            16,
-            16 + MediaQuery.of(sheetContext).padding.bottom,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: scheme.outlineVariant.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(2),
+        return M3MenuSheet(
+          title: '动态操作',
+          icon: Icons.more_horiz_rounded,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    await Clipboard.setData(
+                        ClipboardData(text: dynamicWebsiteUrl(d.dynamicId)));
+                    if (mounted) showLkError(context, '已复制动态链接');
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 14),
+                    child: Row(
+                      children: [
+                        Icon(Icons.link_rounded,
+                            size: 20, color: scheme.onSurface),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            '复制动态链接',
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                        Icon(Icons.chevron_right_rounded,
+                            size: 18, color: scheme.onSurfaceVariant),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(height: 14),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Row(
-                  children: [
-                    Icon(Icons.more_horiz_rounded,
-                        size: 20, color: scheme.primary),
-                    const SizedBox(width: 8),
-                    Text(
-                      '动态操作',
-                      style:
-                          Theme.of(sheetContext).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
+            ),
+            if (loggedIn) ...[
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Material(
-                  color: Colors.transparent,
+                  color:
+                      d.liked ? scheme.secondaryContainer : Colors.transparent,
                   borderRadius: BorderRadius.circular(14),
                   clipBehavior: Clip.antiAlias,
                   child: InkWell(
                     onTap: () async {
                       Navigator.pop(sheetContext);
-                      await Clipboard.setData(
-                          ClipboardData(text: dynamicWebsiteUrl(d.dynamicId)));
-                      if (mounted) showLkError(context, '已复制动态链接');
+                      await LKApi.toggleDynamicLike(d.dynamicId, !d.liked);
+                      _load();
                     },
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 12),
+                          horizontal: 14, vertical: 14),
                       child: Row(
                         children: [
-                          Icon(Icons.link_rounded,
-                              size: 20, color: scheme.onSurface),
+                          Icon(
+                            d.liked
+                                ? Icons.thumb_up_rounded
+                                : Icons.thumb_up_outlined,
+                            size: 20,
+                            color: d.liked
+                                ? scheme.onSecondaryContainer
+                                : scheme.onSurface,
+                          ),
                           const SizedBox(width: 12),
-                          const Expanded(
+                          Expanded(
                             child: Text(
-                              '复制动态链接',
+                              d.liked ? '已点赞（点击取消）' : '点赞此动态',
                               style: TextStyle(
-                                  fontSize: 15, fontWeight: FontWeight.w500),
+                                fontSize: 15,
+                                fontWeight:
+                                    d.liked ? FontWeight.bold : FontWeight.w500,
+                                color: d.liked
+                                    ? scheme.onSecondaryContainer
+                                    : scheme.onSurface,
+                              ),
                             ),
                           ),
-                          Icon(Icons.chevron_right_rounded,
-                              size: 18, color: scheme.onSurfaceVariant),
+                          if (d.liked)
+                            Icon(Icons.check_rounded,
+                                size: 20, color: scheme.onSecondaryContainer),
                         ],
                       ),
                     ),
                   ),
                 ),
               ),
-              if (loggedIn) ...[
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Material(
-                    color: d.liked
-                        ? scheme.secondaryContainer
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(14),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () async {
-                        Navigator.pop(sheetContext);
-                        await LKApi.toggleDynamicLike(d.dynamicId, !d.liked);
-                        _load();
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 12),
-                        child: Row(
-                          children: [
-                            Icon(
-                              d.liked
-                                  ? Icons.thumb_up_rounded
-                                  : Icons.thumb_up_outlined,
-                              size: 20,
-                              color: d.liked
-                                  ? scheme.onSecondaryContainer
-                                  : scheme.onSurface,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                d.liked ? '已点赞（点击取消）' : '点赞此动态',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: d.liked
-                                      ? FontWeight.bold
-                                      : FontWeight.w500,
-                                  color: d.liked
-                                      ? scheme.onSecondaryContainer
-                                      : scheme.onSurface,
-                                ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Material(
+                  color: d.favorited
+                      ? scheme.secondaryContainer
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(14),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () async {
+                      Navigator.pop(sheetContext);
+                      await LKApi.toggleDynamicFavorite(
+                          d.dynamicId, !d.favorited);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 14),
+                      child: Row(
+                        children: [
+                          Icon(
+                            d.favorited
+                                ? Icons.star_rounded
+                                : Icons.star_outline_rounded,
+                            size: 20,
+                            color: d.favorited
+                                ? Colors.amber.shade700
+                                : scheme.onSurface,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              d.favorited ? '已收藏（点击取消）' : '收藏此动态',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: d.favorited
+                                    ? FontWeight.bold
+                                    : FontWeight.w500,
+                                color: d.favorited
+                                    ? scheme.onSecondaryContainer
+                                    : scheme.onSurface,
                               ),
                             ),
-                            if (d.liked)
-                              Icon(Icons.check_rounded,
-                                  size: 20,
-                                  color: scheme.onSecondaryContainer),
-                          ],
-                        ),
+                          ),
+                          if (d.favorited)
+                            Icon(Icons.check_rounded,
+                                size: 20, color: scheme.onSecondaryContainer),
+                        ],
                       ),
                     ),
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Material(
-                    color: d.favorited
-                        ? scheme.secondaryContainer
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(14),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () async {
-                        Navigator.pop(sheetContext);
-                        await LKApi.toggleDynamicFavorite(
-                            d.dynamicId, !d.favorited);
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 12),
-                        child: Row(
-                          children: [
-                            Icon(
-                              d.favorited
-                                  ? Icons.star_rounded
-                                  : Icons.star_outline_rounded,
-                              size: 20,
-                              color: d.favorited
-                                  ? Colors.amber.shade700
-                                  : scheme.onSurface,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                d.favorited ? '已收藏（点击取消）' : '收藏此动态',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: d.favorited
-                                      ? FontWeight.bold
-                                      : FontWeight.w500,
-                                  color: d.favorited
-                                      ? scheme.onSecondaryContainer
-                                      : scheme.onSurface,
-                                ),
-                              ),
-                            ),
-                            if (d.favorited)
-                              Icon(Icons.check_rounded,
-                                  size: 20,
-                                  color: scheme.onSecondaryContainer),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ],
-          ),
+          ],
         );
       },
     );

@@ -108,6 +108,33 @@ void main() {
     expect(find.textContaining('不删除阅读记录、正文或下载文件'), findsOneWidget);
   }
 
+  for (final brightness in Brightness.values) {
+    testWidgets('sheet close retains local book at 2x $brightness',
+        (tester) async {
+      await pumpShelf(tester,
+          grid: true, scale: 2, width: 320, brightness: brightness);
+      tester.view.physicalSize = const Size(320, 400);
+      await tester.pumpAndSettle();
+      await tester.longPress(find.text('Z作品').first);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('关闭'));
+      await tester.pumpAndSettle();
+      expect((await LKStore.localShelf()).length, 2);
+      expect(removes, 0);
+      await tester.longPress(find.text('Z作品').first);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('从书架移除'));
+      await tester.tap(find.text('从书架移除'));
+      await tester.pumpAndSettle();
+      expect(find.text('确认移除'), findsOneWidget);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect((await LKStore.localShelf()).length, 2);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('cancel retains local book and reading position', (tester) async {
     await ReaderPrefs.setReadPosFrac(1, .42);
     await pumpShelf(tester);

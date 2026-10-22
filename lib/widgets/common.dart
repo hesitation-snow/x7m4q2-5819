@@ -1,3 +1,4 @@
+import 'm3_menu_sheet.dart';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -943,135 +944,93 @@ Future<void> showGridColumnsSheet(BuildContext context) async {
     showDragHandle: false,
     builder: (sheetContext) {
       final scheme = Theme.of(sheetContext).colorScheme;
-      return Container(
-        decoration: BoxDecoration(
-          color: Theme.of(sheetContext).scaffoldBackgroundColor,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        padding: EdgeInsets.fromLTRB(
-          16,
-          16,
-          16,
-          16 + MediaQuery.of(sheetContext).padding.bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: scheme.outlineVariant.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Row(
-                children: [
-                  Icon(Icons.grid_view_rounded,
-                      size: 20, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  Text(
-                    '网格列数（每行几本）',
-                    style:
-                        Theme.of(sheetContext).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            ...options.map((opt) {
-              final (count, title, subtitle) = opt;
-              final selected = current == count;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Material(
-                  color: selected
-                      ? scheme.primaryContainer.withValues(alpha: 0.35)
-                      : scheme.surfaceContainerHighest.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(14),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: () {
-                      Navigator.pop(sheetContext);
-                      LKStore.setGridColumnCount(count);
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      title,
-                                      style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: selected
-                                            ? FontWeight.bold
-                                            : FontWeight.w500,
-                                        color: selected
-                                            ? scheme.primary
-                                            : scheme.onSurface,
+      return M3MenuSheet(
+        title: '网格列数（每行几本）',
+        icon: Icons.grid_view_rounded,
+        children: [
+          ...options.map((opt) {
+            final (count, title, subtitle) = opt;
+            final selected = current == count;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Material(
+                color: selected
+                    ? scheme.primaryContainer.withValues(alpha: 0.35)
+                    : scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(14),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    LKStore.setGridColumnCount(count);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    title,
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: selected
+                                          ? FontWeight.bold
+                                          : FontWeight.w500,
+                                      color: selected
+                                          ? scheme.primary
+                                          : scheme.onSurface,
+                                    ),
+                                  ),
+                                  if (count == 0) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 5, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        color: scheme.primary
+                                            .withValues(alpha: 0.12),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        '默认',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: scheme.primary,
+                                        ),
                                       ),
                                     ),
-                                    if (count == 0) ...[
-                                      const SizedBox(width: 6),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 5, vertical: 1),
-                                        decoration: BoxDecoration(
-                                          color: scheme.primary
-                                              .withValues(alpha: 0.12),
-                                          borderRadius:
-                                              BorderRadius.circular(4),
-                                        ),
-                                        child: Text(
-                                          '默认',
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w600,
-                                            color: scheme.primary,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
                                   ],
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                subtitle,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onSurfaceVariant,
                                 ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  subtitle,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: scheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                          if (selected)
-                            Icon(Icons.check_circle_rounded,
-                                color: scheme.primary, size: 20),
-                        ],
-                      ),
+                        ),
+                        if (selected)
+                          Icon(Icons.check_circle_rounded,
+                              color: scheme.primary, size: 20),
+                      ],
                     ),
                   ),
                 ),
-              );
-            }),
-          ],
-        ),
+              ),
+            );
+          }),
+        ],
       );
     },
   );

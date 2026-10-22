@@ -12,6 +12,7 @@ import 'reader_cache.dart';
 import 'reading_session.dart';
 import '../reader/reading_position.dart';
 import '../reader/reader_typography.dart';
+import '../reader/indicator_position.dart';
 
 /// 封面模糊模式
 enum CoverBlurMode {
@@ -800,6 +801,11 @@ class ReaderPrefs {
       tapTurnPage: prefs.getBool('r_tap_turn') ?? false,
       volumeTurnPage: prefs.getBool('r_vol_turn') ?? false,
       showIndicators: prefs.getBool('r_ind') ?? true,
+      indicatorPosition: const IndicatorPosition().copyWith(
+          top: prefs.getDouble('r_ind_top'),
+          bottom: prefs.getDouble('r_ind_bottom'),
+          side: prefs.getDouble('r_ind_side'),
+          titleAlignment: prefs.getDouble('r_ind_align')),
       traditional: prefs.getBool('r_trad') ?? false,
       simplified: prefs.getBool('r_simp') ?? false,
       pagedMode: prefs.getBool('r_paged') ?? false,
@@ -909,6 +915,17 @@ class ReaderPrefs {
   static Future<void> setMarginRight(double v) async =>
       (await _p()).setDouble('r_mr', v);
 
+  static Future<void> saveIndicatorPosition(IndicatorPosition value) async {
+    final prefs = await _p();
+    final v = value.copyWith();
+    await Future.wait([
+      prefs.setDouble('r_ind_top', v.top),
+      prefs.setDouble('r_ind_bottom', v.bottom),
+      prefs.setDouble('r_ind_side', v.side),
+      prefs.setDouble('r_ind_align', v.titleAlignment),
+    ]);
+  }
+
   static Future<bool> showIndicators() async =>
       (await _p()).getBool('r_ind') ?? true;
   static Future<void> setShowIndicators(bool v) async =>
@@ -973,6 +990,7 @@ class ReaderSettings {
   final bool hideStatusBar;
   final bool tapTurnPage;
   final bool showIndicators;
+  final IndicatorPosition indicatorPosition;
   final bool traditional;
   final bool simplified;
   final bool pagedMode;
@@ -1002,6 +1020,7 @@ class ReaderSettings {
     required this.hideStatusBar,
     required this.tapTurnPage,
     required this.showIndicators,
+    this.indicatorPosition = const IndicatorPosition(),
     required this.traditional,
     required this.simplified,
     required this.pagedMode,

@@ -2923,30 +2923,7 @@ class _WelfarePageState extends State<WelfarePage>
       await _load();
     } catch (e) {
       if (mounted && revision == LKClient.sessionRev.value) {
-        if (e is LKException && e.code == 6) {
-          showDialog<void>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('阅读进度提示'),
-              content: const Text('服务端判定该宝箱的前置阅读尚未达标。\n由于服务端要求真实在阅读器中产生阅读时长，建议点击【进入阅读】在作品中停留翻阅片刻后返回重试。'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('我知道了'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _openReaderForTreasure(box, boxIndex);
-                  },
-                  child: const Text('进入阅读'),
-                ),
-              ],
-            ),
-          );
-        } else {
-          showLkError(context, _errorText(e));
-        }
+        showLkError(context, e is LKException && e.code == 6 ? '未达开启条件（code 6）：服务端尚未确认该作品阅读进度已达标，请稍后刷新重试。' : _errorText(e));
         await _load();
       }
     } finally {
@@ -2979,30 +2956,7 @@ class _WelfarePageState extends State<WelfarePage>
       await _load();
     } catch (e) {
       if (mounted && revision == LKClient.sessionRev.value) {
-        if (e is LKException && e.code == 6) {
-          showDialog<void>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('收藏进度提示'),
-              content: const Text('服务端判定尚未满足收藏条件。\n请点击【去选书收藏】将作品加入书架，返回后再点击提交开启。'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('我知道了'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _openCollectForTreasure(box, boxIndex);
-                  },
-                  child: const Text('去选书收藏'),
-                ),
-              ],
-            ),
-          );
-        } else {
-          showLkError(context, _errorText(e));
-        }
+        showLkError(context, e is LKException && e.code == 6 ? '未达开启条件（code 6）：服务端尚未确认该作品收藏状态已生效，请加入书架后刷新重试。' : _errorText(e));
         await _load();
       }
     } finally {
