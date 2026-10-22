@@ -1576,8 +1576,35 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
     final visibleItems = hideBrave
         ? _items
             .where((h) => h is! LKHistoryItem || !h.isBrave)
-            .toList(growable: false)
+            .toList(growable: true)
         : _items;
+
+    if (visibleItems.isEmpty) {
+      return MotionRefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: MediaQuery.sizeOf(context).height * 0.5,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.history_rounded,
+                        size: 48, color: Colors.grey.shade400),
+                    const SizedBox(height: 12),
+                    const Text('暂无阅读历史',
+                        style: TextStyle(color: Colors.grey, fontSize: 14)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return MotionRefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
@@ -1586,26 +1613,67 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
         separatorBuilder: (_, __) => const SizedBox(height: 2),
         itemBuilder: (_, i) {
           final h = visibleItems[i];
-          return InkWell(
-            // 历史项点击进详情页(详情页有"继续阅读"按钮),长按删除
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => BookDetailPage(bookId: h.bookId)),
+          final bookId = h.bookId;
+          return Dismissible(
+            key: ValueKey('history-$bookId'),
+            direction: DismissDirection.endToStart,
+            background: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              alignment: Alignment.centerRight,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.error,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.delete_outline_rounded,
+                      color: Colors.white, size: 22),
+                  SizedBox(width: 6),
+                  Text(
+                    '删除',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
             ),
-            onLongPress: () async {
+            confirmDismiss: (direction) async {
               try {
-                await LKApi.deleteHistory(h.bookId);
-                _load();
+                await LKApi.deleteHistory(bookId);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).clearSnackBars();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('已删除《${h.title}》的阅读记录'),
+                      behavior: SnackBarBehavior.floating,
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                }
+                return true;
               } catch (e) {
-                if (context.mounted) showLkError(context, e);
+                if (context.mounted) {
+                  showLkError(context, e);
+                }
+                return false;
               }
+            },
+            onDismissed: (direction) {
+              setState(() {
+                _items.remove(h);
+              });
             },
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: Material(
                 color: Theme.of(context).cardTheme.color,
                 borderRadius: BorderRadius.circular(14),
+                clipBehavior: Clip.antiAlias,
                 child: InkWell(
                   borderRadius: BorderRadius.circular(14),
                   onTap: () => Navigator.push(
@@ -1613,14 +1681,6 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                     MaterialPageRoute(
                         builder: (_) => BookDetailPage(bookId: h.bookId)),
                   ),
-                  onLongPress: () async {
-                    try {
-                      await LKApi.deleteHistory(h.bookId);
-                      _load();
-                    } catch (e) {
-                      if (context.mounted) showLkError(context, e);
-                    }
-                  },
                   child: Padding(
                     padding: const EdgeInsets.all(10),
                     child: Row(children: [
