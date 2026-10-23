@@ -1512,6 +1512,10 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
   List<dynamic> _items = [];
   String? _error;
   bool _loading = true;
+  bool _loadingMore = false;
+  int _page = 1;
+  bool _hasMore = true;
+  Object? _loadMoreError;
   final Set<int> _pendingDeletes = {};
   final Map<int, int> _itemGenerations = {};
   int _epoch = 0;
@@ -1545,23 +1549,36 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
     _items = [];
     _pendingDeletes.clear();
     _itemGenerations.clear();
+    _page = 1;
+    _hasMore = true;
+    _loadingMore = false;
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool loadMore = false}) async {
+    if (loadMore) {
+      if (_loading || _loadingMore || !_hasMore) return;
+    }
     final epoch = _epoch;
     final identity = _identity;
     final revision = ++_loadRevision;
     final mutation = _mutationRevision;
     final hadPendingDeletes = _pendingDeletes.isNotEmpty;
+    final targetPage = loadMore ? _page + 1 : 1;
+
     bool isCurrent() =>
         mounted &&
         epoch == _epoch &&
         identity == _identity &&
         revision == _loadRevision;
     setState(() {
-      _loading = true;
-      _error = null;
+      if (loadMore) {
+        _loadingMore = true;
+        _loadMoreError = null;
+      } else {
+        _loading = _items.isEmpty;
+        _error = null;
+      }
     });
     try {
       if (!LKClient.shared.session.isLoggedIn) {
@@ -1571,19 +1588,45 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
         });
         return;
       }
-      final items = await LKApi.cloudHistory(1);
+      final items = await LKApi.cloudHistory(targetPage, pageSize: 20);
       if (!isCurrent()) return;
-      // A snapshot fetched across a deletion may be older than the local list.
-      // Keep the ordered local entries until all overlapping deletes settle.
       if (!hadPendingDeletes &&
           _pendingDeletes.isEmpty &&
           mutation == _mutationRevision) {
-        setState(() => _items = items);
+        setState(() {
+          if (loadMore) {
+            final existingIds = _items.map((e) => e.bookId).toSet();
+            for (final item in items) {
+              if (existingIds.add(item.bookId)) {
+                _items.add(item);
+              }
+            }
+            _page = targetPage;
+            _hasMore = items.length >= 20;
+          } else {
+            _items = items;
+            _page = 1;
+            _hasMore = items.length >= 20;
+          }
+        });
       }
     } catch (e) {
-      if (isCurrent()) setState(() => _error = e.toString());
+      if (isCurrent()) {
+        setState(() {
+          if (loadMore) {
+            _loadMoreError = e;
+          } else {
+            _error = e.toString();
+          }
+        });
+      }
     } finally {
-      if (isCurrent()) setState(() => _loading = false);
+      if (isCurrent()) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+        });
+      }
     }
   }
 
@@ -1678,16 +1721,32 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
       );
     }
 
-    return MotionRefreshIndicator(
-      onRefresh: _load,
-      child: ListView.separated(
-        physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: visibleItems.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 2),
-        itemBuilder: (_, i) {
-          final h = visibleItems[i];
-          final bookId = h.bookId;
-          return Dismissible(
+    final showFooter = _hasMore || _loadingMore || _loadMoreError != null;
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) {
+        if (n is ScrollUpdateNotification &&
+            n.metrics.pixels > 0 &&
+            n.metrics.extentAfter < 240 &&
+            _hasMore &&
+            !_loadingMore &&
+            !_loading) {
+          unawaited(_load(loadMore: true));
+        }
+        return false;
+      },
+      child: MotionRefreshIndicator(
+        onRefresh: _load,
+        child: ListView.separated(
+          physics: const AlwaysScrollableScrollPhysics(),
+          itemCount: visibleItems.length + (showFooter ? 1 : 0),
+          separatorBuilder: (_, __) => const SizedBox(height: 2),
+          itemBuilder: (_, i) {
+            if (i == visibleItems.length) {
+              return _historyFooter();
+            }
+            final h = visibleItems[i];
+            final bookId = h.bookId;
+            return Dismissible(
             key: ValueKey('history-$_epoch-$bookId-${_itemGenerations[bookId] ?? 0}'),
             direction: DismissDirection.endToStart,
             background: Container(
@@ -1795,7 +1854,35 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
           );
         },
       ),
-    );
+    ),
+  );
+  }
+
+  Widget _historyFooter() {
+    if (_loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: SizedBox.square(
+            dimension: 22,
+            child: MotionProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (_loadMoreError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Center(
+          child: TextButton.icon(
+            onPressed: () => _load(loadMore: true),
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('加载失败，点击重试'),
+          ),
+        ),
+      );
+    }
+    return const SizedBox(height: 8);
   }
 }
 

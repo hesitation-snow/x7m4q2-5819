@@ -35,6 +35,9 @@ class _DMChatPageState extends State<_DMChatPageBody> {
   bool _sending = false;
   int _loadSerial = 0;
   bool _loading = true;
+  bool _loadingMore = false;
+  int _page = 1;
+  bool _hasMore = true;
   Object? _error;
 
   @override
@@ -57,13 +60,16 @@ class _DMChatPageState extends State<_DMChatPageBody> {
       _error = null;
     });
     try {
-      final msgsFuture = LKApi.dmMessages(widget.peerUid);
+      final msgsFuture =
+          LKApi.dmMessages(widget.peerUid, page: 1, pageSize: 30);
       // Attach the error handler immediately, even if loading messages fails.
       unawaited(LKApi.dmMarkRead(widget.peerUid).catchError((_) {}));
       final msgs = await msgsFuture;
       if (!mounted || !_session.isCurrent || serial != _loadSerial) return;
       setState(() {
         _messages = msgs;
+        _page = 1;
+        _hasMore = msgs.length >= 30;
         _error = null;
       });
     } catch (e) {
@@ -73,6 +79,37 @@ class _DMChatPageState extends State<_DMChatPageBody> {
       }
     } finally {
       if (mounted && serial == _loadSerial) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loading ||
+        _loadingMore ||
+        !_hasMore ||
+        !_session.isCurrent ||
+        !mounted) {
+      return;
+    }
+    setState(() => _loadingMore = true);
+    final nextPage = _page + 1;
+    try {
+      final olderMsgs =
+          await LKApi.dmMessages(widget.peerUid, page: nextPage, pageSize: 30);
+      if (!mounted || !_session.isCurrent) return;
+      setState(() {
+        _page = nextPage;
+        _hasMore = olderMsgs.length >= 30;
+        final existingIds = _messages.map((m) => m.id).toSet();
+        final newOlder =
+            olderMsgs.where((m) => !existingIds.contains(m.id)).toList();
+        _messages = [...newOlder, ..._messages];
+      });
+    } catch (_) {
+      // 容错处理
+    } finally {
+      if (mounted && _session.isCurrent) {
+        setState(() => _loadingMore = false);
+      }
     }
   }
 
@@ -96,6 +133,8 @@ class _DMChatPageState extends State<_DMChatPageBody> {
   @override
   Widget build(BuildContext context) {
     final myUid = LKClient.shared.session.uid;
+    final showTopLoader = _hasMore || _loadingMore;
+    final totalCount = _messages.length + (showTopLoader ? 1 : 0);
     return Scaffold(
       appBar:
           AppBar(title: Text(widget.peerName.isEmpty ? '私信' : widget.peerName)),
@@ -107,40 +146,76 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                   ? Center(
                       child: TextButton(
                           onPressed: _load, child: const Text('加载失败，点击重试')))
-                  : MotionRefreshIndicator(
-                      onRefresh: _load,
-                      child: ListView.builder(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(12),
-                        itemCount: _messages.length,
-                        itemBuilder: (_, i) {
-                          final m = _messages[i];
-                          final mine = m.isMine(myUid);
-                          return Align(
-                            alignment: mine
-                                ? Alignment.centerRight
-                                : Alignment.centerLeft,
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 4),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 8),
-                              constraints: const BoxConstraints(maxWidth: 280),
-                              decoration: BoxDecoration(
-                                color: mine
-                                    ? (Theme.of(context).brightness ==
-                                            Brightness.dark
-                                        ? const Color(0xFF35523F)
-                                        : Colors.lightGreen.shade200)
-                                    : (Theme.of(context).brightness ==
-                                            Brightness.dark
-                                        ? const Color(0xFF2A2C33)
-                                        : Colors.white),
-                                borderRadius: BorderRadius.circular(8),
+                  : NotificationListener<ScrollNotification>(
+                      onNotification: (n) {
+                        if (n.metrics.extentBefore < 80 &&
+                            _hasMore &&
+                            !_loadingMore &&
+                            !_loading) {
+                          unawaited(_loadMore());
+                        }
+                        return false;
+                      },
+                      child: MotionRefreshIndicator(
+                        onRefresh: _load,
+                        child: ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(12),
+                          itemCount: totalCount,
+                          itemBuilder: (_, i) {
+                            if (showTopLoader && i == 0) {
+                              return Center(
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8),
+                                  child: _loadingMore
+                                      ? const SizedBox.square(
+                                          dimension: 20,
+                                          child: MotionProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      : TextButton.icon(
+                                          onPressed: _loadMore,
+                                          icon: const Icon(
+                                              Icons.history_rounded,
+                                              size: 16),
+                                          label: const Text('加载更早记录',
+                                              style: TextStyle(fontSize: 12)),
+                                        ),
+                                ),
+                              );
+                            }
+                            final actualIndex = showTopLoader ? i - 1 : i;
+                            final m = _messages[actualIndex];
+                            final mine = m.isMine(myUid);
+                            return Align(
+                              alignment: mine
+                                  ? Alignment.centerRight
+                                  : Alignment.centerLeft,
+                              child: Container(
+                                margin:
+                                    const EdgeInsets.symmetric(vertical: 4),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                constraints:
+                                    const BoxConstraints(maxWidth: 280),
+                                decoration: BoxDecoration(
+                                  color: mine
+                                      ? (Theme.of(context).brightness ==
+                                              Brightness.dark
+                                          ? const Color(0xFF35523F)
+                                          : Colors.lightGreen.shade200)
+                                      : (Theme.of(context).brightness ==
+                                              Brightness.dark
+                                          ? const Color(0xFF2A2C33)
+                                          : Colors.white),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(m.content),
                               ),
-                              child: Text(m.content),
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
                     ),
         ),

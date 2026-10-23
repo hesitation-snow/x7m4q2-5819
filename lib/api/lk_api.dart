@@ -862,9 +862,15 @@ class LKApi {
             'nonce': DateTime.now().microsecondsSinceEpoch.toRadixString(16),
           }));
 
-  static Future<List<LKConversation>> dmConversations() async {
-    final d = await client.post('/api/bff/dm-conversations-v1',
-        client.authed({'page': 1, 'page_size': 20}));
+  static Future<List<LKConversation>> dmConversations(
+      {int page = 1, int pageSize = 20}) async {
+    final d = await client.post(
+        '/api/bff/dm-conversations-v1',
+        client.authed({
+          'page': page,
+          'page_size': LKClient.clampPageSize(pageSize),
+          'pageSize': LKClient.clampPageSize(pageSize),
+        }));
     final raw = d['list'] ?? d['items'] ?? d['cards'] ?? const [];
     return raw is List
         ? raw
@@ -875,9 +881,16 @@ class LKApi {
         : const [];
   }
 
-  static Future<List<LKDMMessage>> dmMessages(int peerUid) async {
-    final d = await client.post('/api/bff/dm-messages-v1',
-        client.authed({'peer_uid': peerUid, 'page': 1, 'page_size': 30}));
+  static Future<List<LKDMMessage>> dmMessages(int peerUid,
+      {int page = 1, int pageSize = 30}) async {
+    final d = await client.post(
+        '/api/bff/dm-messages-v1',
+        client.authed({
+          'peer_uid': peerUid,
+          'page': page,
+          'page_size': LKClient.clampPageSize(pageSize),
+          'pageSize': LKClient.clampPageSize(pageSize),
+        }));
     return ((d['list'] as List?) ?? const [])
         .map((e) => LKDMMessage.fromJson(e as Map<String, dynamic>))
         .toList();

@@ -399,4 +399,67 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('scrolling to bottom loads next page of reading history',
+      (tester) async {
+    final requestedPages = <int>[];
+    await pumpHistoryTab(tester, handler: (req) async {
+      if (req.url.path.endsWith('/history-v1')) {
+        final body = jsonDecode(req.body) as Map<String, dynamic>;
+        final page = body['page'] as int? ?? 1;
+        requestedPages.add(page);
+        if (page == 1) {
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'list': List.generate(
+                  20,
+                  (i) => {
+                    'book_id': 1000 + i,
+                    'title': '第一页书目 $i',
+                    'author_name': '作者',
+                    'cover_url': '',
+                    'progress_percent': 50,
+                  },
+                ),
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        } else {
+          return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'list': [
+                  {
+                    'book_id': 2001,
+                    'title': '第二页书目 1',
+                    'author_name': '第二页作者',
+                    'cover_url': '',
+                    'progress_percent': 80,
+                  },
+                ],
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+      }
+      return http.Response(jsonEncode({'code': 0, 'data': {}}), 200);
+    });
+
+    expect(find.text('第一页书目 0 · 作者'), findsOneWidget);
+    expect(requestedPages, [1]);
+
+    // Scroll to bottom
+    await tester.drag(find.byType(ListView), const Offset(0, -1500));
+    await tester.pumpAndSettle();
+
+    expect(requestedPages, [1, 2]);
+    expect(find.text('第二页书目 1 · 第二页作者'), findsOneWidget);
+  });
 }

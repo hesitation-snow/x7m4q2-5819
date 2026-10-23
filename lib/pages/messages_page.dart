@@ -77,6 +77,10 @@ class _MessagesPageState extends State<_MessagesPageBody>
 
   List<LKConversation> _conversations = const [];
   bool _dmLoading = false;
+  bool _dmLoadingMore = false;
+  int _dmPage = 1;
+  bool _dmHasMore = true;
+  Object? _dmLoadMoreError;
   Object? _dmError;
   int _dmRequestSerial = 0;
 
@@ -90,8 +94,21 @@ class _MessagesPageState extends State<_MessagesPageBody>
     };
     _tabs = MotionTabController(length: _messageCategories.length, vsync: this)
       ..addListener(_handleTabChanged);
+    unawaited(_preloadAll());
+  }
+
+  Future<void> _preloadAll() async {
     unawaited(_loadSummary());
-    unawaited(_loadNotification(_messageCategories.first.type));
+    for (final category in _messageCategories) {
+      if (category.type == 'dm') {
+        if (_conversations.isEmpty && !_dmLoading) unawaited(_loadDm());
+      } else {
+        final feed = _feeds[category.type];
+        if (feed != null && feed.items.isEmpty && !feed.loading) {
+          unawaited(_loadNotification(category.type));
+        }
+      }
+    }
   }
 
   @override
@@ -308,35 +325,78 @@ class _MessagesPageState extends State<_MessagesPageBody>
     }
   }
 
-  Future<void> _loadDm() async {
-    if (_dmLoading) return;
+  Future<void> _loadDm({bool loadMore = false, bool force = false}) async {
+    if (loadMore) {
+      if (_dmLoading || _dmLoadingMore || !_dmHasMore) return;
+    } else {
+      if (_dmLoading && !force) return;
+    }
     final request = ++_dmRequestSerial;
+    final targetPage = loadMore ? _dmPage + 1 : 1;
     setState(() {
-      _dmLoading = true;
-      _dmError = null;
+      if (loadMore) {
+        _dmLoadingMore = true;
+        _dmLoadMoreError = null;
+      } else {
+        _dmLoading = _conversations.isEmpty;
+        _dmError = null;
+      }
     });
     try {
-      final conversations = await LKApi.dmConversations();
+      final conversations =
+          await LKApi.dmConversations(page: targetPage, pageSize: 20);
       if (!mounted || !_session.isCurrent || request != _dmRequestSerial) {
         return;
       }
-      setState(() => _conversations = conversations);
+      setState(() {
+        if (loadMore) {
+          final existing = _conversations.map((c) => c.peerUid).toSet();
+          final newItems = conversations
+              .where((c) => !existing.contains(c.peerUid))
+              .toList();
+          _conversations = [..._conversations, ...newItems];
+          _dmPage = targetPage;
+          _dmHasMore = conversations.length >= 20;
+        } else {
+          _conversations = conversations;
+          _dmPage = 1;
+          _dmHasMore = conversations.length >= 20;
+        }
+      });
     } catch (error) {
       if (!mounted || !_session.isCurrent || request != _dmRequestSerial) {
         return;
       }
-      setState(() => _dmError = error);
+      setState(() {
+        if (loadMore) {
+          _dmLoadMoreError = error;
+        } else {
+          _dmError = error;
+        }
+      });
     } finally {
       if (mounted && _session.isCurrent && request == _dmRequestSerial) {
-        setState(() => _dmLoading = false);
+        setState(() {
+          _dmLoading = false;
+          _dmLoadingMore = false;
+        });
       }
     }
+  }
+
+  Future<void> _refreshAll() async {
+    await Future.wait<void>([
+      _loadSummary(),
+      _loadDm(force: true),
+      for (final cat in _messageCategories)
+        if (cat.type != 'dm') _loadNotification(cat.type),
+    ]);
   }
 
   Future<void> _refreshActive() async {
     final type = _messageCategories[_activeIndex].type;
     if (type == 'dm') {
-      await Future.wait<void>([_loadDm(), _loadSummary()]);
+      await Future.wait<void>([_loadDm(force: true), _loadSummary()]);
     } else {
       await Future.wait<void>([
         _loadNotification(type),
@@ -361,6 +421,11 @@ class _MessagesPageState extends State<_MessagesPageBody>
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: '全部刷新',
+            onPressed: _refreshAll,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
           IconButton(
             tooltip: type == 'dm' ? '私信全部已读' : '通知全部已读',
             onPressed: _markingAll
@@ -1031,18 +1096,61 @@ class _MessagesPageState extends State<_MessagesPageBody>
         onRefresh: _refreshActive,
       );
     }
-    return MotionRefreshIndicator(
-      onRefresh: _refreshActive,
-      child: ListView.builder(
-        key: const PageStorageKey<String>('messages-dm'),
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.fromLTRB(
-            10, 8, 10, MediaQuery.paddingOf(context).bottom + 12),
-        itemCount: _conversations.length,
-        itemBuilder: (context, index) =>
-            _conversationCard(_conversations[index]),
+    final showFooter = _dmHasMore || _dmLoadingMore || _dmLoadMoreError != null;
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification.metrics.extentAfter < 360 &&
+            _dmHasMore &&
+            !_dmLoadingMore &&
+            !_dmLoading) {
+          unawaited(_loadDm(loadMore: true));
+        }
+        return false;
+      },
+      child: MotionRefreshIndicator(
+        onRefresh: _refreshActive,
+        child: ListView.builder(
+          key: const PageStorageKey<String>('messages-dm'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.fromLTRB(
+              10, 8, 10, MediaQuery.paddingOf(context).bottom + 12),
+          itemCount: _conversations.length + (showFooter ? 1 : 0),
+          itemBuilder: (context, index) {
+            if (index == _conversations.length) {
+              return _dmFooter();
+            }
+            return _conversationCard(_conversations[index]);
+          },
+        ),
       ),
     );
+  }
+
+  Widget _dmFooter() {
+    if (_dmLoadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: SizedBox.square(
+            dimension: 22,
+            child: MotionProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (_dmLoadMoreError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Center(
+          child: TextButton.icon(
+            onPressed: () => _loadDm(loadMore: true),
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('加载失败，点击重试'),
+          ),
+        ),
+      );
+    }
+    return const SizedBox(height: 8);
   }
 
   Widget _conversationCard(LKConversation conversation) {
