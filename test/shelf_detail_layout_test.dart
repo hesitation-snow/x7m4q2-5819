@@ -110,13 +110,8 @@ void main() {
       await pumpPage(tester, const BookDetailPage(bookId: 42), brightness);
       final action = find.byKey(const ValueKey('primary-reading-action'));
       expect(action.hitTestable(), findsOneWidget);
-      expect(tester.widget<FilledButton>(action).onPressed, isNotNull);
-      final before = tester.getRect(action);
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -600));
-      await tester.pumpAndSettle();
-      expect(action.hitTestable(), findsOneWidget);
-      expect(tester.getRect(action), before);
-      expect(find.byType(FloatingActionButton), findsNothing);
+      expect(tester.widget<FloatingActionButton>(action).onPressed, isNotNull);
+      expect(find.byType(FloatingActionButton), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }

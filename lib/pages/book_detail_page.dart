@@ -156,6 +156,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
   int _volumesPage = 0;
   bool _volumesHasMore = true;
   final _scroll = ScrollController();
+  bool _fabVisible = true;
+  double _lastOffset = 0;
 
   /// 目录中已就地展开的卷;展开后章节列表直接显示在卷卡片下方。
   final Set<int> _expandedVolumeIds = <int>{};
@@ -203,6 +205,13 @@ class _BookDetailPageState extends State<BookDetailPage> {
     super.initState();
     LKClient.sessionRev.addListener(_onPublisherSessionChanged);
     LKClient.followChanged.addListener(_onFollowChanged);
+    _scroll.addListener(() {
+      final o = _scroll.offset;
+      final down = o > _lastOffset + 2;
+      _lastOffset = o;
+      final v = o < 80 || !down;
+      if (v != _fabVisible && mounted) setState(() => _fabVisible = v);
+    });
     _load();
   }
 
@@ -813,36 +822,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
     );
   }
 
-  Widget _readingAction(LKBook book) {
-    final canRead =
-        _readChapterId > 0 || book.defaultChapterId > 0 || _volumes.isNotEmpty;
-    return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerLow,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              key: const ValueKey('primary-reading-action'),
-              onPressed: canRead ? _openReading : null,
-              style: FilledButton.styleFrom(
-                  minimumSize: const Size(0, 46),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
-              icon: const Icon(Icons.menu_book_rounded, size: 20),
-              label: Text(_fabLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final b = _book;
@@ -1102,11 +1081,34 @@ class _BookDetailPageState extends State<BookDetailPage> {
                             },
                           ),
                         ),
-                      const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                      SliverToBoxAdapter(
+                        child: SizedBox(
+                          height: 80 + MediaQuery.of(context).padding.bottom,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-      bottomNavigationBar: b == null ? null : _readingAction(b),
+      floatingActionButton: b == null
+          ? null
+          : AnimatedSlide(
+              duration: AppMotion.duration(context, 200),
+              offset: _fabVisible ? Offset.zero : const Offset(0, 2),
+              child: AnimatedOpacity(
+                duration: AppMotion.duration(context, 200),
+                opacity: _fabVisible ? 1 : 0,
+                child: FloatingActionButton.extended(
+                  key: const ValueKey('primary-reading-action'),
+                  onPressed: _fabVisible ? _openReading : null,
+                  icon: const Icon(Icons.menu_book_rounded),
+                  label: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 220),
+                    child: Text(_fabLabel,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                ),
+              ),
+            ),
     );
   }
 

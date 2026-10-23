@@ -386,30 +386,76 @@ class _DynamicPageState extends State<DynamicPage> {
     );
   }
 
-  Widget _followChip() => ChoiceChip(
-        label: const Text('关注'),
-        selected: _feedTab == 'follow',
-        onSelected: (selected) => _switchFeedTab(selected ? 'follow' : 'mixed'),
-        visualDensity: VisualDensity.compact,
-      );
+  Widget _pillButton({
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
-  Widget _onlyWorkChip() {
-    return FilterChip(
-      label: const Text('仅作品'),
-      selected: _contentFilter == 'book',
-      onSelected: (selected) => _switchContentFilter(selected ? 'book' : 'all'),
-      visualDensity: VisualDensity.compact,
+    return Material(
+      color: selected
+          ? (isDark
+              ? scheme.primary.withValues(alpha: 0.22)
+              : scheme.primary.withValues(alpha: 0.12))
+          : (isDark
+              ? const Color(0xFF1E2025)
+              : scheme.surfaceContainerHighest.withValues(alpha: 0.5)),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: selected ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
   Widget _feedControls() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
       child: Row(
         children: [
-          _followChip(),
-          const SizedBox(width: 6),
-          _onlyWorkChip(),
+          _pillButton(
+            icon: _feedTab == 'follow'
+                ? Icons.favorite_rounded
+                : Icons.favorite_border_rounded,
+            label: '关注',
+            selected: _feedTab == 'follow',
+            onTap: () =>
+                _switchFeedTab(_feedTab == 'follow' ? 'mixed' : 'follow'),
+          ),
+          const SizedBox(width: 8),
+          _pillButton(
+            icon: Icons.menu_book_rounded,
+            label: '仅作品',
+            selected: _contentFilter == 'book',
+            onTap: () =>
+                _switchContentFilter(_contentFilter == 'book' ? 'all' : 'book'),
+          ),
           const Spacer(),
         ],
       ),

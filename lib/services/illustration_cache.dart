@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -172,12 +173,22 @@ class YomiruIllustrationCache {
       final fileInfo = await manager.getFileFromCache(keyFor(clean));
       final file = fileInfo?.file;
       if (file != null && await file.exists()) {
-        final bytes = await file.openRead(0, 4096).expand((b) => b).toList();
+        final bytes = await file.openRead(0, 131072).expand((b) => b).toList();
         final aspect = parseAspectFromBytes(bytes);
         if (aspect != null) {
           setAspect(clean, aspect);
           return aspect;
         }
+        try {
+          final allBytes = await file.readAsBytes();
+          final codec = await ui.instantiateImageCodec(allBytes);
+          final frame = await codec.getNextFrame();
+          final nativeAspect = frame.image.width / frame.image.height;
+          if (nativeAspect > 0 && nativeAspect.isFinite) {
+            setAspect(clean, nativeAspect);
+            return nativeAspect;
+          }
+        } catch (_) {}
       }
     } catch (_) {}
     return null;

@@ -50,7 +50,7 @@ void main() {
                         onEnterEditMode: () => editModeCalled = true,
                         onChanged: (v) => setState(() => value = v)))))));
     expect(find.text('调整指示器位置'), findsOneWidget);
-    expect(find.text('顶部 6dp · 底部 8dp · 边距 16dp · 字号 11sp'), findsOneWidget);
+    expect(find.text('顶部 6dp · 底部 8dp · 边距 16dp'), findsOneWidget);
     await tester.tap(find.text('调整指示器位置'));
     expect(editModeCalled, isTrue);
   });
@@ -92,21 +92,19 @@ void main() {
     expect(value.top, greaterThan(6));
     final draggedTop = value.top;
 
-    // Test +1 dp micro tuning
-    await tester.tap(find.text('+1'));
+    // Test +1 dp micro tuning for distance
+    await tester.tap(find.text('+1').first);
     await tester.pumpAndSettle();
     expect(value.top, closeTo(draggedTop + 1, 0.1));
 
-    // Test font size tuning
-    await tester.tap(find.textContaining('字号'));
+    // Test top font size tuning
+    expect(value.topFontSize, 11);
+    await tester.tap(find.text('+1').last);
     await tester.pumpAndSettle();
-    expect(value.fontSize, 11);
-    await tester.tap(find.text('+2'));
+    expect(value.topFontSize, 12);
+    await tester.tap(find.text('-1').last);
     await tester.pumpAndSettle();
-    expect(value.fontSize, 13);
-    await tester.tap(find.text('-1'));
-    await tester.pumpAndSettle();
-    expect(value.fontSize, 12);
+    expect(value.topFontSize, 11);
 
     // Test actions
     await tester.tap(find.text('保存'));

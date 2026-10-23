@@ -50,7 +50,7 @@ class ReaderIndicators extends StatelessWidget {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                        fontSize: position.fontSize)))),
+                                        fontSize: position.topFontSize)))),
                         Flexible(
                             child: Align(
                                 alignment: Alignment.bottomCenter,
@@ -63,7 +63,13 @@ class ReaderIndicators extends StatelessWidget {
                                                 alignment: Alignment.bottomLeft,
                                                 child: FittedBox(
                                                     fit: BoxFit.scaleDown,
-                                                    child: deviceStatus!)))
+                                                    child:
+                                                        DefaultTextStyle.merge(
+                                                      style: TextStyle(
+                                                          fontSize: position
+                                                              .bottomFontSize),
+                                                      child: deviceStatus!,
+                                                    ))))
                                       else
                                         const Spacer(),
                                       const SizedBox(width: 8),
@@ -72,7 +78,12 @@ class ReaderIndicators extends StatelessWidget {
                                               alignment: Alignment.bottomRight,
                                               child: FittedBox(
                                                   fit: BoxFit.scaleDown,
-                                                  child: progress))),
+                                                  child: DefaultTextStyle.merge(
+                                                    style: TextStyle(
+                                                        fontSize: position
+                                                            .bottomFontSize),
+                                                    child: progress,
+                                                  )))),
                                     ]))),
                       ]));
             })));
@@ -109,7 +120,7 @@ class IndicatorPositionSettings extends StatelessWidget {
       title: const Text('调整指示器位置',
           style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
       subtitle: Text(
-        '顶部 ${value.top.round()}dp · 底部 ${value.bottom.round()}dp · 边距 ${value.side.round()}dp · 字号 ${value.fontSize.round()}sp',
+        '顶部 ${value.top.round()}dp · 底部 ${value.bottom.round()}dp · 边距 ${value.side.round()}dp',
         style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
       ),
       trailing: const Icon(Icons.chevron_right_rounded),
@@ -146,10 +157,10 @@ class IndicatorEditOverlay extends StatefulWidget {
 }
 
 class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
-  // 当前微调选择的目标：0 = 顶部标题, 1 = 底部信息, 2 = 左右边距, 3 = 字号大小
+  // 当前微调选择的目标：0 = 顶部, 1 = 底部, 2 = 边距
   int _selectedTarget = 0;
 
-  void _step(int delta) {
+  void _stepDistance(int delta) {
     final current = widget.position;
     if (_selectedTarget == 0) {
       final next = (current.top + delta).clamp(0.0, 96.0);
@@ -157,12 +168,20 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
     } else if (_selectedTarget == 1) {
       final next = (current.bottom + delta).clamp(0.0, 96.0);
       widget.onChanged(current.copyWith(bottom: next));
-    } else if (_selectedTarget == 2) {
+    } else {
       final next = (current.side + delta).clamp(0.0, 96.0);
       widget.onChanged(current.copyWith(side: next));
-    } else {
-      final next = (current.fontSize + delta).clamp(8.0, 20.0);
-      widget.onChanged(current.copyWith(fontSize: next));
+    }
+  }
+
+  void _stepFontSize(int delta) {
+    final current = widget.position;
+    if (_selectedTarget == 0) {
+      final next = (current.topFontSize + delta).clamp(8.0, 20.0);
+      widget.onChanged(current.copyWith(topFontSize: next));
+    } else if (_selectedTarget == 1) {
+      final next = (current.bottomFontSize + delta).clamp(8.0, 20.0);
+      widget.onChanged(current.copyWith(bottomFontSize: next));
     }
   }
 
@@ -255,7 +274,7 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: position.topFontSize,
                       fontWeight: FontWeight.w600,
                       color: scheme.primary,
                     ),
@@ -288,12 +307,19 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     if (widget.deviceStatus != null)
-                      widget.deviceStatus!
+                      DefaultTextStyle.merge(
+                        style: TextStyle(fontSize: position.bottomFontSize),
+                        child: widget.deviceStatus!,
+                      )
                     else
                       Text('12:34',
-                          style:
-                              TextStyle(fontSize: 11, color: scheme.primary)),
-                    widget.progress,
+                          style: TextStyle(
+                              fontSize: position.bottomFontSize,
+                              color: scheme.primary)),
+                    DefaultTextStyle.merge(
+                      style: TextStyle(fontSize: position.bottomFontSize),
+                      child: widget.progress,
+                    ),
                   ],
                 ),
               ),
@@ -384,19 +410,6 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
 
   Widget _buildControlCard(
       BuildContext context, ColorScheme scheme, IndicatorPosition pos) {
-    final targetName = switch (_selectedTarget) {
-      0 => '顶部',
-      1 => '底部',
-      2 => '边距',
-      _ => '字号',
-    };
-    final targetValue = switch (_selectedTarget) {
-      0 => '${pos.top.round()} dp',
-      1 => '${pos.bottom.round()} dp',
-      2 => '${pos.side.round()} dp',
-      _ => '${pos.fontSize.round()} sp',
-    };
-
     return Card(
       elevation: 8,
       color: scheme.surfaceContainerHigh,
@@ -411,23 +424,18 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
               segments: [
                 ButtonSegment(
                   value: 0,
-                  label: Text('顶部(${pos.top.round()})',
-                      style: const TextStyle(fontSize: 10)),
+                  label: Text('顶部 (${pos.top.round()}dp)',
+                      style: const TextStyle(fontSize: 11)),
                 ),
                 ButtonSegment(
                   value: 1,
-                  label: Text('底部(${pos.bottom.round()})',
-                      style: const TextStyle(fontSize: 10)),
+                  label: Text('底部 (${pos.bottom.round()}dp)',
+                      style: const TextStyle(fontSize: 11)),
                 ),
                 ButtonSegment(
                   value: 2,
-                  label: Text('边距(${pos.side.round()})',
-                      style: const TextStyle(fontSize: 10)),
-                ),
-                ButtonSegment(
-                  value: 3,
-                  label: Text('字号(${pos.fontSize.round()})',
-                      style: const TextStyle(fontSize: 10)),
+                  label: Text('边距 (${pos.side.round()}dp)',
+                      style: const TextStyle(fontSize: 11)),
                 ),
               ],
               selected: {_selectedTarget},
@@ -438,35 +446,73 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
 
-            // 第二行：精确微调按钮群
+            // 第二行：距离微调群
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text('$targetName：',
-                    style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.bold)),
-                Text(targetValue,
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: scheme.primary)),
+                Text(
+                  _selectedTarget == 0
+                      ? '顶部距离：'
+                      : _selectedTarget == 1
+                          ? '底部距离：'
+                          : '左右边距：',
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  _selectedTarget == 0
+                      ? '${pos.top.round()} dp'
+                      : _selectedTarget == 1
+                          ? '${pos.bottom.round()} dp'
+                          : '${pos.side.round()} dp',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: scheme.primary),
+                ),
                 const SizedBox(width: 8),
-                _stepButton(_selectedTarget == 3 ? '-2' : '-5',
-                    () => _step(_selectedTarget == 3 ? -2 : -5)),
+                _stepButton('-5', () => _stepDistance(-5)),
                 const SizedBox(width: 4),
-                _stepButton('-1', () => _step(-1)),
+                _stepButton('-1', () => _stepDistance(-1)),
                 const SizedBox(width: 4),
-                _stepButton('+1', () => _step(1)),
+                _stepButton('+1', () => _stepDistance(1)),
                 const SizedBox(width: 4),
-                _stepButton(_selectedTarget == 3 ? '+2' : '+5',
-                    () => _step(_selectedTarget == 3 ? 2 : 5)),
+                _stepButton('+5', () => _stepDistance(5)),
               ],
             ),
 
+            // 第三行：根据当前目标（顶部或底部）展示专属字号微调
+            if (_selectedTarget == 0 || _selectedTarget == 1) ...[
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _selectedTarget == 0 ? '顶部字号：' : '底部字号：',
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    _selectedTarget == 0
+                        ? '${pos.topFontSize.round()} sp'
+                        : '${pos.bottomFontSize.round()} sp',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: scheme.primary),
+                  ),
+                  const SizedBox(width: 8),
+                  _stepButton('-1', () => _stepFontSize(-1)),
+                  const SizedBox(width: 4),
+                  _stepButton('+1', () => _stepFontSize(1)),
+                ],
+              ),
+            ],
+
             if (_selectedTarget == 0) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -480,11 +526,11 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
               ),
             ],
 
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             const Divider(height: 1),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
 
-            // 第三行：操作按钮（重置、取消、保存）
+            // 操作按钮行（默认、取消、保存）
             Row(
               children: [
                 TextButton.icon(
@@ -502,7 +548,7 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
                   style: OutlinedButton.styleFrom(
                     visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(horizontal: 14),
-                    minimumSize: const Size(60, 34),
+                    minimumSize: const Size(60, 36),
                   ),
                   child: const Text('取消'),
                 ),
@@ -512,7 +558,7 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
                   style: FilledButton.styleFrom(
                     visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(horizontal: 18),
-                    minimumSize: const Size(68, 34),
+                    minimumSize: const Size(68, 36),
                   ),
                   child: const Text('保存'),
                 ),
@@ -525,16 +571,22 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
   }
 
   Widget _stepButton(String text, VoidCallback onPressed) {
-    return OutlinedButton(
-      onPressed: onPressed,
-      style: OutlinedButton.styleFrom(
-        visualDensity: VisualDensity.compact,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-        minimumSize: const Size(36, 30),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+          child: Text(text,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: scheme.onSurface)),
+        ),
       ),
-      child: Text(text,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
     );
   }
 

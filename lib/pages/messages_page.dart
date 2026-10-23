@@ -1160,10 +1160,10 @@ class _MessagesPageState extends State<_MessagesPageBody>
     final scheme = Theme.of(context).colorScheme;
     return Card.filled(
       color: scheme.surfaceContainerLow,
-      margin: const EdgeInsets.symmetric(vertical: 6),
+      margin: const EdgeInsets.symmetric(vertical: 4),
       clipBehavior: Clip.antiAlias,
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
         leading: CircleAvatar(
           backgroundColor: scheme.surfaceContainerHighest,
           backgroundImage:
@@ -1173,44 +1173,48 @@ class _MessagesPageState extends State<_MessagesPageBody>
                   ? Icon(Icons.person_outline, color: scheme.onSurfaceVariant)
                   : null,
         ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        title: Text(
+          conversation.peerName.isEmpty
+              ? '用户 ${conversation.peerUid}'
+              : conversation.peerName,
+          style: Theme.of(context).textTheme.titleSmall,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            conversation.lastMessage.isEmpty
+                ? '暂无消息内容'
+                : conversation.lastMessage,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Text(
-                conversation.peerName.isEmpty
-                    ? '用户 ${conversation.peerUid}'
-                    : conversation.peerName,
-                style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 4),
-            Text(
-                conversation.lastMessage.isEmpty
-                    ? '暂无消息内容'
-                    : conversation.lastMessage,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+            if (conversation.updatedAt.isNotEmpty)
+              Text(
+                _formatTime(conversation.updatedAt),
                 style: Theme.of(context)
                     .textTheme
-                    .bodyMedium
-                    ?.copyWith(color: scheme.onSurfaceVariant)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                if (conversation.updatedAt.isNotEmpty)
-                  Text(_formatTime(conversation.updatedAt),
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelSmall
-                          ?.copyWith(color: scheme.onSurfaceVariant)),
-                if (conversation.unread > 0)
-                  Badge(
-                      label: Text(conversation.unread > 99
-                          ? '99+'
-                          : '${conversation.unread}')),
-              ],
-            ),
+                    .labelSmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            if (conversation.unread > 0) ...[
+              const SizedBox(height: 4),
+              Badge(
+                label: Text(
+                  conversation.unread > 99 ? '99+' : '${conversation.unread}',
+                ),
+              ),
+            ],
           ],
         ),
         onTap: () async {

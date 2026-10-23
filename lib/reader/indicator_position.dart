@@ -4,14 +4,16 @@ class IndicatorPosition {
   final double bottom;
   final double side;
   final double titleAlignment;
-  final double fontSize;
+  final double topFontSize;
+  final double bottomFontSize;
 
   const IndicatorPosition({
     this.top = 6,
     this.bottom = 8,
     this.side = 16,
     this.titleAlignment = 0,
-    this.fontSize = 11,
+    this.topFontSize = 11,
+    this.bottomFontSize = 11,
   });
 
   static double bounded(double value, double max, [double min = 0]) =>
@@ -22,13 +24,15 @@ class IndicatorPosition {
     double? bottom,
     double? side,
     double? titleAlignment,
-    double? fontSize,
+    double? topFontSize,
+    double? bottomFontSize,
   }) =>
       IndicatorPosition(
         top: bounded(top ?? this.top, 96),
         bottom: bounded(bottom ?? this.bottom, 96),
         side: bounded(side ?? this.side, 96),
         titleAlignment: bounded(titleAlignment ?? this.titleAlignment, 1, -1),
-        fontSize: bounded(fontSize ?? this.fontSize, 20, 8),
+        topFontSize: bounded(topFontSize ?? this.topFontSize, 20, 8),
+        bottomFontSize: bounded(bottomFontSize ?? this.bottomFontSize, 20, 8),
       );
 }

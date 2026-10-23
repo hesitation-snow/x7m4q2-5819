@@ -885,44 +885,48 @@ class _FeedTabState extends State<FeedTab>
 
   Widget _rankSelector() {
     final scheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      height: _rankSelectorHeight,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(4, 4, 4, 6),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: SegmentedButton<String>(
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(value: 'weekly_hot', label: Text('综合热度')),
-              ButtonSegment(value: 'daily_fresh', label: Text('新书')),
-            ],
-            selected: {_rankScene},
-            onSelectionChanged: (selection) {
-              if (selection.isNotEmpty) _selectRankScene(selection.first);
-            },
-            style: ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              textStyle: const WidgetStatePropertyAll(
-                TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
-              ),
-              foregroundColor: WidgetStateProperty.resolveWith((states) =>
-                  states.contains(WidgetState.selected)
-                      ? scheme.onSecondaryContainer
-                      : scheme.onSurfaceVariant),
-              backgroundColor: WidgetStateProperty.resolveWith((states) =>
-                  states.contains(WidgetState.selected)
-                      ? scheme.secondaryContainer.withValues(alpha: 0.72)
-                      : scheme.surfaceContainerLow),
-              side: WidgetStatePropertyAll(
-                BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.4)),
-              ),
-              padding: const WidgetStatePropertyAll(
-                EdgeInsets.symmetric(horizontal: 13),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+      child: Row(
+        children: [
+          for (final (label, value) in [
+            ('综合热度', 'weekly_hot'),
+            ('新书', 'daily_fresh')
+          ]) ...[
+            Material(
+              color: _rankScene == value
+                  ? (isDark
+                      ? scheme.primary.withValues(alpha: 0.22)
+                      : scheme.primary.withValues(alpha: 0.12))
+                  : (isDark
+                      ? const Color(0xFF1E2025)
+                      : scheme.surfaceContainerHighest.withValues(alpha: 0.5)),
+              borderRadius: BorderRadius.circular(20),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () => _selectRankScene(value),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: _rankScene == value
+                          ? FontWeight.w600
+                          : FontWeight.w500,
+                      color: _rankScene == value
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
+            const SizedBox(width: 8),
+          ],
+        ],
       ),
     );
   }
