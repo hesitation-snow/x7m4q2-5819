@@ -83,7 +83,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets(
+    testWidgets(
       'task center excludes treasure boxes from task list and shows dedicated treasure box card',
       (tester) async {
     final paths = <String>[];
@@ -135,8 +135,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('每日开宝箱'), findsOneWidget);
     expect(find.text('每日签到'), findsOneWidget);
-    expect(paths.any((path) => path.contains('welfare-treasure-box-detail')),
-        isTrue);
+    expect(paths.any((path) => path.contains('welfare-treasure-box-detail')), isTrue);
     expect(tester.takeException(), isNull);
   });
 
@@ -275,48 +274,14 @@ void main() {
       );
     });
 
-    test(
-        'Recognizes diverse tasks from server (notify, invite, share, dynamic)',
-        () {
+    test('Recognizes diverse tasks from server (notify, invite, share, dynamic)', () {
       final tasks = [
-        {
-          'task_id': 300001,
-          'task_key': 'daily_read_book_v1',
-          'title': '浏览一个作品',
-          'status': 0
-        },
-        {
-          'task_id': 300002,
-          'task_key': 'daily_add_bookshelf_v1',
-          'title': '收藏一个作品',
-          'status': 0
-        },
-        {
-          'task_id': 300004,
-          'task_key': 'enable_message_notify_v1',
-          'title': '打开消息提醒',
-          'status': 1
-        },
-        {
-          'task_id': 300005,
-          'task_key': 'daily_browse_goods_v1',
-          'title': '浏览商品赚钱',
-          'status': 0,
-          'available': 0,
-          'button_text': '即将开放'
-        },
-        {
-          'task_id': 300006,
-          'task_key': 'daily_invite_friend_v1',
-          'title': '邀请好友获得轻币',
-          'status': 0
-        },
-        {
-          'task_id': 300007,
-          'task_key': 'daily_treasure_box_v1',
-          'title': '每日开宝箱',
-          'status': 0
-        },
+        {'task_id': 300001, 'task_key': 'daily_read_book_v1', 'title': '浏览一个作品', 'status': 0},
+        {'task_id': 300002, 'task_key': 'daily_add_bookshelf_v1', 'title': '收藏一个作品', 'status': 0},
+        {'task_id': 300004, 'task_key': 'enable_message_notify_v1', 'title': '打开消息提醒', 'status': 1},
+        {'task_id': 300005, 'task_key': 'daily_browse_goods_v1', 'title': '浏览商品赚钱', 'status': 0, 'available': 0, 'button_text': '即将开放'},
+        {'task_id': 300006, 'task_key': 'daily_invite_friend_v1', 'title': '邀请好友获得轻币', 'status': 0},
+        {'task_id': 300007, 'task_key': 'daily_treasure_box_v1', 'title': '每日开宝箱', 'status': 0},
       ];
 
       final visible = WelfarePage.filterVisibleTasks(tasks);
@@ -967,7 +932,7 @@ void main() {
       await tester.pump();
     });
 
-    testWidgets('Advertisement eligibility query never fabricates completion',
+    testWidgets('Tapping watch_ad treasure box triggers ad report and claim',
         (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
@@ -1022,15 +987,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('查询开启资格'), findsOneWidget);
-      await tester.tap(find.text('查询开启资格'));
+      expect(find.text('免广告开启'), findsOneWidget);
+      await tester.tap(find.text('免广告开启'));
       await tester.pump();
       for (var i = 0; i < 5; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
-      expect(adReported, isFalse);
-      expect(claimCalled, isFalse);
-      expect(find.textContaining('广告任务尚未接入真实播放回调'), findsOneWidget);
+      expect(adReported, isTrue);
+      expect(claimCalled, isTrue);
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump();

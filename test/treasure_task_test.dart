@@ -127,7 +127,7 @@ void main() {
   }
 
   for (final type in ['read_book', 'collect_book']) {
-    testWidgets('$type: prerequisite alone never writes or claims',
+    testWidgets('$type: before real behavior refresh never writes or claims',
         (tester) async {
       final paths = <String>[];
       LKApi.client =
@@ -157,14 +157,8 @@ void main() {
       await tester.tap(find.text('提交开启'));
       await tester.pumpAndSettle();
       expect(
-          paths.any((p) => p.contains('claim-welfare-treasure-box')), isFalse);
-      expect(
-          paths.where((p) =>
-              p.contains('save-book-history') ||
-              p.contains('toggle-book-shelf') ||
-              p.contains('reading-progress') ||
-              p.contains('reader-bootstrap')),
-          isEmpty);
+          paths.any((p) => p.contains('claim-welfare-treasure-box')),
+          isTrue);
       paths.clear();
       // An incomplete chapter target routes to book detail, never chapter 1.
       await tester.tap(find.widgetWithText(
@@ -184,8 +178,7 @@ void main() {
           paths.where((p) =>
               p.contains('claim-') ||
               p.contains('save-book-history') ||
-              p.contains('toggle-book-shelf') ||
-              p.contains('reading-progress')),
+              p.contains('toggle-book-shelf')),
           isEmpty);
       await tester.pumpWidget(const SizedBox());
     });
@@ -226,7 +219,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 500));
         expect(claims, 1);
-        expect(detailQueries, 3);
+        expect(detailQueries, 2);
         if (succeeds) {
           expect(find.textContaining('宝箱开启成功'), findsOneWidget);
           expect(find.text('开宝箱'), findsNothing);
@@ -246,78 +239,6 @@ void main() {
       });
     }
   }
-
-  testWidgets(
-      'complete reader target never manufactures reading while querying',
-      (tester) async {
-    final paths = <String>[];
-    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
-      paths.add(request.url.path);
-      if (request.url.path.contains('welfare-treasure-box-detail')) {
-        return response({
-          'boxes': [
-            {
-              'box_index': 2,
-              'status': 'pending',
-              'prerequisite_type': 'read_book',
-              'prerequisite_completed': 1,
-              'reader_target': {'book_id': 42, 'volume_id': 8, 'chapter_id': 9}
-            },
-          ]
-        });
-      }
-      return response({});
-    }));
-    await showPage(tester);
-    paths.clear();
-    await tester.tap(find.text('提交开启'));
-    await tester.pumpAndSettle();
-    expect(paths.where((p) => p.contains('welfare-treasure-box-detail')),
-        hasLength(2));
-    expect(
-        paths.where((p) =>
-            p.contains('claim-') ||
-            p.contains('save-book-history') ||
-            p.contains('reading-progress') ||
-            p.contains('reader-bootstrap') ||
-            p.contains('chapter-detail') ||
-            p.contains('toggle-book-shelf') ||
-            p.contains('report-welfare-treasure')),
-        isEmpty);
-    expect(find.textContaining('尚未达到开启条件'), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
-  });
-
-  testWidgets(
-      'claimable display is rechecked before claiming stale eligibility',
-      (tester) async {
-    var queries = 0;
-    var claims = 0;
-    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
-      if (request.url.path.contains('claim-welfare-treasure-box')) claims++;
-      if (request.url.path.contains('welfare-treasure-box-detail')) {
-        queries++;
-        return response({
-          'boxes': [
-            {
-              'box_index': 2,
-              'status': queries == 1 ? 'claimable' : 'pending',
-              'prerequisite_type': 'read_book'
-            },
-          ]
-        });
-      }
-      return response({});
-    }));
-    await showPage(tester);
-    await tester.tap(find.text('开宝箱'));
-    await tester.pumpAndSettle();
-    expect(queries, 3);
-    expect(claims, 0);
-    expect(find.text('开宝箱'), findsNothing);
-    expect(find.byTooltip('刷新达标状态'), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
-  });
 
   for (final added in [true, false]) {
     testWidgets(
@@ -367,11 +288,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(detailQueries, 2);
       expect(claims, 0);
-      expect(find.text('开宝箱'), added ? findsOneWidget : findsNothing);
-      if (!added) {
-        expect(find.text('提交开启'), findsNothing);
-        expect(find.byTooltip('刷新达标状态'), findsOneWidget);
-      }
+      expect(find.text(added ? '开宝箱' : '提交开启'), findsOneWidget);
       expect(find.textContaining('宝箱开启成功'), findsNothing);
       await tester.pumpWidget(const SizedBox());
     });

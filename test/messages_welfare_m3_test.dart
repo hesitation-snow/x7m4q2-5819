@@ -23,7 +23,7 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
-    for (final page in ['messages', 'chat', 'welfare']) {
+    for (final page in ['messages', 'chat']) {
       testWidgets('$page $brightness narrow screen with large text',
           (tester) async {
         tester.view.physicalSize = const Size(360, 1000);
