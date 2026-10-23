@@ -230,8 +230,8 @@ class _WelfarePageState extends State<WelfarePage>
           final tasks = _orderTasks(_visibleTasks(_extractTasks(root)));
           final homeEarnCoin = _section(
               root, const ['earn_coin', 'earnCoin', 'welfare_earn_coin']);
-          final homeTreasure = _section(root,
-              const ['treasure', 'treasure_box', 'daily_treasure_box']);
+          final homeTreasure = _section(
+              root, const ['treasure', 'treasure_box', 'daily_treasure_box']);
           setState(() {
             _home = map;
             _tasks = tasks;
@@ -657,9 +657,15 @@ class _WelfarePageState extends State<WelfarePage>
         normTitle == '浏览' ||
         normTitle == '发现好书' ||
         normTitle == '去探索' ||
-        (normTitle.contains('浏览') && !normTitle.contains('网') && !normTitle.contains('商品')) ||
-        (key.contains('browse') && !key.contains('web') && !key.contains('goods')) ||
-        (type.contains('browse') && !type.contains('web') && !type.contains('goods'));
+        (normTitle.contains('浏览') &&
+            !normTitle.contains('网') &&
+            !normTitle.contains('商品')) ||
+        (key.contains('browse') &&
+            !key.contains('web') &&
+            !key.contains('goods')) ||
+        (type.contains('browse') &&
+            !type.contains('web') &&
+            !type.contains('goods'));
   }
 
   bool _isCollectWorkTask(Map<String, dynamic> task) {
@@ -1935,10 +1941,13 @@ class _WelfarePageState extends State<WelfarePage>
     final taskKey = _taskKey(task).toLowerCase();
     final taskType = _taskType(task).toLowerCase();
     final title = _taskTitle(task);
-    final buttonAction = _text(_deepField(task, const ['button_action', 'buttonAction'])).toLowerCase();
+    final buttonAction =
+        _text(_deepField(task, const ['button_action', 'buttonAction']))
+            .toLowerCase();
 
     // 0. 特殊状态判断（如即将开放）
-    if (buttonAction == 'none' && (title.contains('商品') || taskKey.contains('goods'))) {
+    if (buttonAction == 'none' &&
+        (title.contains('商品') || taskKey.contains('goods'))) {
       showLkError(context, '该功能暂未开放，敬请期待');
       return;
     }
@@ -1950,13 +1959,18 @@ class _WelfarePageState extends State<WelfarePage>
     }
 
     // 2. 消息提醒任务
-    if (taskKey.contains('notify') || taskType.contains('notify') || title.contains('提醒') || title.contains('通知')) {
+    if (taskKey.contains('notify') ||
+        taskType.contains('notify') ||
+        title.contains('提醒') ||
+        title.contains('通知')) {
       await _handleNotifyTask(task);
       return;
     }
 
     // 3. 邀请好友任务
-    if (taskKey.contains('invite') || taskType.contains('invite') || title.contains('邀请')) {
+    if (taskKey.contains('invite') ||
+        taskType.contains('invite') ||
+        title.contains('邀请')) {
       await _handleInviteTask(task);
       return;
     }
@@ -1973,9 +1987,14 @@ class _WelfarePageState extends State<WelfarePage>
         title.contains('收藏') ||
         title.contains('作品') ||
         title.contains('书架')) {
-      final readerTarget = _map(_deepField(task, const ['reader_target', 'readerTarget'])) ?? const {};
-      final bookId = _int(_deepField(task, const ['book_id', 'bookId', 'target_id', 'targetId'])) > 0
-          ? _int(_deepField(task, const ['book_id', 'bookId', 'target_id', 'targetId']))
+      final readerTarget =
+          _map(_deepField(task, const ['reader_target', 'readerTarget'])) ??
+              const {};
+      final bookId = _int(_deepField(
+                  task, const ['book_id', 'bookId', 'target_id', 'targetId'])) >
+              0
+          ? _int(_deepField(
+              task, const ['book_id', 'bookId', 'target_id', 'targetId']))
           : _int(_deepField(readerTarget, const ['book_id', 'bookId']));
       if (bookId > 0) {
         await Navigator.push(
@@ -2013,10 +2032,15 @@ class _WelfarePageState extends State<WelfarePage>
         title.contains('小说') ||
         title.contains('章节')) {
       final snapshot = LKReadingSession.shared.snapshot();
-      final readerTarget = _map(_deepField(task, const ['reader_target', 'readerTarget'])) ?? const {};
+      final readerTarget =
+          _map(_deepField(task, const ['reader_target', 'readerTarget'])) ??
+              const {};
       final bookId = snapshot?.bookId ??
-          (_int(_deepField(task, const ['book_id', 'bookId', 'target_id', 'targetId'])) > 0
-              ? _int(_deepField(task, const ['book_id', 'bookId', 'target_id', 'targetId']))
+          (_int(_deepField(task,
+                      const ['book_id', 'bookId', 'target_id', 'targetId'])) >
+                  0
+              ? _int(_deepField(
+                  task, const ['book_id', 'bookId', 'target_id', 'targetId']))
               : _int(_deepField(readerTarget, const ['book_id', 'bookId'])));
       if (bookId > 0) {
         if (snapshot != null &&
@@ -2140,7 +2164,8 @@ class _WelfarePageState extends State<WelfarePage>
                     const Expanded(
                       child: Text(
                         '邀请好友得轻币',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                     ),
                     IconButton(
@@ -2154,22 +2179,28 @@ class _WelfarePageState extends State<WelfarePage>
                   ruleText.isNotEmpty
                       ? ruleText
                       : '每成功邀请一位好友可获得 50 轻币奖励，好友亦可获赠轻币。',
-                  style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                  style:
+                      TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                    color:
+                        scheme.surfaceContainerHighest.withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.4)),
+                    border: Border.all(
+                        color: scheme.outlineVariant.withValues(alpha: 0.4)),
                   ),
                   child: Row(
                     children: [
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('我的专属邀请码', style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+                          Text('我的专属邀请码',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: scheme.onSurfaceVariant)),
                           const SizedBox(height: 3),
                           Text(
                             code.isNotEmpty ? code : '——',
@@ -2203,7 +2234,8 @@ class _WelfarePageState extends State<WelfarePage>
                 Center(
                   child: Text(
                     '好友注册并完成阅读后，奖励自动发放到轻币账户',
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                    style:
+                        TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 ),
               ],
@@ -2787,20 +2819,28 @@ class _WelfarePageState extends State<WelfarePage>
 
   int get _treasureOpenedCount =>
       _int(_deepField(_treasureData, const ['opened_boxes', 'openedBoxes'])) > 0
-          ? _int(_deepField(_treasureData, const ['opened_boxes', 'openedBoxes']))
-          : _int(_deepField(_treasureCard, const ['opened_boxes', 'openedBoxes']));
+          ? _int(
+              _deepField(_treasureData, const ['opened_boxes', 'openedBoxes']))
+          : _int(
+              _deepField(_treasureCard, const ['opened_boxes', 'openedBoxes']));
 
-  int get _treasureTotalCount =>
-      _int(_deepField(_treasureData, const ['today_total_boxes', 'todayTotalBoxes'])) > 0
-          ? _int(_deepField(_treasureData, const ['today_total_boxes', 'todayTotalBoxes']))
-          : (_int(_deepField(_treasureCard, const ['today_total_boxes', 'todayTotalBoxes'])) > 0
-              ? _int(_deepField(_treasureCard, const ['today_total_boxes', 'todayTotalBoxes']))
-              : 3);
+  int get _treasureTotalCount => _int(_deepField(
+              _treasureData, const ['today_total_boxes', 'todayTotalBoxes'])) >
+          0
+      ? _int(_deepField(
+          _treasureData, const ['today_total_boxes', 'todayTotalBoxes']))
+      : (_int(_deepField(_treasureCard,
+                  const ['today_total_boxes', 'todayTotalBoxes'])) >
+              0
+          ? _int(_deepField(
+              _treasureCard, const ['today_total_boxes', 'todayTotalBoxes']))
+          : 3);
 
-  int get _treasureTodayReward =>
-      _int(_deepField(_treasure, const ['reward_amount', 'rewardAmount'])) > 0
-          ? _int(_deepField(_treasure, const ['reward_amount', 'rewardAmount']))
-          : _int(_deepField(_treasureCard, const ['total_reward', 'today_reward']));
+  int get _treasureTodayReward => _int(
+              _deepField(_treasure, const ['reward_amount', 'rewardAmount'])) >
+          0
+      ? _int(_deepField(_treasure, const ['reward_amount', 'rewardAmount']))
+      : _int(_deepField(_treasureCard, const ['total_reward', 'today_reward']));
 
   int _boxIndex(Map<String, dynamic> box, int fallback) {
     final idx = _int(_deepField(box, const ['box_index', 'boxIndex', 'index']));
@@ -2811,7 +2851,8 @@ class _WelfarePageState extends State<WelfarePage>
       box, const ['reward_coin', 'rewardCoin', 'coin', 'reward_amount']));
 
   bool _isBoxClaimed(Map<String, dynamic> box) {
-    final status = _text(_deepField(box, const ['status', 'box_status'])).toLowerCase();
+    final status =
+        _text(_deepField(box, const ['status', 'box_status'])).toLowerCase();
     final openedAt = _text(_deepField(box, const ['opened_at', 'openedAt']));
     return status == 'claimed' ||
         status == 'opened' ||
@@ -2827,7 +2868,8 @@ class _WelfarePageState extends State<WelfarePage>
 
   bool _isBoxWaitingUnlock(Map<String, dynamic> box) {
     if (_isBoxClaimed(box)) return false;
-    final status = _text(_deepField(box, const ['status', 'box_status'])).toLowerCase();
+    final status =
+        _text(_deepField(box, const ['status', 'box_status'])).toLowerCase();
     if (status == 'waiting_time') return true;
     final unlockAtStr = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
     if (unlockAtStr.isNotEmpty) {
@@ -2852,7 +2894,8 @@ class _WelfarePageState extends State<WelfarePage>
     final prereqType = TreasureTask.prerequisite(box);
     if (prereqType == 'watch_ad') return '免广告';
     if (prereqType == 'read_book') return '去浏览';
-    if (prereqType.contains('collect') || prereqType.contains('shelf')) return '去收藏';
+    if (prereqType.contains('collect') || prereqType.contains('shelf'))
+      return '去收藏';
     return '待解锁';
   }
 
@@ -2863,16 +2906,20 @@ class _WelfarePageState extends State<WelfarePage>
     try {
       final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
       if (!mounted || revision != LKClient.sessionRev.value) return;
-      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
-          ? _int(_deepField(claimRes, const ['reward', 'coin']))
-          : _int(_deepField(claimRes, const ['reward_coin']));
-      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      final rewardCoin =
+          _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+              ? _int(_deepField(claimRes, const ['reward', 'coin']))
+              : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(
+          context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
       await _load();
     } catch (e) {
       if (mounted && revision == LKClient.sessionRev.value) {
-        showLkError(context, e is LKException && e.code == 6
-            ? '宝箱未开启（code 6）：未到解锁时间，或前置任务尚未达成。'
-            : _errorText(e));
+        showLkError(
+            context,
+            e is LKException && e.code == 6
+                ? '宝箱未开启（code 6）：未到解锁时间，或前置任务尚未达成。'
+                : _errorText(e));
         await _load();
       }
     } finally {
@@ -2882,7 +2929,8 @@ class _WelfarePageState extends State<WelfarePage>
     }
   }
 
-  Future<void> _claimTreasureWithRead(int boxIndex, Map<String, dynamic> box) async {
+  Future<void> _claimTreasureWithRead(
+      int boxIndex, Map<String, dynamic> box) async {
     if (_action.isNotEmpty) return;
     final revision = LKClient.sessionRev.value;
     setState(() => _action = 'treasure:$boxIndex');
@@ -2916,14 +2964,20 @@ class _WelfarePageState extends State<WelfarePage>
 
       final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
       if (!mounted || revision != LKClient.sessionRev.value) return;
-      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
-          ? _int(_deepField(claimRes, const ['reward', 'coin']))
-          : _int(_deepField(claimRes, const ['reward_coin']));
-      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      final rewardCoin =
+          _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+              ? _int(_deepField(claimRes, const ['reward', 'coin']))
+              : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(
+          context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
       await _load();
     } catch (e) {
       if (mounted && revision == LKClient.sessionRev.value) {
-        showLkError(context, e is LKException && e.code == 6 ? '未达开启条件（code 6）：服务端尚未确认该作品阅读进度已达标，请稍后刷新重试。' : _errorText(e));
+        showLkError(
+            context,
+            e is LKException && e.code == 6
+                ? '未达开启条件（code 6）：服务端尚未确认该作品阅读进度已达标，请稍后刷新重试。'
+                : _errorText(e));
         await _load();
       }
     } finally {
@@ -2933,7 +2987,8 @@ class _WelfarePageState extends State<WelfarePage>
     }
   }
 
-  Future<void> _claimTreasureWithCollect(int boxIndex, Map<String, dynamic> box) async {
+  Future<void> _claimTreasureWithCollect(
+      int boxIndex, Map<String, dynamic> box) async {
     if (_action.isNotEmpty) return;
     final revision = LKClient.sessionRev.value;
     setState(() => _action = 'treasure:$boxIndex');
@@ -2949,14 +3004,20 @@ class _WelfarePageState extends State<WelfarePage>
 
       final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
       if (!mounted || revision != LKClient.sessionRev.value) return;
-      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
-          ? _int(_deepField(claimRes, const ['reward', 'coin']))
-          : _int(_deepField(claimRes, const ['reward_coin']));
-      showLkError(context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      final rewardCoin =
+          _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+              ? _int(_deepField(claimRes, const ['reward', 'coin']))
+              : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(
+          context, rewardCoin > 0 ? '宝箱开启成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
       await _load();
     } catch (e) {
       if (mounted && revision == LKClient.sessionRev.value) {
-        showLkError(context, e is LKException && e.code == 6 ? '未达开启条件（code 6）：服务端尚未确认该作品收藏状态已生效，请加入书架后刷新重试。' : _errorText(e));
+        showLkError(
+            context,
+            e is LKException && e.code == 6
+                ? '未达开启条件（code 6）：服务端尚未确认该作品收藏状态已生效，请加入书架后刷新重试。'
+                : _errorText(e));
         await _load();
       }
     } finally {
@@ -2977,10 +3038,12 @@ class _WelfarePageState extends State<WelfarePage>
       if (!mounted) return;
       final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
       if (!mounted) return;
-      final rewardCoin = _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
-          ? _int(_deepField(claimRes, const ['reward', 'coin']))
-          : _int(_deepField(claimRes, const ['reward_coin']));
-      showLkError(context, rewardCoin > 0 ? '免广告开箱成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+      final rewardCoin =
+          _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
+              ? _int(_deepField(claimRes, const ['reward', 'coin']))
+              : _int(_deepField(claimRes, const ['reward_coin']));
+      showLkError(
+          context, rewardCoin > 0 ? '免广告开箱成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
       await _load();
     } catch (e) {
       if (mounted) {
@@ -2995,7 +3058,8 @@ class _WelfarePageState extends State<WelfarePage>
   Future<void> _openReaderForTreasure(Map<String, dynamic> box, int boxIndex) =>
       _openTreasureTarget(box, boxIndex, read: true);
 
-  Future<void> _openCollectForTreasure(Map<String, dynamic> box, int boxIndex) =>
+  Future<void> _openCollectForTreasure(
+          Map<String, dynamic> box, int boxIndex) =>
       _openTreasureTarget(box, boxIndex, read: false);
 
   Future<void> _openTreasureTarget(Map<String, dynamic> box, int boxIndex,
@@ -3008,14 +3072,15 @@ class _WelfarePageState extends State<WelfarePage>
       await Navigator.push(
         context,
         MaterialPageRoute<void>(
-          settings: RouteSettings(arguments:
-              TreasureTask.routeContext(_treasure, box, boxIndex)),
+          settings: RouteSettings(
+              arguments: TreasureTask.routeContext(_treasure, box, boxIndex)),
           builder: (_) => target.bookId <= 0
               ? const SearchPage()
               : read && target.chapterId > 0 && target.volumeId > 0
                   ? ReaderPage(
                       bookId: target.bookId,
-                      bookTitle: target.title.isNotEmpty ? target.title : '小说阅读',
+                      bookTitle:
+                          target.title.isNotEmpty ? target.title : '小说阅读',
                       chapterId: target.chapterId,
                       chapterTitle: '',
                       volumeId: target.volumeId,
@@ -3043,7 +3108,9 @@ class _WelfarePageState extends State<WelfarePage>
     var activeIndex = _selectedTreasureBoxIndex;
     if (activeIndex <= 0 || activeIndex > boxes.length) {
       final firstActionable = boxes.indexWhere((b) => !_isBoxClaimed(b));
-      activeIndex = firstActionable >= 0 ? _boxIndex(boxes[firstActionable], firstActionable + 1) : 1;
+      activeIndex = firstActionable >= 0
+          ? _boxIndex(boxes[firstActionable], firstActionable + 1)
+          : 1;
     }
     final selectedBox = boxes.isNotEmpty
         ? boxes.firstWhere(
@@ -3108,9 +3175,7 @@ class _WelfarePageState extends State<WelfarePage>
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        reward > 0
-                            ? '今日最高 +$reward 轻币'
-                            : '每日共3个宝箱，分时完成任务开启',
+                        reward > 0 ? '今日最高 +$reward 轻币' : '每日共3个宝箱，分时完成任务开启',
                         style: TextStyle(
                           color: scheme.onSurfaceVariant,
                           fontSize: 12,
@@ -3171,7 +3236,8 @@ class _WelfarePageState extends State<WelfarePage>
 
     final prereqType = TreasureTask.prerequisite(box);
     final isReadBook = prereqType == 'read_book';
-    final isCollectBook = prereqType.contains('collect') || prereqType.contains('shelf');
+    final isCollectBook =
+        prereqType.contains('collect') || prereqType.contains('shelf');
     final isWatchAd = prereqType == 'watch_ad';
 
     final Color bgColor;
@@ -3181,7 +3247,8 @@ class _WelfarePageState extends State<WelfarePage>
       borderColor = Colors.transparent;
     } else if (claimable) {
       bgColor = scheme.primaryContainer.withValues(alpha: 0.6);
-      borderColor = isSelected ? scheme.primary : scheme.primary.withValues(alpha: 0.4);
+      borderColor =
+          isSelected ? scheme.primary : scheme.primary.withValues(alpha: 0.4);
     } else if (isSelected) {
       bgColor = scheme.surfaceContainerHighest;
       borderColor = scheme.primary;
@@ -3281,12 +3348,15 @@ class _WelfarePageState extends State<WelfarePage>
     final claimable = _isBoxClaimable(box);
     final isWaitingUnlock = _isBoxWaitingUnlock(box);
     final prereqType = TreasureTask.prerequisite(box);
-    final prereqText = _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
+    final prereqText =
+        _text(_deepField(box, const ['prerequisite_text', 'prerequisiteText']));
     final unlockAt = _text(_deepField(box, const ['unlock_at', 'unlockAt']));
-    final isActing = _action == 'treasure:$boxIdx' || _action == 'treasure-ad:$boxIdx';
+    final isActing =
+        _action == 'treasure:$boxIdx' || _action == 'treasure-ad:$boxIdx';
 
     final isReadBook = prereqType == 'read_book';
-    final isCollectBook = prereqType.contains('collect') || prereqType.contains('shelf');
+    final isCollectBook =
+        prereqType.contains('collect') || prereqType.contains('shelf');
     final isWatchAd = prereqType == 'watch_ad';
 
     String promptText = '';
@@ -3477,12 +3547,14 @@ class _WelfarePageState extends State<WelfarePage>
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.calendar_month_rounded, color: Colors.amber),
+                    const Icon(Icons.calendar_month_rounded,
+                        color: Colors.amber),
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
                         '宝箱 7 天奖励计划',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                     ),
                     IconButton(
@@ -3494,7 +3566,8 @@ class _WelfarePageState extends State<WelfarePage>
                 const SizedBox(height: 6),
                 Text(
                   '每天完成宝箱任务即可开启对应数量宝箱并领取轻币。',
-                  style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                  style:
+                      TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 16),
                 if (weekPlan.isNotEmpty)
@@ -3507,44 +3580,57 @@ class _WelfarePageState extends State<WelfarePage>
                       itemCount: weekPlan.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (_, index) {
-                        final dayData = Map<String, dynamic>.from(weekPlan[index] as Map);
-                        final dayNo = _int(_deepField(dayData, const ['day'])) > 0
-                            ? _int(_deepField(dayData, const ['day']))
-                            : index + 1;
-                        final isToday = _flag(_deepField(dayData, const ['is_today', 'isToday']));
-                        final totalReward = _int(_deepField(dayData, const ['total_reward', 'totalReward']));
-                        final totalBoxes = _int(_deepField(dayData, const ['total_boxes', 'totalBoxes']));
+                        final dayData =
+                            Map<String, dynamic>.from(weekPlan[index] as Map);
+                        final dayNo =
+                            _int(_deepField(dayData, const ['day'])) > 0
+                                ? _int(_deepField(dayData, const ['day']))
+                                : index + 1;
+                        final isToday = _flag(
+                            _deepField(dayData, const ['is_today', 'isToday']));
+                        final totalReward = _int(_deepField(
+                            dayData, const ['total_reward', 'totalReward']));
+                        final totalBoxes = _int(_deepField(
+                            dayData, const ['total_boxes', 'totalBoxes']));
                         final date = _text(_deepField(dayData, const ['date']));
 
                         return ListTile(
                           dense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 2),
                           leading: CircleAvatar(
                             radius: 16,
-                            backgroundColor: isToday ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+                            backgroundColor: isToday
+                                ? scheme.primaryContainer
+                                : scheme.surfaceContainerHighest,
                             child: Text(
                               'D$dayNo',
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
-                                color: isToday ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+                                color: isToday
+                                    ? scheme.onPrimaryContainer
+                                    : scheme.onSurfaceVariant,
                               ),
                             ),
                           ),
                           title: Row(
                             children: [
-                              Text('第 $dayNo 天 ${date.isNotEmpty ? '($date)' : ''}'),
+                              Text(
+                                  '第 $dayNo 天 ${date.isNotEmpty ? '($date)' : ''}'),
                               if (isToday) ...[
                                 const SizedBox(width: 6),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 5, vertical: 1),
                                   decoration: BoxDecoration(
                                     color: scheme.primary,
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: const Text(
                                     '今日',
-                                    style: TextStyle(color: Colors.white, fontSize: 10),
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 10),
                                   ),
                                 ),
                               ],
@@ -4049,9 +4135,10 @@ class _WelfarePageState extends State<WelfarePage>
                   const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
         );
       case _TaskItemStatus.actionable:
-        final isUnavailable = _int(_deepField(task, const ['available'])) == 0 &&
-                _deepField(task, const ['available']) != null ||
-            btnText == '即将开放';
+        final isUnavailable =
+            _int(_deepField(task, const ['available'])) == 0 &&
+                    _deepField(task, const ['available']) != null ||
+                btnText == '即将开放';
         return FilledButton.tonal(
           style: FilledButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),

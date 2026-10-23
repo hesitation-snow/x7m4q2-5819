@@ -1073,7 +1073,7 @@ class _ShelfPageState extends State<ShelfPage> {
           child: toolbar,
           builder: (context, fraction, child) => ClipRect(
             child: Align(
-              alignment: Alignment.topCenter,
+              alignment: Alignment.bottomCenter,
               heightFactor: fraction,
               child: child,
             ),

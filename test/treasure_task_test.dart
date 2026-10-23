@@ -157,8 +157,7 @@ void main() {
       await tester.tap(find.text('提交开启'));
       await tester.pumpAndSettle();
       expect(
-          paths.any((p) => p.contains('claim-welfare-treasure-box')),
-          isTrue);
+          paths.any((p) => p.contains('claim-welfare-treasure-box')), isTrue);
       paths.clear();
       // An incomplete chapter target routes to book detail, never chapter 1.
       await tester.tap(find.widgetWithText(

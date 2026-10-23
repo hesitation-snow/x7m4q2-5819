@@ -18,9 +18,9 @@ abstract final class AppTheme {
       pageTransitionsTheme: AppMotion.disabled
           ? AppMotion.noPageTransitions
           : const PageTransitionsTheme(),
-      splashFactory: AppMotion.disabled
-          ? NoSplash.splashFactory
-          : InkSparkle.splashFactory,
+      splashFactory: AppMotion.disabled ? NoSplash.splashFactory : null,
+      hoverColor: Colors.transparent,
+      focusColor: Colors.transparent,
       scaffoldBackgroundColor: scheme.surface,
       appBarTheme: AppBarTheme(
         centerTitle: true,
@@ -64,16 +64,15 @@ abstract final class AppTheme {
         backgroundColor: scheme.surfaceContainer,
         indicatorColor: scheme.secondaryContainer,
         height: 64,
-        labelTextStyle: WidgetStateProperty.resolveWith(
-            (states) => TextStyle(
-                  fontSize: 11,
-                  color: states.contains(WidgetState.selected)
-                      ? scheme.onSurface
-                      : scheme.onSurfaceVariant,
-                  fontWeight: states.contains(WidgetState.selected)
-                      ? FontWeight.w600
-                      : FontWeight.normal,
-                )),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(
+              fontSize: 11,
+              color: states.contains(WidgetState.selected)
+                  ? scheme.onSurface
+                  : scheme.onSurfaceVariant,
+              fontWeight: states.contains(WidgetState.selected)
+                  ? FontWeight.w600
+                  : FontWeight.normal,
+            )),
       ),
       dividerTheme: DividerThemeData(
           color: scheme.outlineVariant, thickness: .5, space: 1),

@@ -2357,17 +2357,43 @@ class _MyTabState extends State<MyTab> {
 
   Widget _profileChip(IconData icon, String label,
       {Color? color, VoidCallback? onTap}) {
-    final chip = Chip(
-      avatar: Icon(icon, size: 18, color: color),
-      label: Text(label),
-      visualDensity: VisualDensity.compact,
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final child = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: isDark
+            ? scheme.surfaceContainerHighest.withValues(alpha: 0.4)
+            : scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: color?.withValues(alpha: 0.5) ??
+              scheme.outlineVariant.withValues(alpha: 0.3),
+          width: 0.8,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color ?? scheme.primary),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurface,
+            ),
+          ),
+        ],
+      ),
     );
     return onTap == null
-        ? chip
+        ? child
         : InkWell(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(20),
             onTap: onTap,
-            child: chip,
+            child: child,
           );
   }
 }
