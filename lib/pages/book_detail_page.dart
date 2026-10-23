@@ -752,8 +752,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
         InkWell(
           onTap: () => _showFullBookTitle(book.title),
           child: Text(book.title,
-              style: theme.textTheme.headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w600, height: 1.25)),
+              style: const TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.bold, height: 1.3)),
         ),
         if (book.authorName.trim().isNotEmpty) ...[
           const SizedBox(height: 8),
@@ -821,19 +821,19 @@ class _BookDetailPageState extends State<BookDetailPage> {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
               key: const ValueKey('primary-reading-action'),
               onPressed: canRead ? _openReading : null,
               style: FilledButton.styleFrom(
-                  minimumSize: const Size(0, 56),
+                  minimumSize: const Size(0, 46),
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
-              icon: const Icon(Icons.menu_book_rounded),
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
+              icon: const Icon(Icons.menu_book_rounded, size: 20),
               label: Text(_fabLabel,
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center),
             ),
@@ -924,40 +924,67 @@ class _BookDetailPageState extends State<BookDetailPage> {
                             children: [
                               _bookHeader(b),
                               if (b.tags.isNotEmpty) ...[
-                                const SizedBox(height: 20),
-                                Wrap(spacing: 8, runSpacing: 8, children: [
-                                  for (final tag in b.tags)
-                                    ActionChip(
-                                      label: Text(tag),
-                                      onPressed: () => Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                              builder: (_) =>
-                                                  SearchPage(initialTag: tag))),
+                                const SizedBox(height: 14),
+                                SizedBox(
+                                  height: 30,
+                                  child: ListView.separated(
+                                    scrollDirection: Axis.horizontal,
+                                    itemCount: b.tags.length,
+                                    separatorBuilder: (_, __) =>
+                                        const SizedBox(width: 8),
+                                    itemBuilder: (_, i) => GestureDetector(
+                                      onTap: () => Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                            builder: (_) => SearchPage(
+                                                initialTag: b.tags[i])),
+                                      ),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 5),
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          color: scheme.surfaceContainerHighest
+                                              .withValues(alpha: 0.6),
+                                          borderRadius:
+                                              BorderRadius.circular(16),
+                                        ),
+                                        child: Text(b.tags[i],
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: scheme.primary)),
+                                      ),
                                     ),
-                                ]),
-                              ],
-                              const SizedBox(height: 20),
-                              Wrap(spacing: 12, runSpacing: 8, children: [
-                                OutlinedButton.icon(
-                                  onPressed: _toggleShelf,
-                                  icon: Icon(
-                                      _inShelf
-                                          ? Icons.bookmark_added_rounded
-                                          : Icons.bookmark_add_outlined,
-                                      size: 20),
-                                  label: Text(_inShelf ? '已加书架' : '加入书架'),
+                                  ),
                                 ),
-                                TextButton.icon(
-                                  onPressed: () => Navigator.push(
+                              ],
+                              const SizedBox(height: 14),
+                              Row(children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: _toggleShelf,
+                                    icon: Icon(
+                                        _inShelf
+                                            ? Icons.bookmark_added_rounded
+                                            : Icons.bookmark_add_outlined,
+                                        size: 18),
+                                    label: Text(_inShelf ? '已加书架' : '加入书架'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => Navigator.push(
                                       context,
                                       MaterialPageRoute(
                                           builder: (_) => CommentsPage(
                                               bookId: b.bookId,
-                                              bookTitle: b.title))),
-                                  icon: const Icon(Icons.chat_bubble_outline,
-                                      size: 20),
-                                  label: const Text('书评'),
+                                              bookTitle: b.title)),
+                                    ),
+                                    icon: const Icon(Icons.chat_bubble_outline,
+                                        size: 18),
+                                    label: const Text('书评'),
+                                  ),
                                 ),
                               ]),
                               const SizedBox(height: 18),

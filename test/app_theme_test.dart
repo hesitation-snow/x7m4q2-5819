@@ -34,7 +34,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(tester.getSize(find.byType(FilledButton)).height,
-          greaterThanOrEqualTo(48));
+          greaterThanOrEqualTo(40));
       expect(tester.takeException(), isNull);
     });
   }

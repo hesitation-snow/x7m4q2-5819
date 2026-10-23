@@ -63,16 +63,17 @@ abstract final class AppTheme {
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: scheme.surfaceContainer,
         indicatorColor: scheme.secondaryContainer,
+        height: 64,
         labelTextStyle: WidgetStateProperty.resolveWith(
-            (states) => base.textTheme.labelMedium?.copyWith(
+            (states) => TextStyle(
+                  fontSize: 11,
                   color: states.contains(WidgetState.selected)
                       ? scheme.onSurface
                       : scheme.onSurfaceVariant,
                   fontWeight: states.contains(WidgetState.selected)
                       ? FontWeight.w600
-                      : FontWeight.w500,
+                      : FontWeight.normal,
                 )),
-        height: 72,
       ),
       dividerTheme: DividerThemeData(
           color: scheme.outlineVariant, thickness: .5, space: 1),
@@ -86,16 +87,16 @@ abstract final class AppTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
-        minimumSize: const Size(64, 48),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        minimumSize: const Size(64, 40),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       )),
       outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-        minimumSize: const Size(64, 48),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        minimumSize: const Size(64, 40),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       )),
       textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(minimumSize: const Size(48, 48))),
+          style: TextButton.styleFrom(minimumSize: const Size(40, 40))),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: scheme.surfaceContainerLow,
         surfaceTintColor: Colors.transparent,
@@ -113,9 +114,11 @@ abstract final class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
       chipTheme: base.chipTheme.copyWith(
-        side: BorderSide(color: scheme.outlineVariant),
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
         selectedColor: scheme.secondaryContainer,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        labelStyle: TextStyle(fontSize: 12, color: scheme.onSurface),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }
