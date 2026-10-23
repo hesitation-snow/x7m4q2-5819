@@ -863,6 +863,19 @@ class _DynamicPageState extends State<DynamicPage> {
                                                   ),
                                                 ]),
                                             const SizedBox(height: 6),
+                                            if (d.title.isNotEmpty &&
+                                                d.summary
+                                                    .trim()
+                                                    .isNotEmpty) ...[
+                                              Text(
+                                                d.title,
+                                                style: const TextStyle(
+                                                  fontSize: 14.5,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                            ],
                                             LkEmojiText(
                                               text: d.displayContent,
                                               emojiUrls: _emojiUrls,

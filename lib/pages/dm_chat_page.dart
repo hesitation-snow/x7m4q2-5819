@@ -2,6 +2,7 @@ import '../services/app_motion.dart';
 import '../widgets/account_scope.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
@@ -194,35 +195,48 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                               alignment: mine
                                   ? Alignment.centerRight
                                   : Alignment.centerLeft,
-                              child: Container(
-                                margin: const EdgeInsets.symmetric(vertical: 4),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                constraints: BoxConstraints(
-                                  maxWidth:
-                                      MediaQuery.sizeOf(context).width * .82,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: mine
-                                      ? scheme.primaryContainer
-                                      : scheme.surfaceContainerHigh,
-                                  borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(20),
-                                    topRight: const Radius.circular(20),
-                                    bottomLeft: Radius.circular(mine ? 20 : 4),
-                                    bottomRight: Radius.circular(mine ? 4 : 20),
+                              child: GestureDetector(
+                                onLongPress: () async {
+                                  if (m.content.trim().isEmpty) return;
+                                  await Clipboard.setData(
+                                      ClipboardData(text: m.content));
+                                  if (context.mounted) {
+                                    showLkError(context, '已复制消息内容');
+                                  }
+                                },
+                                child: Container(
+                                  margin:
+                                      const EdgeInsets.symmetric(vertical: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 8),
+                                  constraints: BoxConstraints(
+                                    maxWidth:
+                                        MediaQuery.sizeOf(context).width * .82,
                                   ),
-                                ),
-                                child: Text(
-                                  m.content,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyLarge
-                                      ?.copyWith(
-                                        color: mine
-                                            ? scheme.onPrimaryContainer
-                                            : scheme.onSurface,
-                                      ),
+                                  decoration: BoxDecoration(
+                                    color: mine
+                                        ? scheme.primaryContainer
+                                        : scheme.surfaceContainerHigh,
+                                    borderRadius: BorderRadius.only(
+                                      topLeft: const Radius.circular(20),
+                                      topRight: const Radius.circular(20),
+                                      bottomLeft:
+                                          Radius.circular(mine ? 20 : 4),
+                                      bottomRight:
+                                          Radius.circular(mine ? 4 : 20),
+                                    ),
+                                  ),
+                                  child: SelectableText(
+                                    m.content,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyLarge
+                                        ?.copyWith(
+                                          color: mine
+                                              ? scheme.onPrimaryContainer
+                                              : scheme.onSurface,
+                                        ),
+                                  ),
                                 ),
                               ),
                             );

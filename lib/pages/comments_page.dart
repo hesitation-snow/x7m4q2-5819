@@ -580,7 +580,7 @@ class _CommentsPageState extends State<CommentsPage> {
     return Card(
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 6),
       child: InkWell(
-        onLongPress: () => _copyDynamicUrl(item),
+        onLongPress: () => _copyDynamicContent(item),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -622,6 +622,21 @@ class _CommentsPageState extends State<CommentsPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _copyDynamicContent(LKDynamicItem item) async {
+    final buffer = StringBuffer();
+    if (item.title.isNotEmpty && item.summary.trim().isNotEmpty) {
+      buffer.writeln(item.title);
+    }
+    final content = item.displayContent.trim();
+    if (content.isNotEmpty) {
+      buffer.write(content);
+    }
+    final text = buffer.toString().trim();
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) showLkError(context, '已复制动态内容');
   }
 
   Future<void> _copyDynamicUrl(LKDynamicItem item) async {
@@ -926,11 +941,50 @@ class _CommentsPageState extends State<CommentsPage> {
       // 键盘 inset 只由输入行处理:动画期间评论列表不重建,交互更流畅
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
-          title: Text(_isDynamic
-              ? '动态详情'
-              : _isVolume
-                  ? '本卷评论 · ${widget.bookTitle}'
-                  : '书评 · ${widget.bookTitle}')),
+        title: Text(_isDynamic
+            ? '动态详情'
+            : _isVolume
+                ? '本卷评论 · '
+                : '书评 · '),
+        actions: [
+          if (_isDynamic)
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert_rounded),
+              tooltip: '更多',
+              onSelected: (val) {
+                final item = _dynamicDetail ?? widget.dynamicPreview;
+                if (item == null) return;
+                if (val == 'copy_link') {
+                  _copyDynamicUrl(item);
+                } else if (val == 'copy_content') {
+                  _copyDynamicContent(item);
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'copy_link',
+                  child: Row(
+                    children: [
+                      Icon(Icons.link_rounded, size: 20),
+                      SizedBox(width: 10),
+                      Text('复制动态链接'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'copy_content',
+                  child: Row(
+                    children: [
+                      Icon(Icons.copy_rounded, size: 20),
+                      SizedBox(width: 10),
+                      Text('复制动态内容'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
       body: Column(children: [
         Expanded(
           child: _loading
