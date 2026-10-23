@@ -66,10 +66,8 @@ void main() {
           tags: [],
           completed: false,
           theme: ThemeData(
-              colorScheme: scheme,
-              scaffoldBackgroundColor: background));
-      final summary = tester.widget<Text>(
-          find.text('这是一段用于检查阅读对比度的书籍简介。'));
+              colorScheme: scheme, scaffoldBackgroundColor: background));
+      final summary = tester.widget<Text>(find.text('这是一段用于检查阅读对比度的书籍简介。'));
       expect(summary.style!.color, scheme.onSurfaceVariant);
       final foregroundLuminance = summary.style!.color!.computeLuminance();
       final backgroundLuminance = background.computeLuminance();

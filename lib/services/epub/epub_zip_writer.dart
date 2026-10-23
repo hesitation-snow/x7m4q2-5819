@@ -133,7 +133,8 @@ class EpubZipWriter {
     bool compress = true,
   }) async {
     _checkOpen();
-    final cleanName = entryName.replaceAll('\\', '/').replaceFirst(RegExp(r'^/+'), '');
+    final cleanName =
+        entryName.replaceAll('\\', '/').replaceFirst(RegExp(r'^/+'), '');
     if (cleanName.isEmpty || cleanName == 'mimetype') return;
 
     final nameBytes = utf8.encode(cleanName);

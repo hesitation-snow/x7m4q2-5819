@@ -413,7 +413,8 @@ class _MessagesPageState extends State<_MessagesPageBody>
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('消息中心'),
+            const Flexible(
+                child: Text('消息中心', overflow: TextOverflow.ellipsis)),
             if (_summary.unreadCount > 0) ...[
               const SizedBox(width: 8),
               Badge(label: Text('${_summary.unreadCount}')),
@@ -525,7 +526,7 @@ class _MessagesPageState extends State<_MessagesPageBody>
           key: PageStorageKey<String>('messages-$type'),
           physics: const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.fromLTRB(
-              10, 8, 10, MediaQuery.paddingOf(context).bottom + 12),
+              16, 12, 16, MediaQuery.paddingOf(context).bottom + 16),
           itemCount: feed.items.length + 1,
           itemBuilder: (context, index) {
             if (index == feed.items.length) {
@@ -623,14 +624,15 @@ class _MessagesPageState extends State<_MessagesPageBody>
         ? item.quoteText
         : (item.content.isNotEmpty ? item.content : '');
 
-    return Card(
+    return Card.filled(
       key: ValueKey<String>(_messageKey(item)),
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      color: scheme.surfaceContainerLow,
+      margin: const EdgeInsets.symmetric(vertical: 6),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: canOpen ? () => _openMessage(item) : null,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 11),
+          padding: const EdgeInsets.all(16),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -861,14 +863,15 @@ class _MessagesPageState extends State<_MessagesPageBody>
     final actor = item.nickname.isNotEmpty ? item.nickname : item.sourceName;
     final avatar = item.avatar.isNotEmpty ? item.avatar : item.sourceAvatar;
     final canOpen = _canOpen(item);
-    return Card(
+    return Card.filled(
       key: ValueKey<String>(_messageKey(item)),
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      color: scheme.surfaceContainerLow,
+      margin: const EdgeInsets.symmetric(vertical: 6),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: canOpen ? () => _openMessage(item) : null,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 11),
+          padding: const EdgeInsets.all(16),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -892,7 +895,7 @@ class _MessagesPageState extends State<_MessagesPageBody>
                         Expanded(
                           child: Text(
                             actor.isEmpty ? item.title : actor,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                            style: Theme.of(context).textTheme.titleSmall,
                           ),
                         ),
                         if (item.unread && !categoryMarkedRead)
@@ -1113,7 +1116,7 @@ class _MessagesPageState extends State<_MessagesPageBody>
           key: const PageStorageKey<String>('messages-dm'),
           physics: const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.fromLTRB(
-              10, 8, 10, MediaQuery.paddingOf(context).bottom + 12),
+              16, 12, 16, MediaQuery.paddingOf(context).bottom + 16),
           itemCount: _conversations.length + (showFooter ? 1 : 0),
           itemBuilder: (context, index) {
             if (index == _conversations.length) {
@@ -1155,8 +1158,9 @@ class _MessagesPageState extends State<_MessagesPageBody>
 
   Widget _conversationCard(LKConversation conversation) {
     final scheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+    return Card.filled(
+      color: scheme.surfaceContainerLow,
+      margin: const EdgeInsets.symmetric(vertical: 6),
       clipBehavior: Clip.antiAlias,
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1169,32 +1173,44 @@ class _MessagesPageState extends State<_MessagesPageBody>
                   ? Icon(Icons.person_outline, color: scheme.onSurfaceVariant)
                   : null,
         ),
-        title: Text(conversation.peerName.isEmpty
-            ? '用户 ${conversation.peerUid}'
-            : conversation.peerName),
-        subtitle: Text(
-          conversation.lastMessage.isEmpty
-              ? '暂无消息内容'
-              : conversation.lastMessage,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (conversation.updatedAt.isNotEmpty)
-              Text(
-                _formatTime(conversation.updatedAt),
-                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-              ),
-            if (conversation.unread > 0) ...[
-              const SizedBox(height: 5),
-              Badge(
-                  label: Text(conversation.unread > 99
-                      ? '99+'
-                      : '${conversation.unread}')),
-            ],
+            Text(
+                conversation.peerName.isEmpty
+                    ? '用户 ${conversation.peerUid}'
+                    : conversation.peerName,
+                style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 4),
+            Text(
+                conversation.lastMessage.isEmpty
+                    ? '暂无消息内容'
+                    : conversation.lastMessage,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: scheme.onSurfaceVariant)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (conversation.updatedAt.isNotEmpty)
+                  Text(_formatTime(conversation.updatedAt),
+                      style: Theme.of(context)
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(color: scheme.onSurfaceVariant)),
+                if (conversation.unread > 0)
+                  Badge(
+                      label: Text(conversation.unread > 99
+                          ? '99+'
+                          : '${conversation.unread}')),
+              ],
+            ),
           ],
         ),
         onTap: () async {

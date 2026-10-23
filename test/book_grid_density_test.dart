@@ -75,7 +75,8 @@ void main() {
       expect(BookGridDelegate.calculateTextHeight(200.0, isShelf: true), 38.0);
     });
 
-    test('getLayout produces SliverGridRegularTileLayout with correct strides', () {
+    test('getLayout produces SliverGridRegularTileLayout with correct strides',
+        () {
       const delegate = BookGridDelegate(
         columnCount: 3,
         crossAxisSpacing: 10,
@@ -104,8 +105,7 @@ void main() {
       expect(regular.crossAxisCount, 3);
       const expectedChildCross = (370.0 - 20) / 3;
       expect(regular.childCrossAxisExtent, closeTo(expectedChildCross, 0.01));
-      const expectedChildMain =
-          expectedChildCross * (148.0 / 105.0) + 50.0;
+      const expectedChildMain = expectedChildCross * (148.0 / 105.0) + 50.0;
       expect(regular.childMainAxisExtent, closeTo(expectedChildMain, 0.01));
       expect(regular.mainAxisStride, closeTo(expectedChildMain + 12, 0.01));
     });
@@ -138,10 +138,15 @@ void main() {
   for (final scale in [1.0, 1.3, 2.0]) {
     for (final columns in [2, 3, 5]) {
       for (final shelf in [false, true]) {
-        testWidgets('real grid fits long titles: scale=$scale columns=$columns shelf=$shelf', (tester) async {
+        testWidgets(
+            'real grid fits long titles: scale=$scale columns=$columns shelf=$shelf',
+            (tester) async {
           final book = LKBook(
-            bookId: 1, title: '这是一本名字非常长且必须占据两行的轻小说作品标题',
-            authorName: '', coverUrl: '', tags: ['奇幻', '校园', '恋爱喜剧'],
+            bookId: 1,
+            title: '这是一本名字非常长且必须占据两行的轻小说作品标题',
+            authorName: '',
+            coverUrl: '',
+            tags: ['奇幻', '校园', '恋爱喜剧'],
             wordCount: 1234567,
           );
           for (final brightness in [Brightness.light, Brightness.dark]) {
@@ -149,18 +154,24 @@ void main() {
               theme: ThemeData(brightness: brightness),
               home: MediaQuery(
                 data: MediaQueryData(textScaler: TextScaler.linear(scale)),
-                child: Scaffold(body: Center(child: SizedBox(
+                child: Scaffold(
+                    body: Center(
+                        child: SizedBox(
                   width: 391.5,
-                  child: Builder(builder: (context) => GridView.builder(
-                    gridDelegate: bookGridDelegate(context, columnCount: columns, isShelf: shelf),
-                    itemCount: 6,
-                    itemBuilder: (_, i) => BookGridCard(book: book, isShelf: shelf, onTap: () {}),
-                  )),
+                  child: Builder(
+                      builder: (context) => GridView.builder(
+                            gridDelegate: bookGridDelegate(context,
+                                columnCount: columns, isShelf: shelf),
+                            itemCount: 6,
+                            itemBuilder: (_, i) => BookGridCard(
+                                book: book, isShelf: shelf, onTap: () {}),
+                          )),
                 ))),
               ),
             ));
             expect(tester.takeException(), isNull);
-            final cover = tester.widget<AspectRatio>(find.byType(AspectRatio).first);
+            final cover =
+                tester.widget<AspectRatio>(find.byType(AspectRatio).first);
             expect(cover.aspectRatio, BookGridDelegate.coverAspectRatio);
           }
         });
@@ -173,7 +184,9 @@ void main() {
     const larger = BookGridDelegate(textScaler: TextScaler.linear(1.5));
     expect(larger.shouldRelayout(standard), isTrue);
     for (final width in [80.0, 120.0, 180.0]) {
-      expect(BookGridDelegate.calculateTextHeight(width, textScaler: larger.textScaler),
+      expect(
+          BookGridDelegate.calculateTextHeight(width,
+              textScaler: larger.textScaler),
           greaterThan(BookGridDelegate.calculateTextHeight(width)));
     }
   });
@@ -248,7 +261,8 @@ void main() {
       expect(find.text('连载'), findsOneWidget);
     });
 
-    testWidgets('renders compact layout (105 <= card width < 150)', (tester) async {
+    testWidgets('renders compact layout (105 <= card width < 150)',
+        (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -310,7 +324,8 @@ void main() {
       });
     }
 
-    testWidgets('renders shelf layout without secondary tags or word count', (tester) async {
+    testWidgets('renders shelf layout without secondary tags or word count',
+        (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -356,11 +371,13 @@ void main() {
 
       const oldRow = anchorBookIndex ~/ oldCols;
       expect(oldRow, 7);
-      final oldGridOffset = oldRow * oldMetrics.rowStride + anchorFraction * oldMetrics.rowStride;
+      final oldGridOffset =
+          oldRow * oldMetrics.rowStride + anchorFraction * oldMetrics.rowStride;
 
       const newRow = anchorBookIndex ~/ newCols;
       expect(newRow, 3);
-      final newGridOffset = newRow * newMetrics.rowStride + anchorFraction * newMetrics.rowStride;
+      final newGridOffset =
+          newRow * newMetrics.rowStride + anchorFraction * newMetrics.rowStride;
 
       final booksInNewRow = List.generate(newCols, (c) => newRow * newCols + c);
       expect(booksInNewRow, contains(anchorBookIndex));

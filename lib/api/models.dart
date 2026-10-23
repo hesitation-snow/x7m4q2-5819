@@ -1208,8 +1208,7 @@ class LKBook {
         defaultChapterId: defaultChapterId ?? this.defaultChapterId,
         serialStatus: serialStatus ?? this.serialStatus,
         isCompleted: isCompleted ?? this.isCompleted,
-        lastReadChapterTitle:
-            lastReadChapterTitle ?? this.lastReadChapterTitle,
+        lastReadChapterTitle: lastReadChapterTitle ?? this.lastReadChapterTitle,
         unreadChapterCount: unreadChapterCount ?? this.unreadChapterCount,
         ratingScore: ratingScore ?? this.ratingScore,
         updatedAt: updatedAt ?? this.updatedAt,
@@ -2735,23 +2734,17 @@ class LKMessageItem {
         j['likes_count'] ??
         (likeUsers.isNotEmpty ? likeUsers.length : 0));
 
-    final jumpMap = _jsonMap(j['message_jump'] ?? j['jump']) ??
-        const <String, dynamic>{};
-    final jumpType = (j['jump_type'] ??
-            jumpMap['type'] ??
-            jumpMap['jump_type'] ??
-            '')
-        .toString();
-    final jumpTarget = (j['jump_target'] ??
-            jumpMap['target'] ??
-            jumpMap['jump_target'] ??
-            '')
-        .toString();
-    final jumpValue = (j['jump_value'] ??
-            jumpMap['value'] ??
-            jumpMap['jump_value'] ??
-            '')
-        .toString();
+    final jumpMap =
+        _jsonMap(j['message_jump'] ?? j['jump']) ?? const <String, dynamic>{};
+    final jumpType =
+        (j['jump_type'] ?? jumpMap['type'] ?? jumpMap['jump_type'] ?? '')
+            .toString();
+    final jumpTarget =
+        (j['jump_target'] ?? jumpMap['target'] ?? jumpMap['jump_target'] ?? '')
+            .toString();
+    final jumpValue =
+        (j['jump_value'] ?? jumpMap['value'] ?? jumpMap['jump_value'] ?? '')
+            .toString();
 
     final targetBookTitle = (j['target_book_title'] ??
             target['book_title'] ??
@@ -2769,11 +2762,9 @@ class LKMessageItem {
             '')
         .toString();
 
-    final resolvedTargetType = (j['target_type'] ??
-            j['targetType'] ??
-            target['type'] ??
-            jumpType)
-        .toString();
+    final resolvedTargetType =
+        (j['target_type'] ?? j['targetType'] ?? target['type'] ?? jumpType)
+            .toString();
 
     final rawQuoteText = (j['quote_text'] ??
             j['target_text'] ??

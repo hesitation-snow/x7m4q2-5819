@@ -31,7 +31,8 @@ void main() {
     expect(shelfPageContent.contains('连接失败，已保留上次内容'), isFalse);
   });
 
-  test('LKApi.dmMarkRead posts to /api/bff/dm-mark-read-v1 with peer_uid', () async {
+  test('LKApi.dmMarkRead posts to /api/bff/dm-mark-read-v1 with peer_uid',
+      () async {
     Map<String, dynamic>? postedBody;
     String? requestedPath;
 
@@ -54,12 +55,16 @@ void main() {
     expect(postedBody?['security_key'], 'test_key');
   });
 
-  test('UserProfilePage contains follow and DM icon buttons and no AppBar follow TextButton', () {
-    final profileCode = File('lib/pages/user_profile_page.dart').readAsStringSync();
+  test(
+      'UserProfilePage contains follow and DM icon buttons and no AppBar follow TextButton',
+      () {
+    final profileCode =
+        File('lib/pages/user_profile_page.dart').readAsStringSync();
 
     // Verify AppBar does not have follow TextButton
     expect(profileCode.contains('actions: ['), isFalse);
-    expect(profileCode.contains('Text(_followed ? \'取消关注\' : \'关注\')'), isFalse);
+    expect(
+        profileCode.contains('Text(_followed ? \'取消关注\' : \'关注\')'), isFalse);
 
     // Verify profile card has follow and DM icon buttons
     expect(profileCode.contains('Icons.how_to_reg_rounded'), isTrue);

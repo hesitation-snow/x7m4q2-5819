@@ -48,7 +48,8 @@ class _ShelfPageState extends State<ShelfPage> {
   final _removing = <int>{};
   bool _updatingLocalShelf = false;
   final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
-  static const double _topBarFlex = 56.0;
+  final _toolbarKey = GlobalKey();
+  double get _topBarFlex => _toolbarKey.currentContext?.size?.height ?? 112;
 
   int _lastGridColumnCount = LKStore.gridColumnCount.value;
   int _anchorBookIndex = 0;
@@ -507,6 +508,120 @@ class _ShelfPageState extends State<ShelfPage> {
     );
   }
 
+  Widget _viewModeButton() => GestureDetector(
+        onLongPress: () => showGridColumnsSheet(context),
+        child: IconButton(
+          tooltip: _listMode ? '切换为网格（长按设置列数）' : '切换为列表（长按设置列数）',
+          icon: Icon(
+              _listMode ? Icons.grid_view_rounded : Icons.view_agenda_outlined),
+          onPressed: () {
+            final value = !_listMode;
+            setState(() => _listMode = value);
+            ReaderPrefs.setFeedListMode(value);
+          },
+        ),
+      );
+
+  Widget _shelfToolbar(int count) {
+    final theme = Theme.of(context);
+    final sortLabel = switch (_sort) {
+      _ShelfSort.serverOrder => '默认顺序',
+      _ShelfSort.recentlyUpdated => '最近更新',
+      _ShelfSort.title => '按书名',
+    };
+    return Material(
+      key: _toolbarKey,
+      color: theme.colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(children: [
+              Expanded(
+                  child: Align(
+                alignment: Alignment.centerLeft,
+                child: _shelfSourceButton(),
+              )),
+              _shelfFilterButton(),
+              _viewModeButton(),
+            ]),
+            const SizedBox(height: 4),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                for (final filter in _ShelfFilter.values) ...[
+                  ChoiceChip(
+                    label: Text(switch (filter) {
+                      _ShelfFilter.all => '全部作品',
+                      _ShelfFilter.unread => '有更新',
+                      _ShelfFilter.serializing => '连载中',
+                      _ShelfFilter.completed => '已完结',
+                    }),
+                    selected: _filter == filter,
+                    onSelected: (_) => setState(() => _filter = filter),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ]),
+            ),
+            const SizedBox(height: 8),
+            Text('$count 部作品 · $sortLabel',
+                style: theme.textTheme.labelMedium
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _shelfMessage({required bool error}) {
+    final theme = Theme.of(context);
+    final filtered = _items.isNotEmpty;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(error ? Icons.cloud_off_outlined : Icons.auto_stories_outlined,
+                size: 40, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(height: 16),
+            Text(
+                error
+                    ? '书架加载失败'
+                    : filtered
+                        ? '暂无匹配作品'
+                        : '书架还是空的',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+                error
+                    ? '请检查网络连接后重试'
+                    : filtered
+                        ? '试试其他筛选，或查看全部作品。'
+                        : '将喜欢的作品加入书架，随时回来继续阅读。',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            const SizedBox(height: 12),
+            if (error)
+              FilledButton.tonalIcon(
+                  onPressed: () => _load(forceRefresh: true),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('重试'))
+            else if (filtered)
+              TextButton(
+                  onPressed: () => setState(() => _filter = _ShelfFilter.all),
+                  child: const Text('查看全部作品')),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _shelfFilterButton() {
     final active =
         _filter != _ShelfFilter.all || _sort != _ShelfSort.serverOrder;
@@ -610,6 +725,83 @@ class _ShelfPageState extends State<ShelfPage> {
             const SizedBox(width: 8),
             Icon(selected ? Icons.check_rounded : null,
                 size: 20, color: foreground),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _shelfBookRow(LKBook book) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Card.filled(
+      key: ValueKey('shelf-book-${book.bookId}'),
+      margin: const EdgeInsets.only(bottom: 12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => BookDetailPage(bookId: book.bookId))),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            CoverImage(
+                url: book.coverUrl,
+                width: 64,
+                height: 92,
+                radius: 8,
+                isBrave: book.isBrave),
+            const SizedBox(width: 16),
+            Expanded(
+                child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(book.title,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium),
+                const SizedBox(height: 6),
+                Text(book.authorName.isEmpty ? '佚名' : book.authorName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant)),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(bookStatusLabel(book),
+                        style: theme.textTheme.labelMedium
+                            ?.copyWith(color: scheme.onSurfaceVariant)),
+                    if (book.isBrave)
+                      Text('勇者可读',
+                          style: theme.textTheme.labelMedium
+                              ?.copyWith(color: scheme.tertiary)),
+                    if (book.unreadChapterCount > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                            color: scheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(8)),
+                        child: Text('${book.unreadChapterCount} 章更新',
+                            style: theme.textTheme.labelMedium
+                                ?.copyWith(color: scheme.onPrimaryContainer)),
+                      ),
+                  ],
+                ),
+                if (book.updatedAt.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                      '更新于 ${book.updatedAt.length > 16 ? book.updatedAt.substring(0, 16) : book.updatedAt}',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant)),
+                ],
+              ],
+            )),
           ]),
         ),
       ),
@@ -778,12 +970,10 @@ class _ShelfPageState extends State<ShelfPage> {
           ? ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                SizedBox(
-                  height: MediaQuery.sizeOf(context).height * 0.55,
-                  child: Center(
-                    child: Text(_error!,
-                        style: const TextStyle(color: Colors.grey)),
-                  ),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                      minHeight: MediaQuery.sizeOf(context).height * 0.4),
+                  child: _shelfMessage(error: true),
                 ),
               ],
             )
@@ -801,14 +991,11 @@ class _ShelfPageState extends State<ShelfPage> {
                   ? ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: [
-                        SizedBox(
-                          height: MediaQuery.sizeOf(context).height * 0.55,
-                          child: Center(
-                            child: Text(
-                              _items.isEmpty ? '书架还是空的' : '没有符合当前筛选的作品',
-                              style: const TextStyle(color: Colors.grey),
-                            ),
-                          ),
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                              minHeight:
+                                  MediaQuery.sizeOf(context).height * 0.4),
+                          child: _shelfMessage(error: false),
                         ),
                         if (_hasMore) _shelfLoadMoreFooter(),
                       ],
@@ -818,7 +1005,7 @@ class _ShelfPageState extends State<ShelfPage> {
                           scrollCacheExtent:
                               const ScrollCacheExtent.viewport(1.0),
                           physics: const AlwaysScrollableScrollPhysics(),
-                          padding: EdgeInsets.fromLTRB(8, 4, 8,
+                          padding: EdgeInsets.fromLTRB(12, 8, 12,
                               12 + MediaQuery.of(context).padding.bottom),
                           itemCount: visibleItems.length + (_hasMore ? 1 : 0),
                           itemBuilder: (_, i) {
@@ -826,17 +1013,7 @@ class _ShelfPageState extends State<ShelfPage> {
                               return _shelfLoadMoreFooter();
                             }
                             final b = visibleItems[i];
-                            return _withShelfActions(
-                                b,
-                                BookCard(
-                                  book: b,
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                        builder: (_) =>
-                                            BookDetailPage(bookId: b.bookId)),
-                                  ),
-                                ));
+                            return _withShelfActions(b, _shelfBookRow(b));
                           },
                         )
                       : GridView.builder(
@@ -869,111 +1046,45 @@ class _ShelfPageState extends State<ShelfPage> {
                           },
                         ),
     );
+    final toolbar = _shelfToolbar(visibleItems.length);
     if (!widget.embedded) {
       return Scaffold(
-        appBar: AppBar(
-          title: Text(_localMode ? '本机书架' : '云端书架'),
-          actions: [
-            _shelfSourceButton(),
-            _shelfFilterButton(),
-            GestureDetector(
-              onLongPress: () => showGridColumnsSheet(context),
-              child: IconButton(
-                tooltip: _listMode ? '切换为网格（长按设置列数）' : '切换为列表（长按设置列数）',
-                icon: Icon(_listMode
-                    ? Icons.grid_view_rounded
-                    : Icons.view_agenda_outlined),
-                onPressed: () {
-                  final value = !_listMode;
-                  setState(() => _listMode = value);
-                  ReaderPrefs.setFeedListMode(value);
-                },
-              ),
+        appBar: AppBar(title: const Text('书架')),
+        body: Column(children: [
+          toolbar,
+          Expanded(
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (n) {
+                if (n is ScrollUpdateNotification && !_listMode) {
+                  _updateGridAnchor();
+                }
+                return false;
+              },
+              child: body,
             ),
-          ],
-        ),
-        body: NotificationListener<ScrollNotification>(
-          onNotification: (n) {
-            if (n is ScrollUpdateNotification && !_listMode) {
-              _updateGridAnchor();
-            }
-            return false;
-          },
-          child: body,
-        ),
+          ),
+        ]),
       );
     }
-    final embeddedBody = NotificationListener<ScrollNotification>(
-      onNotification: _onShelfScroll,
-      child: body,
-    );
     return Column(
       children: [
         ValueListenableBuilder<double>(
           valueListenable: _topBarFrac,
-          builder: (context, topBarFrac, _) => ClipRect(
-            child: SizedBox(
-              height: _topBarFlex * topBarFrac,
-              child: Stack(
-                clipBehavior: Clip.hardEdge,
-                children: [
-                  Positioned(
-                    top: -_topBarFlex * (1 - topBarFrac),
-                    left: 0,
-                    right: 0,
-                    height: _topBarFlex,
-                    child: ColoredBox(
-                      color: Theme.of(context).scaffoldBackgroundColor,
-                      child: Padding(
-                        // 与动态顶栏的外层间距一致；标题自身再保留 8px
-                        // 内边距，避免书架文字比“动态”向左错位。
-                        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-                        child: Row(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
-                              child: Text(
-                                _localMode ? '本机书架' : '云端书架',
-                                style: TextStyle(
-                                  color:
-                                      Theme.of(context).colorScheme.onSurface,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            const Spacer(),
-                            _shelfSourceButton(),
-                            _shelfFilterButton(),
-                            GestureDetector(
-                              onLongPress: () => showGridColumnsSheet(context),
-                              child: IconButton(
-                                tooltip: _listMode
-                                    ? '切换为网格（长按设置列数）'
-                                    : '切换为列表（长按设置列数）',
-                                visualDensity: VisualDensity.compact,
-                                icon: Icon(_listMode
-                                    ? Icons.grid_view_rounded
-                                    : Icons.view_agenda_outlined),
-                                onPressed: () {
-                                  final value = !_listMode;
-                                  setState(() => _listMode = value);
-                                  ReaderPrefs.setFeedListMode(value);
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+          child: toolbar,
+          builder: (context, fraction, child) => ClipRect(
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: fraction,
+              child: child,
             ),
           ),
         ),
-        Expanded(child: embeddedBody),
+        Expanded(
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _onShelfScroll,
+            child: body,
+          ),
+        ),
       ],
     );
   }

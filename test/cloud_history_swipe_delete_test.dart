@@ -248,7 +248,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(deletes, 0);
     // InkWell may recognize release as a tap; return from detail if so.
-    final navigator = tester.state<NavigatorState>(find.byType(Navigator).first);
+    final navigator =
+        tester.state<NavigatorState>(find.byType(Navigator).first);
     if (navigator.canPop()) {
       navigator.pop();
       await tester.pumpAndSettle();

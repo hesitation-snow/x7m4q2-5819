@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
-Color readerSettingsCardColor(ColorScheme scheme) =>
-    Color.alphaBlend(scheme.onSurface.withValues(alpha: 0.035), scheme.surface);
+Color readerSettingsCardColor(ColorScheme scheme) => scheme.surfaceContainerLow;
 
 class ReaderSettingsSection extends StatelessWidget {
   const ReaderSettingsSection(
@@ -18,11 +17,12 @@ class ReaderSettingsSection extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(
           padding: const EdgeInsets.only(left: 16, bottom: 8),
-          child: Text(title,
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.primary)),
+          child: Semantics(
+            header: true,
+            child: Text(title,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600, color: scheme.primary)),
+          ),
         ),
         Material(
           color: readerSettingsCardColor(scheme),
@@ -100,7 +100,10 @@ class ReaderThemePicker extends StatelessWidget {
                       child: system
                           ? Icon(Icons.brightness_auto_outlined,
                               color: scheme.onSurfaceVariant, size: 24)
-                          : null,
+                          : Icon(
+                              active ? Icons.check_rounded : Icons.text_fields,
+                              color: presets[i].$2,
+                              size: 24),
                     ),
                     const SizedBox(height: 8),
                     Text(label,

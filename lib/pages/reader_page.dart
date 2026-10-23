@@ -582,8 +582,8 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   double _scrollImageHeight(_BodyBlock block, double contentWidth) {
-    final aspect = block.aspect ??
-        YomiruIllustrationCache.getAspect(block.image ?? '');
+    final aspect =
+        block.aspect ?? YomiruIllustrationCache.getAspect(block.image ?? '');
     if (aspect != null && aspect > 0) {
       return (contentWidth / aspect).clamp(1.0, 10000.0).toDouble();
     }

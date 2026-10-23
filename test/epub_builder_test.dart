@@ -12,8 +12,10 @@ void main() {
   group('EpubBuilder XHTML Sanitization & XML validity', () {
     test('xmlEscape handles all reserved XML characters properly', () {
       expect(xmlEscape(''), equals(''));
-      expect(xmlEscape('Rock & Roll <5> "quote" \'single\''),
-          equals('Rock &amp; Roll &lt;5&gt; &quot;quote&quot; &apos;single&apos;'));
+      expect(
+          xmlEscape('Rock & Roll <5> "quote" \'single\''),
+          equals(
+              'Rock &amp; Roll &lt;5&gt; &quot;quote&quot; &apos;single&apos;'));
     });
 
     test('sanitizeToXHtml cleans raw HTML and outputs valid XML', () {
@@ -44,16 +46,22 @@ void main() {
 
       // 验证插画被正确转换为标准结构与相对路径
       expect(xhtml.contains('<div class="illustration">'), isTrue);
-      expect(xhtml.contains('<img src="../images/art_01.jpg" alt=""/>'), isTrue);
+      expect(
+          xhtml.contains('<img src="../images/art_01.jpg" alt=""/>'), isTrue);
 
       // 验证文档为严格合法的 XHTML
-      expect(xhtml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), isTrue);
-      expect(xhtml.contains('<html xmlns="http://www.w3.org/1999/xhtml"'), isTrue);
+      expect(
+          xhtml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), isTrue);
+      expect(
+          xhtml.contains('<html xmlns="http://www.w3.org/1999/xhtml"'), isTrue);
       expect(xhtml.contains('</html>'), isTrue);
-      expect(RegExp(r'<p>.*?</p>').allMatches(xhtml).length, greaterThanOrEqualTo(3));
+      expect(RegExp(r'<p>.*?</p>').allMatches(xhtml).length,
+          greaterThanOrEqualTo(3));
     });
 
-    test('sanitizeToXHtml converts rich text typography into standard EPUB 3 XHTML', () {
+    test(
+        'sanitizeToXHtml converts rich text typography into standard EPUB 3 XHTML',
+        () {
       const richHtml = '''
         <h3>章节副标题</h3>
         <p>这是<b>加粗文本</b>、<i>斜体文本</i>、<u>下划线文本</u>与<s>删除线文本</s>。</p>
@@ -89,14 +97,16 @@ void main() {
       expect(xhtml.contains('text-decoration: underline'), isTrue);
       expect(xhtml.contains('<del>删除线文本</del>'), isTrue);
       // 验证注音与脚注
-      expect(xhtml.contains('<ruby>漢子<rp>(</rp><rt>かんじ</rt><rp>)</rp></ruby>'), isTrue);
+      expect(xhtml.contains('<ruby>漢子<rp>(</rp><rt>かんじ</rt><rp>)</rp></ruby>'),
+          isTrue);
       expect(xhtml.contains('<sup>[1]</sup>'), isTrue);
       // 验证对齐方式
       expect(xhtml.contains('text-align: center'), isTrue);
       expect(xhtml.contains('text-align: right'), isTrue);
       // 验证颜色与链接
       expect(xhtml.contains('color: #ff5500'), isTrue);
-      expect(xhtml.contains('<a href="https://lightnovel.fun">参考链接</a>'), isTrue);
+      expect(
+          xhtml.contains('<a href="https://lightnovel.fun">参考链接</a>'), isTrue);
       // 验证引用
       expect(xhtml.contains('<blockquote>'), isTrue);
       expect(xhtml.contains('这是一段重要引用内容。'), isTrue);
@@ -108,7 +118,8 @@ void main() {
       // 验证分割线
       expect(xhtml.contains('<hr/>'), isTrue);
       // 验证标准 XML 闭合
-      expect(xhtml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), isTrue);
+      expect(
+          xhtml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), isTrue);
       expect(xhtml.contains('</html>'), isTrue);
     });
 
@@ -121,7 +132,8 @@ void main() {
         imageUrlToLocalPath: const {},
       );
 
-      expect(xhtml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), isTrue);
+      expect(
+          xhtml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), isTrue);
       expect(xhtml.contains('<p>第一行内容。</p>'), isTrue);
       expect(xhtml.contains('<p>第二行内容含有 &lt; 与 &gt;。</p>'), isTrue);
       expect(xhtml.contains('<p>第三行。</p>'), isTrue);
@@ -138,16 +150,21 @@ void main() {
       expect(css.toLowerCase().contains('color: white'), isFalse);
     });
 
-    test('getIllustrationFileName produces safe and consistent file names without url characters', () {
-      const lkUrl = 'https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&t=1700000000';
+    test(
+        'getIllustrationFileName produces safe and consistent file names without url characters',
+        () {
+      const lkUrl =
+          'https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&t=1700000000';
       final fileName = getIllustrationFileName(lkUrl);
       expect(fileName, equals('6bda583f9cf992ba5ab8b0e6f2773cf0.jpg'));
       expect(fileName.contains(':'), isFalse);
       expect(fileName.contains('/'), isFalse);
       expect(fileName.contains('?'), isFalse);
 
-      const htmlEscapedUrl = 'https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&amp;t=1700000000';
-      expect(getIllustrationFileName(htmlEscapedUrl), equals('6bda583f9cf992ba5ab8b0e6f2773cf0.jpg'));
+      const htmlEscapedUrl =
+          'https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&amp;t=1700000000';
+      expect(getIllustrationFileName(htmlEscapedUrl),
+          equals('6bda583f9cf992ba5ab8b0e6f2773cf0.jpg'));
 
       const pngUrl = 'https://example.com/images/chapter_art.png?v=2';
       final pngFileName = getIllustrationFileName(pngUrl);
@@ -156,7 +173,9 @@ void main() {
       expect(pngFileName.contains(':'), isFalse);
     });
 
-    test('sanitizeToXHtml resolves image with query parameters and &amp; properly', () {
+    test(
+        'sanitizeToXHtml resolves image with query parameters and &amp; properly',
+        () {
       const rawHtml = '''
         <p>正文段落前文。</p>
         <img src="https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=xyz&amp;t=9999" width="600" height="800" />
@@ -165,7 +184,8 @@ void main() {
 
       // 映射表无论以何种形态存储，均能正确命中
       final map = {
-        '6bda583f9cf992ba5ab8b0e6f2773cf0.jpg': '../images/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg',
+        '6bda583f9cf992ba5ab8b0e6f2773cf0.jpg':
+            '../images/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg',
       };
 
       final xhtml = EpubBuilder.sanitizeToXHtml(
@@ -176,8 +196,12 @@ void main() {
       );
 
       expect(xhtml.contains('<div class="illustration">'), isTrue);
-      expect(xhtml.contains('<img src="../images/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg" alt=""/>'), isTrue);
-      expect(xhtml.contains('&amp;nbsp;'), isFalse); // &nbsp; 已被正确转为普通空格，不产生非法 XML 实体
+      expect(
+          xhtml.contains(
+              '<img src="../images/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg" alt=""/>'),
+          isTrue);
+      expect(xhtml.contains('&amp;nbsp;'),
+          isFalse); // &nbsp; 已被正确转为普通空格，不产生非法 XML 实体
     });
   });
 
@@ -194,7 +218,9 @@ void main() {
       }
     });
 
-    test('packageInIsolate builds standard EPUB package with cover and chapters', () async {
+    test(
+        'packageInIsolate builds standard EPUB package with cover and chapters',
+        () async {
       final taskDir = Directory('${tempDir.path}/task_1');
       await taskDir.create(recursive: true);
       final chaptersDir = Directory('${taskDir.path}/chapters');
@@ -213,7 +239,8 @@ void main() {
       final ch1 = File('${chaptersDir.path}/101.json');
       await ch1.writeAsString(jsonEncode({
         'body_text': '第 1 章正文内容。',
-        'body_html': '<p>第 1 章正文内容。</p><img src="https://img.test/art_01.jpg"/>',
+        'body_html':
+            '<p>第 1 章正文内容。</p><img src="https://img.test/art_01.jpg"/>',
       }));
 
       final ch2 = File('${chaptersDir.path}/102.json');
@@ -367,7 +394,8 @@ String _extractFileFromZip(Uint8List bytes, String targetName) {
       final compSize = byteData.getUint32(offset + 18, Endian.little);
       final nameLen = byteData.getUint16(offset + 26, Endian.little);
       final extraLen = byteData.getUint16(offset + 28, Endian.little);
-      final name = utf8.decode(bytes.sublist(offset + 30, offset + 30 + nameLen));
+      final name =
+          utf8.decode(bytes.sublist(offset + 30, offset + 30 + nameLen));
       final payloadOffset = offset + 30 + nameLen + extraLen;
       if (name == targetName) {
         final payload = bytes.sublist(payloadOffset, payloadOffset + compSize);

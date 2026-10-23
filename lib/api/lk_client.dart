@@ -44,6 +44,7 @@ class LKClient {
   /// 已由服务器确认的关注变更，供仍在导航栈内的资料卡同步状态。
   static final followChanged =
       ValueNotifier<({int viewerUid, int targetUid, bool followed})?>(null);
+
   /// 登录态版本号:登录/登出/会话变更时自增,UI 监听刷新(如"我的"页用户卡片)
   static final ValueNotifier<int> sessionRev = ValueNotifier<int>(0);
 

@@ -101,8 +101,10 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                                     child: Padding(
                                       padding: const EdgeInsets.all(3),
                                       child: CachedNetworkImage(
-                                        fadeOutDuration: AppMotion.duration(context, 1000),
-                                        fadeInDuration: AppMotion.duration(context, 500),
+                                        fadeOutDuration:
+                                            AppMotion.duration(context, 1000),
+                                        fadeInDuration:
+                                            AppMotion.duration(context, 500),
                                         imageUrl:
                                             YomiruEmojiCatalog.normalizeUrl(
                                                 item.url),

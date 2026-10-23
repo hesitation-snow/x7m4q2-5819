@@ -305,7 +305,9 @@ class EpubDownloadService {
     final origCover = File('${taskDir.path}/original_cover.jpg');
     final chosenCover = customCoverPath ?? task.customCoverPath;
 
-    if (chosenCover != null && chosenCover.isNotEmpty && chosenCover != targetCover.path) {
+    if (chosenCover != null &&
+        chosenCover.isNotEmpty &&
+        chosenCover != targetCover.path) {
       final src = File(chosenCover);
       if (await src.exists()) {
         try {
@@ -384,7 +386,8 @@ class EpubDownloadService {
   }
 
   /// 阶段 1: 全量分页获取目录、去重并按官方顺序排序
-  Future<List<EpubChapterItem>> _fetchCompleteCatalog(EpubDownloadTask task) async {
+  Future<List<EpubChapterItem>> _fetchCompleteCatalog(
+      EpubDownloadTask task) async {
     final allCollectedChapters = <EpubChapterItem>[];
     final seenChapterIds = <int>{};
 
@@ -569,8 +572,7 @@ class EpubDownloadService {
                 (refreshed.bodyHtml != null
                     ? utf8.encode(refreshed.bodyHtml!).length
                     : 0));
-            if (refreshed.bodyHtml != null &&
-                refreshed.bodyHtml!.isNotEmpty) {
+            if (refreshed.bodyHtml != null && refreshed.bodyHtml!.isNotEmpty) {
               detail = refreshed;
             }
           } catch (_) {}
@@ -629,8 +631,11 @@ class EpubDownloadService {
       }
     }
 
-    final pendingChapters = task.chapters.where((ch) =>
-        !completed.contains(ch.chapterId) && !failed.containsKey(ch.chapterId)).toList();
+    final pendingChapters = task.chapters
+        .where((ch) =>
+            !completed.contains(ch.chapterId) &&
+            !failed.containsKey(ch.chapterId))
+        .toList();
 
     int nextChapterIndex = 0;
     Future<void> chapterWorker() async {
@@ -672,17 +677,21 @@ class EpubDownloadService {
   }
 
   /// 带退避重试的章节获取
-  Future<LKChapterDetail> _fetchChapterWithRetry(int bookId, int chapterId) async {
+  Future<LKChapterDetail> _fetchChapterWithRetry(
+      int bookId, int chapterId) async {
     int attempts = 0;
     const maxAttempts = 3;
 
     while (true) {
       attempts++;
       try {
-        return await _networkSemaphore.run(() => LKApi.chapterDetail(bookId, chapterId));
+        return await _networkSemaphore
+            .run(() => LKApi.chapterDetail(bookId, chapterId));
       } catch (e) {
         final accessRestricted = e is LKException && e.accessRestricted;
-        if (accessRestricted || attempts >= maxAttempts || _isRateLimitError(e)) {
+        if (accessRestricted ||
+            attempts >= maxAttempts ||
+            _isRateLimitError(e)) {
           rethrow;
         }
         // 指数退避：1s, 2s, 4s
@@ -867,9 +876,8 @@ class EpubDownloadService {
       currentIllustrationIndex: 0,
       currentIllustrationTotal: 0,
       speedText: '',
-      statusMessage: task.options.exportAsTxt
-          ? '正文下载完成，请确认文件标题'
-          : '正文与插画下载完成，请确认封面与文件标题',
+      statusMessage:
+          task.options.exportAsTxt ? '正文下载完成，请确认文件标题' : '正文与插画下载完成，请确认封面与文件标题',
     );
     currentTask.value = updated;
     await _saveTaskCheckpoint(updated);
@@ -1018,10 +1026,8 @@ class EpubDownloadService {
       buffer.writeln();
 
       // 正文内容（清理多余空行，保持规范段落）
-      final cleanText = bodyText
-          .replaceAll('\r\n', '\n')
-          .replaceAll('\r', '\n')
-          .trim();
+      final cleanText =
+          bodyText.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
       if (cleanText.isNotEmpty) {
         buffer.writeln(cleanText);
       }
@@ -1095,7 +1101,8 @@ class EpubDownloadService {
       final makerDir = Directory('${temp.path}/epub_maker');
       if (!await makerDir.exists()) return 0;
       var total = 0;
-      await for (final entity in makerDir.list(recursive: true, followLinks: false)) {
+      await for (final entity
+          in makerDir.list(recursive: true, followLinks: false)) {
         if (entity is File) {
           total += await entity.length();
         }

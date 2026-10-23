@@ -4,7 +4,9 @@ import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/store.dart';
 
 void main() {
-  test('welfare display cache is counted and cleared, task claim guard is preserved', () async {
+  test(
+      'welfare display cache is counted and cleared, task claim guard is preserved',
+      () async {
     SharedPreferences.setMockInitialValues({
       'welfare_home_cache_v1_42': '{"tasks":[]}',
       'welfare_daily_claimed_v1_42_20260905': ['id:201'],
@@ -14,7 +16,8 @@ void main() {
     await LKStore.clearContentCaches();
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.containsKey('welfare_home_cache_v1_42'), isFalse);
-    expect(prefs.getStringList('welfare_daily_claimed_v1_42_20260905'), ['id:201']);
+    expect(prefs.getStringList('welfare_daily_claimed_v1_42_20260905'),
+        ['id:201']);
     expect(prefs.getString('theme_mode'), 'dark');
   });
   test('response cache clearing keeps unrelated preferences', () async {

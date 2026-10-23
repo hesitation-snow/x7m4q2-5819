@@ -41,10 +41,30 @@ void main() {
         authorName: '测试作者',
         ownerUid: 999,
         chapters: [
-          EpubChapterItem(chapterId: 1, chapterNo: 1, title: '第1章', volumeId: 1, volumeTitle: '卷1'),
-          EpubChapterItem(chapterId: 2, chapterNo: 2, title: '第2章', volumeId: 1, volumeTitle: '卷1'),
-          EpubChapterItem(chapterId: 3, chapterNo: 3, title: '第3章', volumeId: 1, volumeTitle: '卷1'),
-          EpubChapterItem(chapterId: 4, chapterNo: 4, title: '第4章', volumeId: 1, volumeTitle: '卷1'),
+          EpubChapterItem(
+              chapterId: 1,
+              chapterNo: 1,
+              title: '第1章',
+              volumeId: 1,
+              volumeTitle: '卷1'),
+          EpubChapterItem(
+              chapterId: 2,
+              chapterNo: 2,
+              title: '第2章',
+              volumeId: 1,
+              volumeTitle: '卷1'),
+          EpubChapterItem(
+              chapterId: 3,
+              chapterNo: 3,
+              title: '第3章',
+              volumeId: 1,
+              volumeTitle: '卷1'),
+          EpubChapterItem(
+              chapterId: 4,
+              chapterNo: 4,
+              title: '第4章',
+              volumeId: 1,
+              volumeTitle: '卷1'),
         ],
         completedChapterIds: {1, 2},
         failedChapters: {3: '无权限访问'},
@@ -57,7 +77,8 @@ void main() {
       expect(task.isTerminal, isFalse);
     });
 
-    test('Concurrency limiter enforces maximum concurrent executions of 2', () async {
+    test('Concurrency limiter enforces maximum concurrent executions of 2',
+        () async {
       var running = 0;
       var peakRunning = 0;
       var allowJobsToFinish = false;
@@ -89,7 +110,8 @@ void main() {
       expect(limiter.currentRunning, equals(0));
     });
 
-    test('Catalog deduplication and ordering maintains official reading order', () {
+    test('Catalog deduplication and ordering maintains official reading order',
+        () {
       // 模拟两页返回中存在重复章节以及不同卷的情况
       final page1 = [
         LKChapter(chapterId: 10, chapterNo: 1, title: '第1章'),
@@ -117,19 +139,33 @@ void main() {
       }
 
       expect(collected.length, equals(4));
-      expect(collected.map((c) => c.chapterId).toList(), equals([10, 11, 12, 13]));
+      expect(
+          collected.map((c) => c.chapterId).toList(), equals([10, 11, 12, 13]));
       expect(collected[2].title, equals('第3章')); // 保留首次出现的正规项
     });
 
-    test('Unauthorized chapters are recorded in failure list without crashing task', () {
+    test(
+        'Unauthorized chapters are recorded in failure list without crashing task',
+        () {
       const task = EpubDownloadTask(
         bookId: 101,
         bookTitle: '勇者小说',
         authorName: '测试作者',
         ownerUid: 123,
         chapters: [
-          EpubChapterItem(chapterId: 1, chapterNo: 1, title: '公开试读章', volumeId: 1, volumeTitle: '卷1'),
-          EpubChapterItem(chapterId: 2, chapterNo: 2, title: '勇者专享章', volumeId: 1, volumeTitle: '卷1', braveRequired: true),
+          EpubChapterItem(
+              chapterId: 1,
+              chapterNo: 1,
+              title: '公开试读章',
+              volumeId: 1,
+              volumeTitle: '卷1'),
+          EpubChapterItem(
+              chapterId: 2,
+              chapterNo: 2,
+              title: '勇者专享章',
+              volumeId: 1,
+              volumeTitle: '卷1',
+              braveRequired: true),
         ],
       );
 
@@ -148,7 +184,8 @@ void main() {
       expect(updated.failedChapters[2], contains('无权限'));
     });
 
-    test('extractImageUrls properly extracts and unescapes illustration urls', () {
+    test('extractImageUrls properly extracts and unescapes illustration urls',
+        () {
       const html = '''
         <p>正文段落</p>
         <img src="https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&amp;t=1700000000" />
@@ -158,11 +195,18 @@ void main() {
 
       final urls = YomiruIllustrationCache.extractImageUrls(html);
       expect(urls.length, equals(2));
-      expect(urls[0], equals('https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&t=1700000000'));
-      expect(urls[1], equals('https://api.lightnovel.fun/upload-files/images/260731/c44ecc6d854642742676d5226c9cb343.jpg'));
+      expect(
+          urls[0],
+          equals(
+              'https://api.lightnovel.fun/upload-files/images/260731/6bda583f9cf992ba5ab8b0e6f2773cf0.jpg?m=abc&t=1700000000'));
+      expect(
+          urls[1],
+          equals(
+              'https://api.lightnovel.fun/upload-files/images/260731/c44ecc6d854642742676d5226c9cb343.jpg'));
     });
 
-    test('computeDefaultEpubTitle formats preset title strictly as 书名  [卷名]', () {
+    test('computeDefaultEpubTitle formats preset title strictly as 书名  [卷名]',
+        () {
       // 单卷情况
       final singleVol = [
         LKVolume(volumeId: 1, title: '第一卷 地位向上篇'),
@@ -199,7 +243,9 @@ void main() {
       );
     });
 
-    test('EpubDownloadTask supports custom metadata, speed and illustration progress', () {
+    test(
+        'EpubDownloadTask supports custom metadata, speed and illustration progress',
+        () {
       const task = EpubDownloadTask(
         bookId: 88,
         bookTitle: '原始书名',
@@ -234,7 +280,9 @@ void main() {
       expect(json['speed_text'], equals('420.5 KB/s'));
     });
 
-    test('EpubDownloadTask preserves publisherUid and exporterUid across serialization', () {
+    test(
+        'EpubDownloadTask preserves publisherUid and exporterUid across serialization',
+        () {
       const task = EpubDownloadTask(
         bookId: 88,
         bookTitle: '原始书名',
@@ -259,7 +307,9 @@ void main() {
       expect(restored.exporterUid, equals(654321));
     });
 
-    test('resumeTask validates account ownership and rejects mismatched account', () async {
+    test(
+        'resumeTask validates account ownership and rejects mismatched account',
+        () async {
       final service = EpubDownloadService.shared;
 
       // 模拟任务创建时的绑定账号 654321

@@ -48,7 +48,8 @@ void main() {
                         onChanged: (v) => setState(() => value = v)))))));
     await tester.tap(find.text('指示器位置'));
     await tester.pumpAndSettle();
-    expect(find.text('屏幕指示器实时预览'), findsOneWidget);
+    expect(find.text('指示器位置示意预览'), findsOneWidget);
+    expect(find.byType(ReaderIndicators), findsOneWidget);
     expect(find.text('第一章 标题'), findsOneWidget);
     expect(find.text('12:34'), findsOneWidget);
     expect(find.text('45.0%'), findsOneWidget);

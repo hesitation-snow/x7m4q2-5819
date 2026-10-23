@@ -132,10 +132,12 @@ class _DMChatPageState extends State<_DMChatPageBody> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final myUid = LKClient.shared.session.uid;
     final showTopLoader = _hasMore || _loadingMore;
     final totalCount = _messages.length + (showTopLoader ? 1 : 0);
     return Scaffold(
+      backgroundColor: scheme.surfaceContainerLowest,
       appBar:
           AppBar(title: Text(widget.peerName.isEmpty ? '私信' : widget.peerName)),
       body: Column(children: [
@@ -193,25 +195,35 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                                   ? Alignment.centerRight
                                   : Alignment.centerLeft,
                               child: Container(
-                                margin:
-                                    const EdgeInsets.symmetric(vertical: 4),
+                                margin: const EdgeInsets.symmetric(vertical: 4),
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 12, vertical: 8),
-                                constraints:
-                                    const BoxConstraints(maxWidth: 280),
+                                constraints: BoxConstraints(
+                                  maxWidth:
+                                      MediaQuery.sizeOf(context).width * .82,
+                                ),
                                 decoration: BoxDecoration(
                                   color: mine
-                                      ? (Theme.of(context).brightness ==
-                                              Brightness.dark
-                                          ? const Color(0xFF35523F)
-                                          : Colors.lightGreen.shade200)
-                                      : (Theme.of(context).brightness ==
-                                              Brightness.dark
-                                          ? const Color(0xFF2A2C33)
-                                          : Colors.white),
-                                  borderRadius: BorderRadius.circular(8),
+                                      ? scheme.primaryContainer
+                                      : scheme.surfaceContainerHigh,
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: const Radius.circular(20),
+                                    topRight: const Radius.circular(20),
+                                    bottomLeft: Radius.circular(mine ? 20 : 4),
+                                    bottomRight: Radius.circular(mine ? 4 : 20),
+                                  ),
                                 ),
-                                child: Text(m.content),
+                                child: Text(
+                                  m.content,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyLarge
+                                      ?.copyWith(
+                                        color: mine
+                                            ? scheme.onPrimaryContainer
+                                            : scheme.onSurface,
+                                      ),
+                                ),
                               ),
                             );
                           },
@@ -219,24 +231,33 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                       ),
                     ),
         ),
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: _input,
-                  decoration: const InputDecoration(
-                      hintText: '发消息…',
-                      isDense: true,
-                      border: OutlineInputBorder()),
+        Material(
+          color: scheme.surfaceContainer,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Expanded(
+                  child: TextField(
+                    controller: _input,
+                    minLines: 1,
+                    maxLines: 5,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                        filled: true,
+                        fillColor: scheme.surfaceContainerHighest,
+                        hintText: '发消息…',
+                        isDense: true,
+                        border: const OutlineInputBorder()),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                  onPressed: _sending ? null : _send,
-                  child: Text(_sending ? '发送中…' : '发送')),
-            ]),
+                const SizedBox(width: 8),
+                FilledButton(
+                    onPressed: _sending ? null : _send,
+                    child: Text(_sending ? '发送中…' : '发送')),
+              ]),
+            ),
           ),
         ),
       ]),

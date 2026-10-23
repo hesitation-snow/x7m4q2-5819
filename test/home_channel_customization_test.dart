@@ -249,14 +249,16 @@ void main() {
 
     final pager = find.byKey(const ValueKey('home_channel_pager'));
     final carousel = find.byWidgetPredicate(
-      (widget) => widget is ListView && widget.scrollDirection == Axis.horizontal,
+      (widget) =>
+          widget is ListView && widget.scrollDirection == Axis.horizontal,
     );
     expect(carousel, findsOneWidget);
     final carouselScroll = find.descendant(
       of: carousel,
       matching: find.byType(Scrollable),
     );
-    final carouselPosition = tester.state<ScrollableState>(carouselScroll).position;
+    final carouselPosition =
+        tester.state<ScrollableState>(carouselScroll).position;
     await tester.drag(carousel, const Offset(-200, 0));
     await tester.pumpAndSettle();
     expect(carouselPosition.pixels, greaterThan(0));

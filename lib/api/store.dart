@@ -82,8 +82,7 @@ class LKStore {
       ValueNotifier(true);
 
   /// 自动检查更新开关，默认开启
-  static final ValueNotifier<bool> autoCheckUpdateEnabled =
-      ValueNotifier(true);
+  static final ValueNotifier<bool> autoCheckUpdateEnabled = ValueNotifier(true);
 
   /// 已确认需勇者权限的小说 ID 缓存（内置预置 14162 标杆书籍）
   static final Set<int> _braveBookIds = {14162};

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../reader/reader_typography.dart';
 import 'reader_settings_section.dart';
 
-/// 借鉴 Apple Books 风格的排版设置面板
+/// Material 3 阅读排版设置，预览与提交保持独立。
 class ReaderTypographySheet extends StatefulWidget {
   final ReaderTypography initialTypography;
   final double fontSize;
@@ -107,7 +107,9 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('字重'),
+                  Text('文字与版式', style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 16),
+                  Text('字重', style: theme.textTheme.titleSmall),
                   const SizedBox(height: 6),
                   Text('仅调整阅读正文；部分字体的档位差异可能不明显',
                       style: TextStyle(
@@ -217,7 +219,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                   if (_current.customMargins)
                     Text('已启用独立四周边距，请在下方分别调整；此滑杆暂不生效。',
                         style: TextStyle(
-                            fontSize: 11, color: scheme.onSurfaceVariant)),
+                            fontSize: 12, color: scheme.onSurfaceVariant)),
                   const Divider(height: 16, thickness: 0.5),
 
                   // 两端对齐开关
@@ -251,8 +253,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                             widget.paged ? '自动：宽屏双栏，手机单栏' : '仅对翻页模式生效，请先开启翻页模式',
                             style: TextStyle(
                               fontSize: 11,
-                              color: scheme.onSurfaceVariant
-                                  .withValues(alpha: 0.7),
+                              color: scheme.onSurfaceVariant,
                             ),
                           ),
                         ],
@@ -339,8 +340,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                           '仅对空格分隔的外文/数字单词生效，纯中文无空格不影响',
                           style: TextStyle(
                             fontSize: 11,
-                            color:
-                                scheme.onSurfaceVariant.withValues(alpha: 0.7),
+                            color: scheme.onSurfaceVariant,
                           ),
                         ),
                       ),
@@ -469,8 +469,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
       tileColor: Colors.transparent,
       shape: const RoundedRectangleBorder(),
       contentPadding: EdgeInsets.zero,
-      dense: true,
-      visualDensity: VisualDensity.compact,
+      isThreeLine: false,
       title: Text(
         title,
         style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
@@ -480,7 +479,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
               subtitle,
               style: TextStyle(
                 fontSize: 12,
-                color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
+                color: scheme.onSurfaceVariant,
               ),
             )
           : null,
@@ -521,63 +520,30 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Icon(Icons.remove_red_eye_outlined,
-                  size: 14, color: widget.textColor.withValues(alpha: 0.6)),
-              const SizedBox(width: 6),
-              Text(
-                '排版预览',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: widget.textColor.withValues(alpha: 0.6),
-                ),
-              ),
+              Text('排版预览',
+                  style: Theme.of(context)
+                      .textTheme
+                      .labelLarge
+                      ?.copyWith(color: widget.textColor)),
               if (widget.onPickTextColor != null)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: widget.onPickTextColor,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 2),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(
-                              color: widget.textColor,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: widget.textColor.withValues(alpha: 0.5),
-                                width: 1,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '文字颜色',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: widget.textColor.withValues(alpha: 0.8),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                TextButton.icon(
+                  style:
+                      TextButton.styleFrom(foregroundColor: widget.textColor),
+                  onPressed: widget.onPickTextColor,
+                  icon: const Icon(Icons.format_color_text, size: 18),
+                  label: const Text('文字颜色'),
                 ),
-              const Spacer(),
               Text(
                 '${_current.currentPreset.label} · 行高 ${_current.lineHeight.toStringAsFixed(2)}',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: widget.textColor.withValues(alpha: 0.5),
-                ),
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: widget.textColor),
               ),
             ],
           ),
@@ -630,86 +596,34 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
   /// 预设选择胶囊栏
   Widget _buildPresetBar(ColorScheme scheme) {
     final active = _current.currentPreset;
-    return Row(
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
       children: [
         for (final preset in [
           ReaderTypographyPreset.compact,
           ReaderTypographyPreset.standard,
           ReaderTypographyPreset.loose,
         ])
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: () {
-                  final target = switch (preset) {
-                    ReaderTypographyPreset.compact =>
-                      ReaderTypography.compact(),
-                    ReaderTypographyPreset.standard =>
-                      ReaderTypography.standard(),
-                    ReaderTypographyPreset.loose => ReaderTypography.loose(),
-                    _ => ReaderTypography.standard(),
-                  };
-                  _commitChange(target.copyWith(weight: _current.weight));
-                },
-                child: Container(
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: active == preset
-                        ? scheme.primary
-                        : scheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: active == preset
-                          ? scheme.primary
-                          : scheme.outlineVariant.withValues(alpha: 0.3),
-                    ),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    preset.label,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight:
-                          active == preset ? FontWeight.bold : FontWeight.w500,
-                      color: active == preset
-                          ? scheme.onPrimary
-                          : scheme.onSurface,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          ChoiceChip(
+            label: Text(preset.label),
+            selected: active == preset,
+            onSelected: (_) {
+              final target = switch (preset) {
+                ReaderTypographyPreset.compact => ReaderTypography.compact(),
+                ReaderTypographyPreset.loose => ReaderTypography.loose(),
+                _ => ReaderTypography.standard(),
+              };
+              _commitChange(target.copyWith(weight: _current.weight));
+            },
           ),
         if (active == ReaderTypographyPreset.custom)
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Container(
-                height: 36,
-                decoration: BoxDecoration(
-                  color: scheme.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: scheme.primary, width: 1.5),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  '自定义',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: scheme.primary,
-                  ),
-                ),
-              ),
-            ),
-          ),
+          const Chip(label: Text('自定义')),
       ],
     );
   }
 
-  /// Apple Books 风格的精简低对比度滑杆行
+  /// 标签与读数可换行，滑杆独占一行以兼顾窄屏和大字体。
   Widget _buildSliderRow({
     required String label,
     required double value,
@@ -726,65 +640,39 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
     final scheme = theme.colorScheme;
     final clampedValue = value.clamp(min, max);
 
-    return Opacity(
-      opacity: enabled ? 1.0 : 0.45,
-      child: Row(
-        children: [
-          // 左侧参数名称
-          SizedBox(
-            width: 60,
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          spacing: 12,
+          runSpacing: 4,
+          children: [
+            Text(label,
+                style: theme.textTheme.titleSmall?.copyWith(
+                    color:
+                        enabled ? scheme.onSurface : scheme.onSurfaceVariant)),
+            Text(valueText,
+                style: theme.textTheme.labelLarge?.copyWith(
+                    color: enabled && (clampedValue - defaultValue).abs() < 0.02
+                        ? scheme.primary
+                        : scheme.onSurfaceVariant)),
+          ],
+        ),
+        Semantics(
+          label: label,
+          child: Slider(
+            value: clampedValue,
+            min: min,
+            max: max,
+            divisions: divisions,
+            label: valueText,
+            semanticFormatterCallback: (_) => valueText,
+            onChanged: enabled ? onChanged : null,
+            onChangeEnd: enabled ? onChangeEnd : null,
           ),
-
-          // 中间滑杆
-          Expanded(
-            child: SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 4,
-                activeTrackColor: scheme.primary,
-                inactiveTrackColor: scheme.onSurface.withValues(alpha: 0.12),
-                thumbColor: scheme.primary,
-                thumbShape: const RoundSliderThumbShape(
-                  enabledThumbRadius: 7,
-                  elevation: 1.5,
-                ),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
-              ),
-              child: Slider(
-                value: clampedValue,
-                min: min,
-                max: max,
-                divisions: divisions,
-                onChanged: enabled ? onChanged : null,
-                onChangeEnd: enabled ? onChangeEnd : null,
-              ),
-            ),
-          ),
-
-          // 右侧固定宽度数值（防止数字跳变挤压滑杆）
-          SizedBox(
-            width: 52,
-            child: Text(
-              valueText,
-              textAlign: TextAlign.end,
-              style: TextStyle(
-                fontSize: 13,
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w600,
-                color: (clampedValue - defaultValue).abs() < 0.02
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

@@ -114,26 +114,21 @@ LKBook _preservePublisher(LKBook book, LKBook? fallback) {
 }
 
 Widget _braveAccessBadge(BuildContext context) {
-  const color = Color(0xFFE53935);
+  final scheme = Theme.of(context).colorScheme;
   return Container(
     margin: const EdgeInsets.only(right: 8),
     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
     decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.12),
+      color: scheme.tertiaryContainer,
       borderRadius: BorderRadius.circular(5),
-      border: Border.all(color: color.withValues(alpha: 0.4)),
     ),
-    child: const Text('勇者可读',
-        style: TextStyle(
-            color: color, fontSize: 10.5, fontWeight: FontWeight.w600)),
+    child: Text('勇者可读',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: scheme.onTertiaryContainer, fontWeight: FontWeight.w600)),
   );
 }
 
-/// 书籍详情(LightNovelReader 风格):
-/// - 大封面头部 + 状态
-/// - 可点击标签(跳转标签搜索)
-/// - 滚动感知的"继续阅读/开始阅读" FAB
-/// - 卷目录(云进度标记"读到")
+/// 书籍详情：响应式书籍信息、可点击标签、固定阅读主行动与卷目录。
 class BookDetailPage extends StatefulWidget {
   final int bookId;
   const BookDetailPage({super.key, required this.bookId});
@@ -161,8 +156,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
   int _volumesPage = 0;
   bool _volumesHasMore = true;
   final _scroll = ScrollController();
-  bool _fabVisible = true;
-  double _lastOffset = 0;
 
   /// 目录中已就地展开的卷;展开后章节列表直接显示在卷卡片下方。
   final Set<int> _expandedVolumeIds = <int>{};
@@ -211,13 +204,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
     LKClient.sessionRev.addListener(_onPublisherSessionChanged);
     LKClient.followChanged.addListener(_onFollowChanged);
     _load();
-    _scroll.addListener(() {
-      final o = _scroll.offset;
-      final down = o > _lastOffset + 2;
-      _lastOffset = o;
-      final v = o < 80 || !down;
-      if (v != _fabVisible && mounted) setState(() => _fabVisible = v);
-    });
   }
 
   @override
@@ -701,21 +687,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
             if (canFollow)
               Padding(
                 padding: const EdgeInsets.only(left: 8),
-                child: SizedBox(
-                  width: 64,
-                  height: 32,
-                  child: OutlinedButton(
-                    onPressed:
-                        _publisherFollowBusy ? null : _togglePublisherFollow,
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.compact,
-                      shape: const StadiumBorder(),
-                    ),
-                    child: Text(_publisherFollowed ? '已关注' : '关注'),
+                child: OutlinedButton(
+                  onPressed:
+                      _publisherFollowBusy ? null : _togglePublisherFollow,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    shape: const StadiumBorder(),
                   ),
+                  child: Text(_publisherFollowed ? '已关注' : '关注'),
                 ),
               ),
           ],
@@ -746,15 +725,136 @@ class _BookDetailPageState extends State<BookDetailPage> {
     Share.share('https://www.lightnovel.fun/reader/${b.bookId}');
   }
 
+  Widget _bookHeader(LKBook book) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final cover = InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: book.coverUrl.trim().isEmpty
+          ? null
+          : () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => MediaViewerPage(
+                        url: book.coverUrl.trim(),
+                        cacheManager: DefaultCacheManager())),
+              ),
+      child: CoverImage(
+          url: book.coverUrl,
+          width: 112,
+          height: 160,
+          radius: 12,
+          isBrave: book.isBrave),
+    );
+    final metadata = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => _showFullBookTitle(book.title),
+          child: Text(book.title,
+              style: theme.textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w600, height: 1.25)),
+        ),
+        if (book.authorName.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('作者: ${book.authorName}',
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: scheme.onSurfaceVariant)),
+        ],
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _miniBadge(scheme, book.isCompleted ? '完结' : '连载'),
+            if (book.tags.any((tag) => tag.trim() == '原创'))
+              _miniBadge(scheme, '原创'),
+            if (book.isBrave) _braveAccessBadge(context),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+            '${book.volumeCount} 卷 · ${book.chapterCount} 章 · ${book.wordCount >= 10000 ? '${(book.wordCount / 10000).toStringAsFixed(1)} 万字' : '${book.wordCount} 字'}',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant)),
+      ],
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LayoutBuilder(builder: (context, constraints) {
+          final stacked = constraints.maxWidth < 340 ||
+              MediaQuery.textScalerOf(context).scale(16) > 22;
+          if (stacked) {
+            return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(child: cover),
+                  const SizedBox(height: 20),
+                  metadata
+                ]);
+          }
+          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            cover,
+            const SizedBox(width: 20),
+            Expanded(child: metadata),
+          ]);
+        }),
+        if (book.publisherUid > 0 ||
+            book.publisherName.trim().isNotEmpty ||
+            book.publisherAvatar.trim().isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Divider(color: scheme.outlineVariant),
+          const SizedBox(height: 4),
+          _publisherRow(book),
+        ],
+      ],
+    );
+  }
+
+  Widget _readingAction(LKBook book) {
+    final canRead =
+        _readChapterId > 0 || book.defaultChapterId > 0 || _volumes.isNotEmpty;
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              key: const ValueKey('primary-reading-action'),
+              onPressed: canRead ? _openReading : null,
+              style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 56),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
+              icon: const Icon(Icons.menu_book_rounded),
+              label: Text(_fabLabel,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = _book;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
+      appBar: b == null ? AppBar(title: const Text('书籍详情')) : null,
       body: _error != null && b == null
           ? Center(
-              child: Text(_error!, style: const TextStyle(color: Colors.grey)))
+              child: TextButton.icon(
+                  onPressed: _load,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('书籍加载失败，点击重试')))
           : b == null
               ? const LkLoadingIndicator()
               : MotionRefreshIndicator(
@@ -767,10 +867,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         pinned: true,
                         elevation: 0,
                         scrolledUnderElevation: 0.5,
-                        backgroundColor:
-                            isDark ? const Color(0xFF1B1C21) : Colors.white,
-                        foregroundColor:
-                            isDark ? Colors.white : const Color(0xFF263238),
+                        backgroundColor: scheme.surface,
+                        foregroundColor: scheme.onSurface,
                         expandedHeight: 8,
                         title: GestureDetector(
                           onTap: () => _showFullBookTitle(b.title),
@@ -824,257 +922,97 @@ class _BookDetailPageState extends State<BookDetailPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              SizedBox(
-                                width: double.infinity,
-                                child: Card(
-                                  margin: EdgeInsets.zero,
-                                  clipBehavior: Clip.antiAlias,
-                                  child: Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                        14, 14, 14, 12),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            InkWell(
-                                              borderRadius:
-                                                  BorderRadius.circular(10),
-                                              onTap:
-                                                  b.coverUrl.trim().isNotEmpty
-                                                      ? () => Navigator.push(
-                                                            context,
-                                                            MaterialPageRoute(
-                                                              builder: (_) =>
-                                                                  MediaViewerPage(
-                                                                url: b.coverUrl
-                                                                    .trim(),
-                                                                cacheManager:
-                                                                    DefaultCacheManager(),
-                                                              ),
-                                                            ),
-                                                          )
-                                                      : null,
-                                              child: CoverImage(
-                                                  url: b.coverUrl,
-                                                  width: 112,
-                                                  height: 152,
-                                                  radius: 10,
-                                                  isBrave: b.isBrave),
-                                            ),
-                                            const SizedBox(width: 16),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  InkWell(
-                                                    onTap: () =>
-                                                        _showFullBookTitle(
-                                                            b.title),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            6),
-                                                    child: Padding(
-                                                      padding: const EdgeInsets
-                                                          .symmetric(
-                                                          vertical: 2),
-                                                      child: Text(b.title,
-                                                          maxLines: 3,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
-                                                          style:
-                                                              const TextStyle(
-                                                                  fontSize: 18,
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .bold,
-                                                                  height: 1.3)),
-                                                    ),
-                                                  ),
-                                                  if (b.authorName
-                                                      .trim()
-                                                      .isNotEmpty) ...[
-                                                    const SizedBox(height: 8),
-                                                    Text('作者: ${b.authorName}',
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style: TextStyle(
-                                                            fontSize: 13,
-                                                            color: Colors.grey
-                                                                .shade600)),
-                                                  ],
-                                                  const SizedBox(height: 8),
-                                                  Wrap(
-                                                      spacing: 6,
-                                                      runSpacing: 4,
-                                                      crossAxisAlignment:
-                                                          WrapCrossAlignment
-                                                              .center,
-                                                      children: [
-                                                        _miniBadge(
-                                                            scheme,
-                                                            b.isCompleted
-                                                                ? '完结'
-                                                                : '连载'),
-                                                        if (b.tags.any((tag) =>
-                                                            tag.trim() == '原创'))
-                                                          _miniBadge(
-                                                              scheme, '原创'),
-                                                        if (b.isBrave)
-                                                          _braveAccessBadge(
-                                                              context),
-                                                        Text(
-                                                            '${b.volumeCount}卷 · ${b.chapterCount}章',
-                                                            style: TextStyle(
-                                                                fontSize: 12,
-                                                                color: Colors
-                                                                    .grey
-                                                                    .shade500)),
-                                                      ]),
-                                                  const SizedBox(height: 4),
-                                                  Text(
-                                                    b.wordCount >= 10000
-                                                        ? '${(b.wordCount / 10000).toStringAsFixed(1)} 万字'
-                                                        : '${b.wordCount} 字',
-                                                    style: TextStyle(
-                                                        fontSize: 12,
-                                                        color: Colors
-                                                            .grey.shade500),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        if (b.publisherUid > 0 ||
-                                            b.publisherName.trim().isNotEmpty ||
-                                            b.publisherAvatar
-                                                .trim()
-                                                .isNotEmpty) ...[
-                                          const SizedBox(height: 12),
-                                          const LkFadedDivider(),
-                                          const SizedBox(height: 10),
-                                          _publisherRow(b),
-                                        ],
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
+                              _bookHeader(b),
                               if (b.tags.isNotEmpty) ...[
-                                const SizedBox(height: 14),
-                                SizedBox(
-                                  height: 32,
-                                  child: ListView.separated(
-                                    scrollDirection: Axis.horizontal,
-                                    itemCount: b.tags.length,
-                                    separatorBuilder: (_, __) =>
-                                        const SizedBox(width: 8),
-                                    itemBuilder: (_, i) => GestureDetector(
-                                      onTap: () => Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                            builder: (_) => SearchPage(
-                                                initialTag: b.tags[i])),
-                                      ),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 12, vertical: 5),
-                                        alignment: Alignment.center,
-                                        decoration: BoxDecoration(
-                                          color: scheme.primary
-                                              .withValues(alpha: 0.08),
-                                          borderRadius:
-                                              BorderRadius.circular(16),
-                                        ),
-                                        child: Text(b.tags[i],
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: scheme.primary)),
-                                      ),
+                                const SizedBox(height: 20),
+                                Wrap(spacing: 8, runSpacing: 8, children: [
+                                  for (final tag in b.tags)
+                                    ActionChip(
+                                      label: Text(tag),
+                                      onPressed: () => Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                              builder: (_) =>
+                                                  SearchPage(initialTag: tag))),
                                     ),
-                                  ),
-                                ),
+                                ]),
                               ],
-                              const SizedBox(height: 14),
-                              Row(children: [
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: _toggleShelf,
-                                    icon: Icon(
-                                        _inShelf
-                                            ? Icons.bookmark_added_rounded
-                                            : Icons.bookmark_add_outlined,
-                                        size: 18),
-                                    label: Text(_inShelf ? '已加书架' : '加入书架'),
-                                  ),
+                              const SizedBox(height: 20),
+                              Wrap(spacing: 12, runSpacing: 8, children: [
+                                OutlinedButton.icon(
+                                  onPressed: _toggleShelf,
+                                  icon: Icon(
+                                      _inShelf
+                                          ? Icons.bookmark_added_rounded
+                                          : Icons.bookmark_add_outlined,
+                                      size: 20),
+                                  label: Text(_inShelf ? '已加书架' : '加入书架'),
                                 ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: () => Navigator.push(
+                                TextButton.icon(
+                                  onPressed: () => Navigator.push(
                                       context,
                                       MaterialPageRoute(
                                           builder: (_) => CommentsPage(
                                               bookId: b.bookId,
-                                              bookTitle: b.title)),
-                                    ),
-                                    icon: const Icon(Icons.chat_bubble_outline,
-                                        size: 18),
-                                    label: const Text('书评'),
-                                  ),
+                                              bookTitle: b.title))),
+                                  icon: const Icon(Icons.chat_bubble_outline,
+                                      size: 20),
+                                  label: const Text('书评'),
                                 ),
                               ]),
                               const SizedBox(height: 18),
-                              const Text('简介',
-                                  style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold)),
+                              Text('简介',
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium),
                               const SizedBox(height: 6),
                               Text(b.summary,
-                                  style: TextStyle(
-                                      height: 1.6,
-                                      fontSize: 13.5,
-                                      color: scheme.onSurfaceVariant)),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(
+                                          height: 1.65,
+                                          color: scheme.onSurfaceVariant)),
                               const SizedBox(height: 18),
-                              Row(children: [
-                                const Text('目录',
-                                    style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.bold)),
-                                const Spacer(),
-                                if (_usesPagedCatalog || _canExpandAllVolumes)
-                                  TextButton.icon(
-                                    onPressed: _usesPagedCatalog
-                                        ? (_volumes.isEmpty
-                                            ? null
-                                            : () => _openCatalog())
-                                        : (_loadingAllVolumes
-                                            ? null
-                                            : _toggleAllVolumes),
-                                    icon: Icon(_usesPagedCatalog
-                                        ? Icons.format_list_bulleted_rounded
-                                        : _allVolumesExpanded
-                                            ? Icons.unfold_less_rounded
-                                            : Icons.unfold_more_rounded),
-                                    label: Text(_usesPagedCatalog
-                                        ? '展开目录'
-                                        : _loadingAllVolumes
-                                            ? '加载中'
+                              Wrap(
+                                  spacing: 12,
+                                  runSpacing: 4,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Text('目录',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium),
+                                    Text('${b.volumeCount} 卷',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                                color:
+                                                    scheme.onSurfaceVariant)),
+                                    if (_usesPagedCatalog ||
+                                        _canExpandAllVolumes)
+                                      TextButton.icon(
+                                        onPressed: _usesPagedCatalog
+                                            ? (_volumes.isEmpty
+                                                ? null
+                                                : () => _openCatalog())
+                                            : (_loadingAllVolumes
+                                                ? null
+                                                : _toggleAllVolumes),
+                                        icon: Icon(_usesPagedCatalog
+                                            ? Icons.format_list_bulleted_rounded
                                             : _allVolumesExpanded
-                                                ? '收起全部'
-                                                : '展开全部'),
-                                  ),
-                                Text('${b.volumeCount} 卷',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey.shade500)),
-                              ]),
+                                                ? Icons.unfold_less_rounded
+                                                : Icons.unfold_more_rounded),
+                                        label: Text(_usesPagedCatalog
+                                            ? '展开目录'
+                                            : _loadingAllVolumes
+                                                ? '加载中'
+                                                : _allVolumesExpanded
+                                                    ? '收起全部'
+                                                    : '展开全部'),
+                                      ),
+                                  ]),
                               const SizedBox(height: 8),
                               if (_volumesLoading && _volumes.isEmpty)
                                 const LkLoadingIndicator(
@@ -1137,59 +1075,34 @@ class _BookDetailPageState extends State<BookDetailPage> {
                             },
                           ),
                         ),
-                      SliverToBoxAdapter(
-                        child: SizedBox(
-                          height: 90 + MediaQuery.of(context).padding.bottom,
-                        ),
-                      ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 24)),
                     ],
                   ),
                 ),
-      floatingActionButton: AnimatedSlide(
-        duration: AppMotion.duration(context, 200),
-        offset: _fabVisible ? Offset.zero : const Offset(0, 2),
-        child: AnimatedOpacity(
-          duration: AppMotion.duration(context, 200),
-          opacity: _fabVisible ? 1 : 0,
-          child: FloatingActionButton.extended(
-            onPressed: _fabVisible ? _openReading : null,
-            icon: const Icon(Icons.menu_book_rounded),
-            label: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 220),
-              child:
-                  Text(_fabLabel, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-          ),
-        ),
-      ),
+      bottomNavigationBar: b == null ? null : _readingAction(b),
     );
   }
 
   Widget _miniBadge(ColorScheme scheme, String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: scheme.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(5),
-        border: Border.all(
-            color: scheme.primary.withValues(alpha: 0.35), width: 0.6),
+        color: scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Text(label,
-          style: TextStyle(
-              fontSize: 10,
-              color: scheme.primary,
-              fontWeight: FontWeight.w500)),
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: scheme.onSecondaryContainer, fontWeight: FontWeight.w500)),
     );
   }
 
   Widget _pagedVolumeCard(LKVolume volume) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final showPreview = _initialCatalogVolume?.volumeId == volume.volumeId;
     final total = _chapterTotalFor(volume);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: isDark ? const Color(0xFF1E2025) : Colors.white,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -1212,11 +1125,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
                     const SizedBox(width: 8),
                     Text('$total 章',
                         style: TextStyle(
-                            fontSize: 11, color: Colors.grey.shade500)),
+                            fontSize: 11,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant)),
                   ],
                   const SizedBox(width: 4),
                   Icon(Icons.chevron_right_rounded,
-                      color: Colors.grey.shade400),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ]),
               ),
             ),
@@ -1262,14 +1178,13 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   Widget _volumeCard(LKVolume v) {
     if (_volumeUsesPagedCatalog(v)) return _pagedVolumeCard(v);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final expanded = _expandedVolumeIds.contains(v.volumeId);
     final chs = _volumeChapters[v.volumeId];
     final total = _chapterTotalFor(v);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: isDark ? const Color(0xFF1E2025) : Colors.white,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -1292,7 +1207,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
                     const SizedBox(width: 8),
                     Text('$total 章',
                         style: TextStyle(
-                            fontSize: 11, color: Colors.grey.shade500)),
+                            fontSize: 11,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant)),
                   ],
                   const SizedBox(width: 4),
                   // 加载状态显示在展开后的章节区域，卷标题行始终保持
@@ -1301,7 +1219,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                       expanded
                           ? Icons.keyboard_arrow_down_rounded
                           : Icons.chevron_right_rounded,
-                      color: Colors.grey.shade400),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ]),
               ),
             ),
@@ -1529,13 +1447,17 @@ class _BookDetailPageState extends State<BookDetailPage> {
                     c.wordCount >= 10000
                         ? '${(c.wordCount / 10000).toStringAsFixed(1)}万字'
                         : '${c.wordCount}字',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                   if (c.locked && !c.unlocked)
-                    const Padding(
-                      padding: EdgeInsets.only(left: 6),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
                       child: Icon(Icons.lock_outline,
-                          size: 14, color: Colors.grey),
+                          size: 14,
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                 ]),
               ),
@@ -1780,7 +1702,9 @@ class _ChaptersPageState extends State<ChaptersPage> {
       child: Center(
         child: Text(
           _hasMore ? '继续下滑加载' : '已加载全部章节',
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+          style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       ),
     );

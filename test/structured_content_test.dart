@@ -13,7 +13,8 @@ void main() {
     (MethodCall methodCall) async {
       if (methodCall.method == 'convert') {
         final args = methodCall.arguments;
-        final text = args is List ? args[0] as String : (args as Map)['text'] as String;
+        final text =
+            args is List ? args[0] as String : (args as Map)['text'] as String;
         return text
             .replaceAll('这里', '這裡')
             .replaceAll('简体', '簡體')
@@ -34,8 +35,7 @@ void main() {
       expect(blocks.length, 1);
       final b = blocks.first;
       expect(b.type, StructuredBlockType.paragraph);
-      expect(b.text,
-          'Hello bold italic underline strike red text');
+      expect(b.text, 'Hello bold italic underline strike red text');
 
       final boldRun = b.runs.firstWhere((r) => r.text == 'bold');
       expect(boldRun.isBold, isTrue);
@@ -279,11 +279,13 @@ void main() {
       ));
 
       expect(span.toPlainText(), 'H2O 与 H2O');
-      expect(block.verticalAnnotations(
-        baseStyle: style,
-        linkColor: Colors.blue,
-        backgroundColor: Colors.white,
-      ), hasLength(2));
+      expect(
+          block.verticalAnnotations(
+            baseStyle: style,
+            linkColor: Colors.blue,
+            backgroundColor: Colors.white,
+          ),
+          hasLength(2));
       expect(tester.takeException(), isNull);
     });
 
@@ -331,7 +333,8 @@ void main() {
       expect(adjusted.computeLuminance(), lessThan(0.4));
     });
 
-    test('buildTextSpan creates matching spans for measurement and display', () {
+    test('buildTextSpan creates matching spans for measurement and display',
+        () {
       const block = StructuredBlock(
         type: StructuredBlockType.heading,
         headingLevel: 2,
@@ -360,11 +363,14 @@ void main() {
       expect(spanForDisplay.style?.fontSize, spanForMeasure.style?.fontSize);
     });
 
-    test('convertBlocks converts only text and ruby without altering structure or URLs', () async {
+    test(
+        'convertBlocks converts only text and ruby without altering structure or URLs',
+        () async {
       const html =
           '<p>这里是<a href="https://example.com/link">简体链接</a>与<ruby>汉字<rt>注音</rt></ruby></p>';
       final blocks = StructuredContentParser.parseHtml(html);
-      final converted = await StructuredContentParser.convertBlocks(blocks, 1); // S2T
+      final converted =
+          await StructuredContentParser.convertBlocks(blocks, 1); // S2T
       expect(converted.length, 1);
       final b = converted.first;
       expect(b.text, contains('這裡是'));
@@ -398,7 +404,9 @@ void main() {
       expect(blocks[2].indent, greaterThan(0));
     });
 
-    test('parses unordered <ul> and ordered <ol> lists with bullet and number prefixes', () {
+    test(
+        'parses unordered <ul> and ordered <ol> lists with bullet and number prefixes',
+        () {
       const html = '''
         <ul class="ln-list">
           <li>第一项</li>
@@ -434,7 +442,8 @@ void main() {
       expect(blocks[3].listNumber, 2);
     });
 
-    test('parses superscript <sup> with 0.75 multiplier and footnote marker', () {
+    test('parses superscript <sup> with 0.75 multiplier and footnote marker',
+        () {
       const html = '<p>正文123<sup class="ln-footnote-ref">[1]</sup>456</p>';
       final blocks = StructuredContentParser.parseHtml(html);
       expect(blocks.length, 1);
@@ -468,10 +477,12 @@ void main() {
       expect(medium.fontWeight, FontWeight.w500);
       expect(semibold.fontSizeMultiplier, closeTo(1.2, 0.001));
       expect(semibold.fontWeight, FontWeight.w600);
-      expect(subscript.verticalAlignment, StructuredVerticalAlignment.subscript);
+      expect(
+          subscript.verticalAlignment, StructuredVerticalAlignment.subscript);
     });
 
-    test('footnote marker stays copyable and invokes its reference callback', () {
+    test('footnote marker stays copyable and invokes its reference callback',
+        () {
       const html = '<p>正文<sup class="ln-footnote-ref">[1]</sup>后文</p>';
       final block = StructuredContentParser.parseHtml(html).single;
       String? tappedReference;
@@ -493,7 +504,8 @@ void main() {
       expect(tappedReference, '1');
     });
 
-    testWidgets('footnote is a compact upper-right marker that remains tappable',
+    testWidgets(
+        'footnote is a compact upper-right marker that remains tappable',
         (tester) async {
       const html = '<p>123456<sup class="ln-footnote-ref">[1]</sup>7890</p>';
       final block = StructuredContentParser.parseHtml(html).single;
@@ -642,7 +654,10 @@ void main() {
             String? tapped;
 
             for (final (width, height) in [
-              (480.0, 1.7), (200.0, 1.7), (480.0, 1.0), (200.0, 1.0),
+              (480.0, 1.7),
+              (200.0, 1.7),
+              (480.0, 1.0),
+              (200.0, 1.0),
             ]) {
               final style = TextStyle(fontSize: 26, height: height);
               await tester.pumpWidget(MaterialApp(
@@ -805,7 +820,9 @@ void main() {
       expect(strikeSpan.style?.decorationThickness, 1.5);
     });
 
-    test('firstLineIndent flag adds two full-width spaces when true and strips when false', () {
+    test(
+        'firstLineIndent flag adds two full-width spaces when true and strips when false',
+        () {
       const html = '<p>没有缩进的正文段落。</p><p>　　已有缩进的正文段落。</p><h1>标题不缩进</h1>';
       final indentedBlocks =
           StructuredContentParser.parseHtml(html, firstLineIndent: true);

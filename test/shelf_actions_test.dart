@@ -115,14 +115,18 @@ void main() {
           grid: true, scale: 2, width: 320, brightness: brightness);
       tester.view.physicalSize = const Size(320, 400);
       await tester.pumpAndSettle();
-      await tester.longPress(find.text('Z作品').first);
+      await tester.longPressAt(
+          tester.getTopLeft(find.byType(BookGridCard).first) +
+              const Offset(20, 20));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       await tester.tap(find.byTooltip('关闭'));
       await tester.pumpAndSettle();
       expect((await LKStore.localShelf()).length, 2);
       expect(removes, 0);
-      await tester.longPress(find.text('Z作品').first);
+      await tester.longPressAt(
+          tester.getTopLeft(find.byType(BookGridCard).first) +
+              const Offset(20, 20));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('从书架移除'));
       await tester.tap(find.text('从书架移除'));
@@ -237,15 +241,18 @@ void main() {
     await pumpShelf(tester);
     await tester.drag(find.byType(ListView).first, const Offset(0, -500));
     await tester.pumpAndSettle();
-    final scrollable =
-        tester.state<ScrollableState>(find.byType(Scrollable).first);
+    final scrollable = tester.state<ScrollableState>(find
+        .byWidgetPredicate(
+            (widget) => widget is Scrollable && widget.axis == Axis.vertical)
+        .first);
     final offset = scrollable.position.pixels;
-    final cards = tester.widgetList<BookCard>(find.byType(BookCard));
-    final book = cards.firstWhere((card) {
-      final rect =
-          tester.getRect(find.widgetWithText(BookCard, card.book.title));
-      return rect.top > 70 && rect.bottom < 700;
-    }).book;
+    final localBooks = await LKStore.localShelf();
+    final book = localBooks.firstWhere((book) {
+      final finder = find.byKey(ValueKey('shelf-book-${book.bookId}'));
+      if (finder.evaluate().isEmpty) return false;
+      final rect = tester.getRect(finder);
+      return rect.top > 240 && rect.bottom < 700;
+    });
     await tester.longPress(find.text(book.title));
     await tester.pumpAndSettle();
     await tester.tap(find.text('从书架移除'));
@@ -264,23 +271,25 @@ void main() {
     await tester.tap(find.text('按书名'));
     await tester.pumpAndSettle();
     expect(find.text('筛选'), findsNothing);
-    expect(tester.widgetList<BookCard>(find.byType(BookCard)).first.book.bookId,
-        2);
+    expect(tester.getTopLeft(find.text('A作品')).dy,
+        lessThan(tester.getTopLeft(find.text('Z作品')).dy));
     await tester.tap(find.byTooltip('筛选与排序'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('有更新'));
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, '有更新'));
     await tester.pumpAndSettle();
     expect(find.text('A作品'), findsNothing);
     await tester.tap(find.byTooltip('筛选与排序'));
     await tester.pumpAndSettle();
     final selected = tester
-        .widgetList<Semantics>(find.byType(Semantics))
+        .widgetList<Semantics>(find.descendant(
+            of: find.byType(PopupMenuItem<String>),
+            matching: find.byType(Semantics)))
         .where((widget) => widget.properties.selected == true);
     expect(selected.length, 2);
-    await tester.tap(find.text('全部作品'));
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, '全部作品'));
     await tester.pumpAndSettle();
-    expect(tester.widgetList<BookCard>(find.byType(BookCard)).first.book.bookId,
-        2);
+    expect(tester.getTopLeft(find.text('A作品')).dy,
+        lessThan(tester.getTopLeft(find.text('Z作品')).dy));
   });
 
   for (final brightness in Brightness.values) {

@@ -160,8 +160,10 @@ Future<bool?> showLogoutScopeDialog(BuildContext context) {
 }
 
 /// 取消关注用户的二次确认对话框。返回 true 表示确认取关，false 表示取消。
-Future<bool> confirmUnfollowUser(BuildContext context, {String? nickname}) async {
-  final name = (nickname != null && nickname.trim().isNotEmpty) ? nickname : '该用户';
+Future<bool> confirmUnfollowUser(BuildContext context,
+    {String? nickname}) async {
+  final name =
+      (nickname != null && nickname.trim().isNotEmpty) ? nickname : '该用户';
   final result = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -184,7 +186,6 @@ Future<bool> confirmUnfollowUser(BuildContext context, {String? nickname}) async
   );
   return result ?? false;
 }
-
 
 /// 无封面书籍的默认封面(站点官方占位图)
 const String kDefaultCover =
@@ -444,7 +445,8 @@ class _CoverImageState extends State<CoverImage> {
                           behavior: HitTestBehavior.opaque,
                           onTap: () => setState(() => _revealed = !_revealed),
                           child: Container(
-                            padding: EdgeInsets.all(widget.compactPeek ? 3 : 4.5),
+                            padding:
+                                EdgeInsets.all(widget.compactPeek ? 3 : 4.5),
                             decoration: BoxDecoration(
                               color: Colors.black.withValues(alpha: 0.55),
                               shape: BoxShape.circle,
@@ -489,7 +491,8 @@ class BookCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = Theme.of(context).cardTheme.color ?? scheme.surfaceContainerLow;
+    final cardColor =
+        Theme.of(context).cardTheme.color ?? scheme.surfaceContainerLow;
     final titleColor =
         isDark ? const Color(0xFFECEDF1) : const Color(0xFF263238);
     final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;
@@ -804,11 +807,11 @@ class BookGridDelegate extends SliverGridDelegate {
     final dense = cellWidth < 105;
     final compact = cellWidth < 150;
     final titleSize = dense ? 11.0 : (compact ? 12.0 : (isShelf ? 13.0 : 13.5));
-    final topGap = isShelf
-        ? (dense ? 3.0 : 4.0)
-        : (dense ? 4.0 : (compact ? 5.0 : 7.0));
+    final topGap =
+        isShelf ? (dense ? 3.0 : 4.0) : (dense ? 4.0 : (compact ? 5.0 : 7.0));
     final titleHeight =
-        (textScaler.scale(titleSize) * (isShelf ? 1.22 : 1.25)).ceilToDouble() * 2;
+        (textScaler.scale(titleSize) * (isShelf ? 1.22 : 1.25)).ceilToDouble() *
+            2;
     final secondaryHeight = isShelf || dense
         ? 0.0
         : (compact ? 2.0 : 3.0) +
@@ -1087,7 +1090,9 @@ class BookGridCard extends StatelessWidget {
         final isCompact = cardWidth >= 105 && cardWidth < 150;
         final visibleTags = isCompact
             ? const <String>[]
-            : shortTags(book.tags).where((tag) => tag.trim().isNotEmpty).toList();
+            : shortTags(book.tags)
+                .where((tag) => tag.trim().isNotEmpty)
+                .toList();
         final hasTags = visibleTags.isNotEmpty;
         final wordCountLabel = Text(
           book.wordCount >= 10000
@@ -1103,7 +1108,8 @@ class BookGridCard extends StatelessWidget {
         );
 
         final isBlurActive = LKStore.coverBlurMode.value == CoverBlurMode.all ||
-            (LKStore.coverBlurMode.value == CoverBlurMode.brave && book.isBrave);
+            (LKStore.coverBlurMode.value == CoverBlurMode.brave &&
+                book.isBrave);
 
         return RepaintBoundary(
           child: InkWell(
@@ -1188,8 +1194,8 @@ class BookGridCard extends StatelessWidget {
                                   decoration: BoxDecoration(
                                     color: scheme.primaryContainer
                                         .withValues(alpha: 0.94),
-                                    borderRadius: BorderRadius.circular(
-                                        isDense ? 5 : 7),
+                                    borderRadius:
+                                        BorderRadius.circular(isDense ? 5 : 7),
                                     boxShadow: [
                                       BoxShadow(
                                         color: Colors.black

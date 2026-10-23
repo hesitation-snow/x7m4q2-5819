@@ -375,8 +375,8 @@ class _HomePageState extends State<HomePage> {
                                       const EdgeInsets.fromLTRB(12, 0, 12, 4),
                                   child: Row(
                                     children: [
-                                      for (final code in _channelOrder.take(
-                                          homePrimaryChannelCount))
+                                      for (final code in _channelOrder
+                                          .take(homePrimaryChannelCount))
                                         Expanded(
                                           child: InkWell(
                                             borderRadius:
@@ -394,11 +394,14 @@ class _HomePageState extends State<HomePage> {
                                                               context, 160),
                                                       style: TextStyle(
                                                         fontSize: 13.5,
-                                                        fontWeight: _channelCode ==
+                                                        fontWeight:
+                                                            _channelCode == code
+                                                                ? FontWeight
+                                                                    .w600
+                                                                : FontWeight
+                                                                    .w500,
+                                                        color: _channelCode ==
                                                                 code
-                                                            ? FontWeight.w600
-                                                            : FontWeight.w500,
-                                                        color: _channelCode == code
                                                             ? Theme.of(context)
                                                                 .colorScheme
                                                                 .primary
@@ -1747,115 +1750,118 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
             final h = visibleItems[i];
             final bookId = h.bookId;
             return Dismissible(
-            key: ValueKey('history-$_epoch-$bookId-${_itemGenerations[bookId] ?? 0}'),
-            direction: DismissDirection.endToStart,
-            background: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              alignment: Alignment.centerRight,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.error,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.delete_outline_rounded,
-                      color: Colors.white, size: 22),
-                  SizedBox(width: 6),
-                  Text(
-                    '删除',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            onDismissed: (_) => _deleteHistory(h),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: Material(
-                color: Theme.of(context).cardTheme.color,
-                borderRadius: BorderRadius.circular(14),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
+              key: ValueKey(
+                  'history-$_epoch-$bookId-${_itemGenerations[bookId] ?? 0}'),
+              direction: DismissDirection.endToStart,
+              background: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                alignment: Alignment.centerRight,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.error,
                   borderRadius: BorderRadius.circular(14),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => BookDetailPage(bookId: h.bookId)),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Row(children: [
-                      CoverImage(
-                          url: h.coverUrl,
-                          width: 50,
-                          height: 66,
-                          radius: 8,
-                          isBrave: h is LKHistoryItem ? h.isBrave : false),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('${h.title} · ${h.authorName}',
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      height: 1.3)),
-                              const SizedBox(height: 4),
-                              if (h.chapterTitle.isNotEmpty)
-                                Text('读到 ${h.chapterTitle}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.indigo.shade400)),
-                              const SizedBox(height: 6),
-                              if (h.progressPercent > 0)
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: LinearProgressIndicator(
-                                    value: (h.progressPercent / 100)
-                                        .clamp(0.0, 1.0),
-                                    minHeight: 5,
-                                    backgroundColor:
-                                        Theme.of(context).brightness ==
-                                                Brightness.dark
-                                            ? Colors.grey.shade800
-                                            : Colors.grey.shade200,
-                                  ),
-                                ),
-                              const SizedBox(height: 5),
-                              Text(
-                                [
-                                  if (h.progressPercent > 0)
-                                    '进度 ${h.progressPercent}%',
-                                  if (h.lastReadAt.isNotEmpty) h.lastReadAt,
-                                  if (h.unreadChapters > 0)
-                                    '未读 ${h.unreadChapters} 章',
-                                ].join(' · '),
-                                style: TextStyle(
-                                    fontSize: 11, color: Colors.grey.shade500),
-                              ),
-                            ]),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.delete_outline_rounded,
+                        color: Colors.white, size: 22),
+                    SizedBox(width: 6),
+                    Text(
+                      '删除',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
                       ),
-                    ]),
+                    ),
+                  ],
+                ),
+              ),
+              onDismissed: (_) => _deleteHistory(h),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                child: Material(
+                  color: Theme.of(context).cardTheme.color,
+                  borderRadius: BorderRadius.circular(14),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => BookDetailPage(bookId: h.bookId)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Row(children: [
+                        CoverImage(
+                            url: h.coverUrl,
+                            width: 50,
+                            height: 66,
+                            radius: 8,
+                            isBrave: h is LKHistoryItem ? h.isBrave : false),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('${h.title} · ${h.authorName}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        height: 1.3)),
+                                const SizedBox(height: 4),
+                                if (h.chapterTitle.isNotEmpty)
+                                  Text('读到 ${h.chapterTitle}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.indigo.shade400)),
+                                const SizedBox(height: 6),
+                                if (h.progressPercent > 0)
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: (h.progressPercent / 100)
+                                          .clamp(0.0, 1.0),
+                                      minHeight: 5,
+                                      backgroundColor:
+                                          Theme.of(context).brightness ==
+                                                  Brightness.dark
+                                              ? Colors.grey.shade800
+                                              : Colors.grey.shade200,
+                                    ),
+                                  ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  [
+                                    if (h.progressPercent > 0)
+                                      '进度 ${h.progressPercent}%',
+                                    if (h.lastReadAt.isNotEmpty) h.lastReadAt,
+                                    if (h.unreadChapters > 0)
+                                      '未读 ${h.unreadChapters} 章',
+                                  ].join(' · '),
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade500),
+                                ),
+                              ]),
+                        ),
+                      ]),
+                    ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
-    ),
-  );
+    );
   }
 
   Widget _historyFooter() {

@@ -30,7 +30,8 @@ void main() {
 
       final book = LKBook.fromJson(json1338);
       expect(book.isBrave, isFalse,
-          reason: 'Legacy gid 106 (日轻文库) must not cause normal books to be flagged as brave');
+          reason:
+              'Legacy gid 106 (日轻文库) must not cause normal books to be flagged as brave');
     });
 
     test('Brave book 14162 is recognized as brave', () {
@@ -80,20 +81,23 @@ void main() {
       expect(braveRequiredCh.braveOnly, isTrue);
     });
 
-    test('Dynamically marking a book as brave reflects across models', () async {
+    test('Dynamically marking a book as brave reflects across models',
+        () async {
       final book999 = LKBook.fromJson({'book_id': 9999, 'title': '未知小说'});
       expect(book999.isBrave, isFalse);
 
       await LKStore.markBookBrave(9999);
       expect(LKStore.isBraveBook(9999), isTrue);
 
-      final updatedBook999 = LKBook.fromJson({'book_id': 9999, 'title': '未知小说'});
+      final updatedBook999 =
+          LKBook.fromJson({'book_id': 9999, 'title': '未知小说'});
       expect(updatedBook999.isBrave, isTrue);
     });
 
     test('hideBraveBooks filters brave books while keeping normal books', () {
       final book1338 = LKBook.fromJson({'book_id': 1338, 'title': '败犬女主太多了！'});
-      final book14162 = LKBook.fromJson({'book_id': 14162, 'title': '翠櫻皇國的仙術使'});
+      final book14162 =
+          LKBook.fromJson({'book_id': 14162, 'title': '翠櫻皇國的仙術使'});
 
       final allBooks = [book1338, book14162];
 
@@ -102,11 +106,15 @@ void main() {
       expect(filtered.first.bookId, 1338);
     });
 
-    test('LKPublicBook (author profile publication/bookshelf) inherits brave status', () {
-      final pub1338 = LKPublicBook.fromJson({'book_id': 1338, 'title': '败犬女主太多了！'});
+    test(
+        'LKPublicBook (author profile publication/bookshelf) inherits brave status',
+        () {
+      final pub1338 =
+          LKPublicBook.fromJson({'book_id': 1338, 'title': '败犬女主太多了！'});
       expect(pub1338.isBrave, isFalse);
 
-      final pub14162 = LKPublicBook.fromJson({'book_id': 14162, 'title': '翠櫻皇國的仙術使'});
+      final pub14162 =
+          LKPublicBook.fromJson({'book_id': 14162, 'title': '翠櫻皇國的仙術使'});
       expect(pub14162.isBrave, isTrue);
     });
   });
@@ -270,7 +278,8 @@ void main() {
       expect(find.byIcon(Icons.visibility_rounded), findsNothing);
     });
 
-    test('LKStore.setCoverBlurMode persists mode and synchronizes nsfwBlurCover',
+    test(
+        'LKStore.setCoverBlurMode persists mode and synchronizes nsfwBlurCover',
         () async {
       await LKStore.setCoverBlurMode(CoverBlurMode.all);
       expect(LKStore.coverBlurMode.value, CoverBlurMode.all);

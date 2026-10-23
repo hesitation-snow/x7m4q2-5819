@@ -16,8 +16,10 @@ class M3MenuSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return ConstrainedBox(
-      constraints:
-          BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * .85),
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        maxHeight: MediaQuery.sizeOf(context).height * .85,
+      ),
       child: Material(
         color: scheme.surfaceContainer,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),

@@ -164,7 +164,13 @@ void main() {
     await tester.tap(find.text('关于'));
     await tester.pumpAndSettle();
     expect(find.text('github.com/hesitation-snow/yomiru'), findsOneWidget);
-    expect(find.byIcon(Icons.open_in_new_rounded), findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.ancestor(
+                of: find.text('github.com/hesitation-snow/yomiru'),
+                matching: find.byType(InkWell)),
+            matching: find.byIcon(Icons.open_in_new_rounded)),
+        findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

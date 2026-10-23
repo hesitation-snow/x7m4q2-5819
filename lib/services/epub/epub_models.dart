@@ -91,8 +91,7 @@ class EpubExportOptions {
     bool? exportAsTxt,
   }) =>
       EpubExportOptions(
-        includeIllustrations:
-            includeIllustrations ?? this.includeIllustrations,
+        includeIllustrations: includeIllustrations ?? this.includeIllustrations,
         exportIncomplete: exportIncomplete ?? this.exportIncomplete,
         exportAsTxt: exportAsTxt ?? this.exportAsTxt,
       );
@@ -284,13 +283,11 @@ class EpubDownloadTask {
         options: options ?? this.options,
         selectedVolumes: selectedVolumes ?? this.selectedVolumes,
         chapters: chapters ?? this.chapters,
-        completedChapterIds:
-            completedChapterIds ?? this.completedChapterIds,
+        completedChapterIds: completedChapterIds ?? this.completedChapterIds,
         failedChapters: failedChapters ?? this.failedChapters,
         phase: phase ?? this.phase,
         statusMessage: statusMessage ?? this.statusMessage,
-        currentChapterTitle:
-            currentChapterTitle ?? this.currentChapterTitle,
+        currentChapterTitle: currentChapterTitle ?? this.currentChapterTitle,
         outputPath: outputPath ?? this.outputPath,
         outputSizeBytes: outputSizeBytes ?? this.outputSizeBytes,
         packagingProgress: packagingProgress ?? this.packagingProgress,
@@ -378,10 +375,8 @@ class EpubDownloadTask {
               const [],
       illustrationDownloadedCount:
           json['illustration_downloaded_count'] as int? ?? 0,
-      currentIllustrationIndex:
-          json['current_illustration_index'] as int? ?? 0,
-      currentIllustrationTotal:
-          json['current_illustration_total'] as int? ?? 0,
+      currentIllustrationIndex: json['current_illustration_index'] as int? ?? 0,
+      currentIllustrationTotal: json['current_illustration_total'] as int? ?? 0,
       speedText: (json['speed_text'] ?? '').toString(),
     );
   }

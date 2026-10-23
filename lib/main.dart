@@ -8,6 +8,7 @@ import 'api/store.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 import 'services/app_motion.dart';
+import 'services/app_theme.dart';
 import 'services/reader_volume_keys.dart';
 
 final _rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
@@ -47,95 +48,7 @@ void main() async {
 class LKApp extends StatelessWidget {
   const LKApp({super.key});
 
-  ThemeData _buildTheme(Brightness brightness) {
-    final scheme = ColorScheme.fromSeed(
-        seedColor: const Color(0xFF5C6BC0), brightness: brightness);
-    final isDark = brightness == Brightness.dark;
-    return ThemeData(
-      useMaterial3: true,
-      pageTransitionsTheme: AppMotion.disabled
-          ? AppMotion.noPageTransitions
-          : const PageTransitionsTheme(),
-      splashFactory: AppMotion.disabled ? NoSplash.splashFactory : null,
-      colorScheme: scheme,
-      scaffoldBackgroundColor:
-          isDark ? const Color(0xFF121316) : const Color(0xFFF6F7FB),
-      appBarTheme: AppBarTheme(
-        centerTitle: true,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: isDark ? const Color(0xFF1B1C21) : Colors.white,
-        foregroundColor: isDark ? Colors.white : const Color(0xFF263238),
-        systemOverlayStyle: isDark
-            ? const SystemUiOverlayStyle(
-                statusBarColor: Color(0xFF1B1C21),
-                statusBarIconBrightness: Brightness.light,
-                statusBarBrightness: Brightness.dark,
-              )
-            : const SystemUiOverlayStyle(
-                statusBarColor: Colors.white,
-                statusBarIconBrightness: Brightness.dark,
-                statusBarBrightness: Brightness.light,
-              ),
-        titleTextStyle: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            color: isDark ? Colors.white : const Color(0xFF263238)),
-      ),
-      cardTheme: CardThemeData(
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        margin: EdgeInsets.zero,
-        color: isDark ? const Color(0xFF1E2025) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: isDark ? const Color(0xFF2A2C33) : Colors.white,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-              color: isDark ? Colors.grey.shade800 : Colors.grey.shade300),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-              color: isDark ? Colors.grey.shade800 : Colors.grey.shade300),
-        ),
-      ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: isDark ? const Color(0xFF1B1C21) : Colors.white,
-        indicatorColor: scheme.primary.withValues(alpha: 0.16),
-        labelTextStyle: WidgetStatePropertyAll(TextStyle(
-            fontSize: 12,
-            color: isDark ? Colors.grey.shade400 : Colors.grey.shade700)),
-        height: 64,
-      ),
-      dividerTheme: DividerThemeData(
-          color: isDark ? Colors.grey.shade800 : Colors.grey.shade200),
-      listTileTheme: ListTileThemeData(
-        tileColor: isDark ? const Color(0xFF1E2025) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          // 注意:Size.fromHeight 会构造无限宽度,导致 Row 内布局崩溃
-          minimumSize: const Size(64, 44),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(64, 44),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      ),
-    );
-  }
+  ThemeData _buildTheme(Brightness brightness) => AppTheme.build(brightness);
 
   @override
   Widget build(BuildContext context) {

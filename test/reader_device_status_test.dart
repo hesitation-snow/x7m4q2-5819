@@ -28,4 +28,3 @@ void main() {
     await tester.pump(const Duration(minutes: 2));
   });
 }
-

@@ -20,7 +20,8 @@ void main() {
     }
   });
 
-  test('EpubZipWriter generates 100% compliant EPUB 3 container format', () async {
+  test('EpubZipWriter generates 100% compliant EPUB 3 container format',
+      () async {
     final targetFile = File('${tempDir.path}/test_book.epub');
     final writer = await EpubZipWriter.open(targetFile);
 
@@ -34,13 +35,15 @@ void main() {
     await writer.addBytes('META-INF/container.xml', utf8.encode(containerXml));
 
     // 添加章节文件
-    const sampleXhtml = '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p>Hello EPUB 3</p></body></html>';
+    const sampleXhtml =
+        '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p>Hello EPUB 3</p></body></html>';
     await writer.addBytes('EPUB/text/ch_0001.xhtml', utf8.encode(sampleXhtml));
 
     // 添加磁盘文件
     final dummyImgFile = File('${tempDir.path}/dummy.jpg');
     await dummyImgFile.writeAsBytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    await writer.addFile('EPUB/images/dummy.jpg', dummyImgFile, compress: false);
+    await writer.addFile('EPUB/images/dummy.jpg', dummyImgFile,
+        compress: false);
 
     await writer.close();
 
@@ -63,15 +66,18 @@ void main() {
     final nameLen = byteData.getUint16(26, Endian.little);
     final extraLen = byteData.getUint16(28, Endian.little);
 
-    expect(method, equals(0), reason: 'mimetype must NOT be compressed (STORED = 0)');
-    expect(extraLen, equals(0), reason: 'mimetype extra field length MUST be 0');
+    expect(method, equals(0),
+        reason: 'mimetype must NOT be compressed (STORED = 0)');
+    expect(extraLen, equals(0),
+        reason: 'mimetype extra field length MUST be 0');
     expect(nameLen, equals(8), reason: 'name is "mimetype" (8 bytes)');
 
     final nameString = ascii.decode(bytes.sublist(30, 30 + nameLen));
     expect(nameString, equals('mimetype'));
 
     final payloadStart = 30 + nameLen;
-    final payloadString = ascii.decode(bytes.sublist(payloadStart, payloadStart + uncompressedSize));
+    final payloadString = ascii
+        .decode(bytes.sublist(payloadStart, payloadStart + uncompressedSize));
     expect(payloadString, equals('application/epub+zip'));
     expect(compressedSize, equals(20));
     expect(uncompressedSize, equals(20));
@@ -86,6 +92,7 @@ void main() {
     final eocdOffset = bytes.length - 22;
     expect(byteData.getUint32(eocdOffset, Endian.little), equals(0x06054b50));
     final totalEntries = byteData.getUint16(eocdOffset + 10, Endian.little);
-    expect(totalEntries, equals(4)); // mimetype, container.xml, ch_0001.xhtml, dummy.jpg
+    expect(totalEntries,
+        equals(4)); // mimetype, container.xml, ch_0001.xhtml, dummy.jpg
   });
 }

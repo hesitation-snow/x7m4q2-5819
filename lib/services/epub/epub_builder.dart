@@ -213,7 +213,6 @@ nav#toc li {
     return buffer.toString();
   }
 
-
   /// 多级检索插画的本地相对路径（支持原始 URL、去实体 URL、安全文件名与基名）
   static String? _resolveImageLocalPath(
     String rawSrc,
@@ -429,7 +428,8 @@ nav#toc li {
     <rootfile full-path="EPUB/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
 </container>''';
-      await writer.addBytes('META-INF/container.xml', utf8.encode(containerXml));
+      await writer.addBytes(
+          'META-INF/container.xml', utf8.encode(containerXml));
 
       // 2. EPUB/styles/style.css
       await writer.addBytes('EPUB/styles/style.css', utf8.encode(cssContent));
@@ -437,7 +437,8 @@ nav#toc li {
       // 3. 收集并写入图片资源
       final taskDir = Directory(ctx.taskDir);
       final imagesDir = Directory('${taskDir.path}/images');
-      final imagesManifest = <({String id, String href, String mime, bool isCover})>[];
+      final imagesManifest =
+          <({String id, String href, String mime, bool isCover})>[];
       final urlToRelMap = <String, String>{};
 
       // 处理封面
@@ -453,7 +454,8 @@ nav#toc li {
       }
       if (await coverFile.exists()) {
         hasCover = true;
-        await writer.addFile('EPUB/images/cover.jpg', coverFile, compress: false);
+        await writer.addFile('EPUB/images/cover.jpg', coverFile,
+            compress: false);
         imagesManifest.add((
           id: 'cover-image',
           href: 'images/cover.jpg',
@@ -491,7 +493,8 @@ nav#toc li {
       final imageMetaFile = File('${taskDir.path}/image_map.json');
       if (await imageMetaFile.exists()) {
         try {
-          final map = jsonDecode(await imageMetaFile.readAsString()) as Map<String, dynamic>;
+          final map = jsonDecode(await imageMetaFile.readAsString())
+              as Map<String, dynamic>;
           for (final entry in map.entries) {
             urlToRelMap[entry.key] = '../images/${entry.value}';
           }
@@ -511,7 +514,13 @@ nav#toc li {
       }
 
       // 5. 逐章读取并写入章节 XHTML
-      final chaptersManifest = <({String id, String href, String title, int volumeId, String volumeTitle})>[];
+      final chaptersManifest = <({
+        String id,
+        String href,
+        String title,
+        int volumeId,
+        String volumeTitle
+      })>[];
       final completedSet = ctx.completedChapterIds.toSet();
 
       var chOrder = 1;
@@ -527,7 +536,8 @@ nav#toc li {
 
         if (await chFile.exists()) {
           try {
-            final json = jsonDecode(await chFile.readAsString()) as Map<String, dynamic>;
+            final json =
+                jsonDecode(await chFile.readAsString()) as Map<String, dynamic>;
             bodyText = (json['body_text'] ?? '').toString();
             bodyHtml = json['body_html'] as String?;
           } catch (_) {}
@@ -541,7 +551,8 @@ nav#toc li {
           imageUrlToLocalPath: urlToRelMap,
         );
 
-        await writer.addBytes('EPUB/text/$xhtmlName', utf8.encode(xhtmlContent));
+        await writer.addBytes(
+            'EPUB/text/$xhtmlName', utf8.encode(xhtmlContent));
         chaptersManifest.add((
           id: 'chapter_$chOrder',
           href: 'text/$xhtmlName',
@@ -579,7 +590,15 @@ nav#toc li {
 
   static String _buildNavXhtml(
     String bookTitle,
-    List<({String id, String href, String title, int volumeId, String volumeTitle})> chapters,
+    List<
+            ({
+              String id,
+              String href,
+              String title,
+              int volumeId,
+              String volumeTitle
+            })>
+        chapters,
   ) {
     final buffer = StringBuffer();
     buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
@@ -589,7 +608,8 @@ nav#toc li {
     buffer.writeln('<head>');
     buffer.writeln('  <meta charset="utf-8"/>');
     buffer.writeln('  <title>目录</title>');
-    buffer.writeln('  <link rel="stylesheet" type="text/css" href="styles/style.css"/>');
+    buffer.writeln(
+        '  <link rel="stylesheet" type="text/css" href="styles/style.css"/>');
     buffer.writeln('</head>');
     buffer.writeln('<body>');
     buffer.writeln('  <nav epub:type="toc" id="toc">');
@@ -608,11 +628,13 @@ nav#toc li {
         currentVolId = ch.volumeId;
         openVolLi = true;
         buffer.writeln('      <li>');
-        buffer.writeln('        <span>${xmlEscape(ch.volumeTitle.isEmpty ? "正文" : ch.volumeTitle)}</span>');
+        buffer.writeln(
+            '        <span>${xmlEscape(ch.volumeTitle.isEmpty ? "正文" : ch.volumeTitle)}</span>');
         buffer.writeln('        <ol>');
       }
 
-      buffer.writeln('          <li><a href="${ch.href}">${xmlEscape(ch.title)}</a></li>');
+      buffer.writeln(
+          '          <li><a href="${ch.href}">${xmlEscape(ch.title)}</a></li>');
     }
 
     if (openVolLi) {
@@ -630,24 +652,36 @@ nav#toc li {
   static String _buildTocNcx(
     int bookId,
     String bookTitle,
-    List<({String id, String href, String title, int volumeId, String volumeTitle})> chapters,
+    List<
+            ({
+              String id,
+              String href,
+              String title,
+              int volumeId,
+              String volumeTitle
+            })>
+        chapters,
   ) {
     final buffer = StringBuffer();
     buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
-    buffer.writeln('<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">');
+    buffer.writeln(
+        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">');
     buffer.writeln('  <head>');
     buffer.writeln('    <meta name="dtb:uid" content="urn:lk:book:$bookId"/>');
     buffer.writeln('    <meta name="dtb:depth" content="2"/>');
     buffer.writeln('    <meta name="dtb:totalPageCount" content="0"/>');
     buffer.writeln('    <meta name="dtb:maxPageNumber" content="0"/>');
     buffer.writeln('  </head>');
-    buffer.writeln('  <docTitle><text>${xmlEscape(bookTitle)}</text></docTitle>');
+    buffer
+        .writeln('  <docTitle><text>${xmlEscape(bookTitle)}</text></docTitle>');
     buffer.writeln('  <navMap>');
 
     var playOrder = 1;
     for (final ch in chapters) {
-      buffer.writeln('    <navPoint id="np_$playOrder" playOrder="$playOrder">');
-      buffer.writeln('      <navLabel><text>${xmlEscape(ch.title)}</text></navLabel>');
+      buffer
+          .writeln('    <navPoint id="np_$playOrder" playOrder="$playOrder">');
+      buffer.writeln(
+          '      <navLabel><text>${xmlEscape(ch.title)}</text></navLabel>');
       buffer.writeln('      <content src="${ch.href}"/>');
       buffer.writeln('    </navPoint>');
       playOrder++;
@@ -662,8 +696,17 @@ nav#toc li {
   static String buildContentOpf({
     required EpubBuildContext ctx,
     required bool hasCover,
-    required List<({String id, String href, String mime, bool isCover})> imagesManifest,
-    required List<({String id, String href, String title, int volumeId, String volumeTitle})> chaptersManifest,
+    required List<({String id, String href, String mime, bool isCover})>
+        imagesManifest,
+    required List<
+            ({
+              String id,
+              String href,
+              String title,
+              int volumeId,
+              String volumeTitle
+            })>
+        chaptersManifest,
   }) =>
       _buildContentOpf(
         ctx: ctx,
@@ -675,11 +718,24 @@ nav#toc li {
   static String _buildContentOpf({
     required EpubBuildContext ctx,
     required bool hasCover,
-    required List<({String id, String href, String mime, bool isCover})> imagesManifest,
-    required List<({String id, String href, String title, int volumeId, String volumeTitle})> chaptersManifest,
+    required List<({String id, String href, String mime, bool isCover})>
+        imagesManifest,
+    required List<
+            ({
+              String id,
+              String href,
+              String title,
+              int volumeId,
+              String volumeTitle
+            })>
+        chaptersManifest,
   }) {
-    final title = ctx.exportIncomplete ? '${ctx.bookTitle} [不完整版]' : ctx.bookTitle;
-    final nowIso = DateTime.now().toUtc().toIso8601String().replaceAll(RegExp(r'\.\d+'), '');
+    final title =
+        ctx.exportIncomplete ? '${ctx.bookTitle} [不完整版]' : ctx.bookTitle;
+    final nowIso = DateTime.now()
+        .toUtc()
+        .toIso8601String()
+        .replaceAll(RegExp(r'\.\d+'), '');
 
     final pubB64 = encodeUidToBase64(ctx.publisherUid);
     final expB64 = encodeUidToBase64(ctx.exporterUid);
@@ -688,40 +744,51 @@ nav#toc li {
 
     final buffer = StringBuffer();
     buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
-    buffer.writeln('<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="pub-id" version="3.0">');
+    buffer.writeln(
+        '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="pub-id" version="3.0">');
     buffer.writeln('  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">');
-    buffer.writeln('    <dc:identifier id="pub-id">urn:lk:book:${ctx.bookId}</dc:identifier>');
+    buffer.writeln(
+        '    <dc:identifier id="pub-id">urn:lk:book:${ctx.bookId}</dc:identifier>');
     buffer.writeln('    <dc:title>${xmlEscape(title)}</dc:title>');
     buffer.writeln('    <dc:language>zh-CN</dc:language>');
     if (ctx.authorName.isNotEmpty) {
-      buffer.writeln('    <dc:creator>${xmlEscape(ctx.authorName)}</dc:creator>');
+      buffer
+          .writeln('    <dc:creator>${xmlEscape(ctx.authorName)}</dc:creator>');
     }
     if (ctx.summary.isNotEmpty) {
-      buffer.writeln('    <dc:description>${xmlEscape(ctx.summary)}</dc:description>');
+      buffer.writeln(
+          '    <dc:description>${xmlEscape(ctx.summary)}</dc:description>');
     }
     buffer.writeln('    <meta property="dcterms:modified">$nowIso</meta>');
-    buffer.writeln('    <meta name="generator" content="${xmlEscape(generatorContent)}" />');
+    buffer.writeln(
+        '    <meta name="generator" content="${xmlEscape(generatorContent)}" />');
     if (hasCover) {
       buffer.writeln('    <meta name="cover" content="cover-image"/>');
     }
     buffer.writeln('  </metadata>');
 
     buffer.writeln('  <manifest>');
-    buffer.writeln('    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>');
-    buffer.writeln('    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>');
-    buffer.writeln('    <item id="style" href="styles/style.css" media-type="text/css"/>');
+    buffer.writeln(
+        '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>');
+    buffer.writeln(
+        '    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>');
+    buffer.writeln(
+        '    <item id="style" href="styles/style.css" media-type="text/css"/>');
 
     if (hasCover) {
-      buffer.writeln('    <item id="cover-page" href="text/cover.xhtml" media-type="application/xhtml+xml"/>');
+      buffer.writeln(
+          '    <item id="cover-page" href="text/cover.xhtml" media-type="application/xhtml+xml"/>');
     }
 
     for (final img in imagesManifest) {
       final props = img.isCover ? ' properties="cover-image"' : '';
-      buffer.writeln('    <item id="${img.id}" href="${img.href}" media-type="${img.mime}"$props/>');
+      buffer.writeln(
+          '    <item id="${img.id}" href="${img.href}" media-type="${img.mime}"$props/>');
     }
 
     for (final ch in chaptersManifest) {
-      buffer.writeln('    <item id="${ch.id}" href="${ch.href}" media-type="application/xhtml+xml"/>');
+      buffer.writeln(
+          '    <item id="${ch.id}" href="${ch.href}" media-type="application/xhtml+xml"/>');
     }
     buffer.writeln('  </manifest>');
 

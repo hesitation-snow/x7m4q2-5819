@@ -16,7 +16,8 @@ void main() {
     EpubDownloadService.shared.currentTask.value = null;
   });
 
-  testWidgets('EpubMakerPage renders volumes and updates chapter summary', (tester) async {
+  testWidgets('EpubMakerPage renders volumes and updates chapter summary',
+      (tester) async {
     final book = LKBook(
       bookId: 999,
       title: '关于我转生成为史莱姆的那件事',
@@ -68,7 +69,8 @@ void main() {
     expect(find.text('已选择 1 卷 · 10 章'), findsOneWidget);
   });
 
-  testWidgets('EpubMakerPage prompts confirmation when dataSaverMode is active', (tester) async {
+  testWidgets('EpubMakerPage prompts confirmation when dataSaverMode is active',
+      (tester) async {
     LKStore.dataSaverMode.value = true;
 
     final book = LKBook(bookId: 100, title: '测试书名');
@@ -96,7 +98,8 @@ void main() {
 
     // 应弹出流量提示对话框
     expect(find.text('流量提醒'), findsOneWidget);
-    expect(find.text('当前已开启流量节省模式。下载包含插画的 EPUB 将消耗额外的网络流量，是否确认开启？'), findsOneWidget);
+    expect(find.text('当前已开启流量节省模式。下载包含插画的 EPUB 将消耗额外的网络流量，是否确认开启？'),
+        findsOneWidget);
 
     // 点击确认开启
     await tester.tap(find.text('确认开启'));
@@ -105,7 +108,9 @@ void main() {
     expect(find.text('包含封面与插画'), findsWidgets);
   });
 
-  testWidgets('EpubMakerPage renders 4-step progress and controls during active task', (tester) async {
+  testWidgets(
+      'EpubMakerPage renders 4-step progress and controls during active task',
+      (tester) async {
     final book = LKBook(bookId: 200, title: '长篇巨作');
     final volumes = [LKVolume(volumeId: 1, title: '第1卷', chapterCount: 20)];
 
@@ -158,7 +163,9 @@ void main() {
     expect(find.text('取消制作'), findsOneWidget);
   });
 
-  testWidgets('EpubMakerPage renders illustration progress and speed during downloadingContent', (tester) async {
+  testWidgets(
+      'EpubMakerPage renders illustration progress and speed during downloadingContent',
+      (tester) async {
     final book = LKBook(bookId: 201, title: '带插画巨作');
     final volumes = [LKVolume(volumeId: 1, title: '第1卷', chapterCount: 5)];
 
@@ -203,7 +210,9 @@ void main() {
     expect(find.text('350.5 KB/s'), findsOneWidget);
   });
 
-  testWidgets('EpubMakerPage renders editingMetadata view with preset title and cover selection', (tester) async {
+  testWidgets(
+      'EpubMakerPage renders editingMetadata view with preset title and cover selection',
+      (tester) async {
     final book = LKBook(bookId: 300, title: '魔法禁书目录', authorName: '镰池和马');
     final volumes = [
       LKVolume(volumeId: 10, title: '旧约 第一卷', chapterCount: 8),
@@ -277,7 +286,9 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('EpubMakerPage handles TXT pure text export toggle and editing view', (tester) async {
+  testWidgets(
+      'EpubMakerPage handles TXT pure text export toggle and editing view',
+      (tester) async {
     final book = LKBook(bookId: 400, title: '纯文本轻小说', authorName: '作家A');
     final volumes = [
       LKVolume(volumeId: 1, title: '第一卷', chapterCount: 3),
@@ -313,7 +324,8 @@ void main() {
       authorName: '作家A',
       ownerUid: 1,
       selectedVolumes: volumes,
-      options: const EpubExportOptions(exportAsTxt: true, includeIllustrations: false),
+      options: const EpubExportOptions(
+          exportAsTxt: true, includeIllustrations: false),
       phase: EpubTaskPhase.editingMetadata,
       statusMessage: '正文下载完成，请确认文件标题',
       customTitle: '纯文本轻小说  [第一卷]',
@@ -330,7 +342,8 @@ void main() {
     expect(find.text('确认并生成'), findsOneWidget);
   });
 
-  testWidgets('metadata action buttons remain equal on a narrow screen', (tester) async {
+  testWidgets('metadata action buttons remain equal on a narrow screen',
+      (tester) async {
     tester.view.physicalSize = const Size(320, 700);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -357,7 +370,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('EpubMakerPage completed view renders separate save as file and share buttons', (tester) async {
+  testWidgets(
+      'EpubMakerPage completed view renders separate save as file and share buttons',
+      (tester) async {
     final book = LKBook(bookId: 500, title: '完成测试作品', authorName: '作者B');
     final volumes = [
       LKVolume(volumeId: 1, title: '第一卷', chapterCount: 5),

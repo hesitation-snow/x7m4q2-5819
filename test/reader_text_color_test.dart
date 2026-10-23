@@ -131,7 +131,8 @@ void main() {
       expect(result, isNull);
     });
 
-    testWidgets('Entering 3-digit shorthand hex (#F00) updates preview and commits',
+    testWidgets(
+        'Entering 3-digit shorthand hex (#F00) updates preview and commits',
         (tester) async {
       tester.view.physicalSize = const Size(500, 1000);
       tester.view.devicePixelRatio = 1.0;
@@ -184,7 +185,8 @@ void main() {
       expect(result!.color, equals(const Color(0xFFFF0000)));
     });
 
-    testWidgets('Tapping quick swatch updates color and commits', (tester) async {
+    testWidgets('Tapping quick swatch updates color and commits',
+        (tester) async {
       tester.view.physicalSize = const Size(500, 1000);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {

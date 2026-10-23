@@ -65,4 +65,3 @@ class _ReaderDeviceStatusState extends State<ReaderDeviceStatus>
     );
   }
 }
-

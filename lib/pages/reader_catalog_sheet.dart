@@ -567,8 +567,8 @@ class _ReaderCatalogSheetState extends State<ReaderCatalogSheet> {
                                     const Padding(
                                       padding:
                                           EdgeInsets.symmetric(vertical: 10),
-                                      child:
-                                          MotionLinearProgressIndicator(minHeight: 2),
+                                      child: MotionLinearProgressIndicator(
+                                          minHeight: 2),
                                     ),
                                   if (!_loadingVolumes.contains(vid) &&
                                       _hasNextPage(vid))

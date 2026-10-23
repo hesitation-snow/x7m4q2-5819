@@ -174,7 +174,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
   }
 
   Rect _calculateShareOrigin() {
-    final renderBox = _shareButtonKey.currentContext?.findRenderObject() as RenderBox?;
+    final renderBox =
+        _shareButtonKey.currentContext?.findRenderObject() as RenderBox?;
     if (renderBox != null && renderBox.hasSize) {
       final origin = renderBox.localToGlobal(Offset.zero) & renderBox.size;
       if (!origin.isEmpty) return origin;
@@ -272,13 +273,17 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
         valueListenable: _service.currentTask,
         builder: (context, task, _) {
           // 如果当前有本小说的任务或正在进行
-          if (task != null && task.bookId == widget.book.bookId && !task.isTerminal) {
+          if (task != null &&
+              task.bookId == widget.book.bookId &&
+              !task.isTerminal) {
             if (task.phase == EpubTaskPhase.editingMetadata) {
               return _buildMetadataEditingView(context, task);
             }
             return _buildProgressView(context, task);
           }
-          if (task != null && task.bookId == widget.book.bookId && task.phase == EpubTaskPhase.completed) {
+          if (task != null &&
+              task.bookId == widget.book.bookId &&
+              task.phase == EpubTaskPhase.completed) {
             return _buildCompletedView(context, task);
           }
           return _buildConfigView(context);
@@ -336,7 +341,9 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              b.authorName.isNotEmpty ? '作者：${b.authorName}' : '轻之国度',
+                              b.authorName.isNotEmpty
+                                  ? '作者：${b.authorName}'
+                                  : '轻之国度',
                               style: TextStyle(
                                 fontSize: 13,
                                 color: scheme.onSurfaceVariant,
@@ -347,7 +354,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                               '共 ${widget.initialVolumes.length} 卷',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
+                                color: scheme.onSurfaceVariant
+                                    .withValues(alpha: 0.8),
                               ),
                             ),
                           ],
@@ -375,7 +383,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.tune_rounded, size: 18, color: scheme.primary),
+                          Icon(Icons.tune_rounded,
+                              size: 18, color: scheme.primary),
                           const SizedBox(width: 8),
                           Text(
                             '导出格式',
@@ -442,9 +451,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                     ),
                     title: const Text('包含封面与插画'),
                     subtitle: Text(
-                      _includeIllustrations
-                          ? '下载书中插画并在 EPUB 中排版'
-                          : '仅纯文本正文',
+                      _includeIllustrations ? '下载书中插画并在 EPUB 中排版' : '仅纯文本正文',
                     ),
                     value: _includeIllustrations,
                     onChanged: _toggleIncludeIllustrations,
@@ -505,9 +512,11 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                       v.title.isEmpty ? '默认卷' : v.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w500),
                     ),
-                    subtitle: v.chapterCount > 0 ? Text('${v.chapterCount} 章') : null,
+                    subtitle:
+                        v.chapterCount > 0 ? Text('${v.chapterCount} 章') : null,
                     value: isSelected,
                     onChanged: (val) {
                       setState(() {
@@ -617,19 +626,22 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
             child: Column(
               children: [
                 if (task.isPaused)
-                  Icon(Icons.pause_circle_outline_rounded, size: 48, color: scheme.primary)
+                  Icon(Icons.pause_circle_outline_rounded,
+                      size: 48, color: scheme.primary)
                 else if (task.phase == EpubTaskPhase.packaging)
                   const SizedBox.square(
                     dimension: 48,
                     child: MotionProgressIndicator(strokeWidth: 3),
                   )
                 else
-                  Icon(Icons.cloud_download_outlined, size: 48, color: scheme.primary),
+                  Icon(Icons.cloud_download_outlined,
+                      size: 48, color: scheme.primary),
                 const SizedBox(height: 16),
                 Text(
                   task.statusMessage,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),
 
@@ -663,12 +675,15 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                       ),
                     ],
                   ),
-                  if (task.options.includeIllustrations || task.speedText.isNotEmpty) ...[
+                  if (task.options.includeIllustrations ||
+                      task.speedText.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                        color: scheme.surfaceContainerHighest
+                            .withValues(alpha: 0.5),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
@@ -805,7 +820,9 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                 onPressed: task.isPaused
                     ? () => _service.resumeTask()
                     : () => _service.pauseTask(),
-                icon: Icon(task.isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded),
+                icon: Icon(task.isPaused
+                    ? Icons.play_arrow_rounded
+                    : Icons.pause_rounded),
                 label: Text(task.isPaused ? '继续' : '暂停'),
               ),
             ),
@@ -836,7 +853,11 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
           width: 28,
           height: 28,
           decoration: BoxDecoration(
-            color: isDone ? scheme.primary : (isCurrent ? scheme.primary.withValues(alpha: 0.15) : Colors.transparent),
+            color: isDone
+                ? scheme.primary
+                : (isCurrent
+                    ? scheme.primary.withValues(alpha: 0.15)
+                    : Colors.transparent),
             shape: BoxShape.circle,
             border: Border.all(color: color, width: 2),
           ),
@@ -871,7 +892,9 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
       child: Container(
         height: 2,
         margin: const EdgeInsets.only(bottom: 20),
-        color: active ? scheme.primary : scheme.outlineVariant.withValues(alpha: 0.5),
+        color: active
+            ? scheme.primary
+            : scheme.outlineVariant.withValues(alpha: 0.5),
       ),
     );
   }
@@ -894,7 +917,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
 
   // ==================== 封面与标题编辑视图 ====================
 
-  Widget _buildMetadataEditingView(BuildContext context, EpubDownloadTask task) {
+  Widget _buildMetadataEditingView(
+      BuildContext context, EpubDownloadTask task) {
     _initEditingStateIfNeeded(task);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -944,7 +968,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                       TextField(
                         controller: _titleController,
                         decoration: InputDecoration(
-                          labelText: task.options.exportAsTxt ? 'TXT 标题' : 'EPUB 标题',
+                          labelText:
+                              task.options.exportAsTxt ? 'TXT 标题' : 'EPUB 标题',
                           hintText: '输入自定义标题',
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -1034,7 +1059,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                 '（含 ${task.availableIllustrationPaths.length} 张插画）',
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+                                  color: scheme.onSurfaceVariant
+                                      .withValues(alpha: 0.7),
                                 ),
                               ),
                           ],
@@ -1044,7 +1070,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                           height: 122,
                           child: ListView.separated(
                             scrollDirection: Axis.horizontal,
-                            itemCount: 2 + task.availableIllustrationPaths.length,
+                            itemCount:
+                                2 + task.availableIllustrationPaths.length,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(width: 10),
                             itemBuilder: (context, index) {
@@ -1061,9 +1088,11 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                 );
                               }
                               if (index == 1) {
-                                final isCustomLocalSelected = !isDefaultSelected &&
-                                    _selectedCoverPath != null &&
-                                    !task.availableIllustrationPaths.contains(_selectedCoverPath);
+                                final isCustomLocalSelected =
+                                    !isDefaultSelected &&
+                                        _selectedCoverPath != null &&
+                                        !task.availableIllustrationPaths
+                                            .contains(_selectedCoverPath);
                                 final hasLocalFile = isCustomLocalSelected &&
                                     File(_selectedCoverPath!).existsSync();
                                 return _buildCoverChoiceTile(
@@ -1081,10 +1110,12 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                           color: scheme.surfaceContainerHighest,
                                           alignment: Alignment.center,
                                           child: Column(
-                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
                                             children: [
                                               Icon(
-                                                Icons.add_photo_alternate_rounded,
+                                                Icons
+                                                    .add_photo_alternate_rounded,
                                                 size: 26,
                                                 color: scheme.primary,
                                               ),
@@ -1133,7 +1164,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                 : '制作时未开启插画下载，可使用书籍默认封面或选择本机图片',
                             style: TextStyle(
                               fontSize: 11,
-                              color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+                              color: scheme.onSurfaceVariant
+                                  .withValues(alpha: 0.7),
                             ),
                           ),
                         ],
@@ -1341,8 +1373,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                       color: scheme.primary,
                       shape: BoxShape.circle,
                     ),
-                    child:
-                        Icon(Icons.check, size: 10, color: scheme.onPrimary),
+                    child: Icon(Icons.check, size: 10, color: scheme.onPrimary),
                   ),
                 ),
             ],
@@ -1395,7 +1426,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,
-            child: Icon(Icons.check_circle_rounded, size: 48, color: scheme.primary),
+            child: Icon(Icons.check_circle_rounded,
+                size: 48, color: scheme.primary),
           ),
           const SizedBox(height: 20),
           Text(
@@ -1411,7 +1443,9 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
           const SizedBox(height: 4),
           Text(
             '文件大小：${_formatSize(task.outputSizeBytes)}',
-            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant.withValues(alpha: 0.8)),
+            style: TextStyle(
+                fontSize: 13,
+                color: scheme.onSurfaceVariant.withValues(alpha: 0.8)),
           ),
           const SizedBox(height: 36),
 

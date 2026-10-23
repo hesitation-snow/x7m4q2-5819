@@ -59,10 +59,19 @@ class YomiruIllustrationCache {
     if (bytes.length < 24) return null;
     try {
       // 1. PNG: 89 50 4E 47 0D 0A 1A 0A
-      if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+      if (bytes[0] == 0x89 &&
+          bytes[1] == 0x50 &&
+          bytes[2] == 0x4E &&
+          bytes[3] == 0x47) {
         if (bytes.length >= 24) {
-          final w = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
-          final h = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+          final w = (bytes[16] << 24) |
+              (bytes[17] << 16) |
+              (bytes[18] << 8) |
+              bytes[19];
+          final h = (bytes[20] << 24) |
+              (bytes[21] << 16) |
+              (bytes[22] << 8) |
+              bytes[23];
           if (w > 0 && h > 0) return w / h;
         }
       }
@@ -77,22 +86,40 @@ class YomiruIllustrationCache {
       }
 
       // 3. WebP: RIFF ... WEBP
-      if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
+      if (bytes[0] == 0x52 &&
+          bytes[1] == 0x49 &&
+          bytes[2] == 0x46 &&
+          bytes[3] == 0x46 &&
           bytes.length >= 30 &&
-          bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) {
-        if (bytes[12] == 0x56 && bytes[13] == 0x50 && bytes[14] == 0x38 && bytes[15] == 0x58) {
+          bytes[8] == 0x57 &&
+          bytes[9] == 0x45 &&
+          bytes[10] == 0x42 &&
+          bytes[11] == 0x50) {
+        if (bytes[12] == 0x56 &&
+            bytes[13] == 0x50 &&
+            bytes[14] == 0x38 &&
+            bytes[15] == 0x58) {
           final w = 1 + (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16));
           final h = 1 + (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16));
           if (w > 0 && h > 0) return w / h;
         }
-        if (bytes[12] == 0x56 && bytes[13] == 0x50 && bytes[14] == 0x38 && bytes[15] == 0x20) {
-          if (bytes.length >= 30 && bytes[23] == 0x9D && bytes[24] == 0x01 && bytes[25] == 0x2A) {
+        if (bytes[12] == 0x56 &&
+            bytes[13] == 0x50 &&
+            bytes[14] == 0x38 &&
+            bytes[15] == 0x20) {
+          if (bytes.length >= 30 &&
+              bytes[23] == 0x9D &&
+              bytes[24] == 0x01 &&
+              bytes[25] == 0x2A) {
             final w = (bytes[26] | (bytes[27] << 8)) & 0x3FFF;
             final h = (bytes[28] | (bytes[29] << 8)) & 0x3FFF;
             if (w > 0 && h > 0) return w / h;
           }
         }
-        if (bytes[12] == 0x56 && bytes[13] == 0x50 && bytes[14] == 0x38 && bytes[15] == 0x4C) {
+        if (bytes[12] == 0x56 &&
+            bytes[13] == 0x50 &&
+            bytes[14] == 0x38 &&
+            bytes[15] == 0x4C) {
           if (bytes.length >= 25 && bytes[20] == 0x2F) {
             final b1 = bytes[21];
             final b2 = bytes[22];
@@ -114,8 +141,10 @@ class YomiruIllustrationCache {
             continue;
           }
           final marker = bytes[idx + 1];
-          if ((marker >= 0xC0 && marker <= 0xC3) || (marker >= 0xC5 && marker <= 0xC7) ||
-              (marker >= 0xC9 && marker <= 0xCB) || (marker >= 0xCD && marker <= 0xCF)) {
+          if ((marker >= 0xC0 && marker <= 0xC3) ||
+              (marker >= 0xC5 && marker <= 0xC7) ||
+              (marker >= 0xC9 && marker <= 0xCB) ||
+              (marker >= 0xCD && marker <= 0xCF)) {
             final h = (bytes[idx + 5] << 8) | bytes[idx + 6];
             final w = (bytes[idx + 7] << 8) | bytes[idx + 8];
             if (w > 0 && h > 0) return w / h;

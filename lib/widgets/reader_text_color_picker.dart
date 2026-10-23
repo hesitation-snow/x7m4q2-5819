@@ -288,8 +288,7 @@ class _ReaderTextColorDialogState extends State<ReaderTextColorDialog> {
   /// 正文阅读效果预览卡片
   Widget _buildPreviewCard() {
     final hexCode = formatHexColor(_currentColor);
-    final isDefault =
-        _isResetToDefault || _currentColor == widget.defaultColor;
+    final isDefault = _isResetToDefault || _currentColor == widget.defaultColor;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -458,16 +457,14 @@ class _ReaderTextColorDialogState extends State<ReaderTextColorDialog> {
                       color: _isTextValid ? _currentColor : Colors.transparent,
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: _isTextValid
-                            ? scheme.outlineVariant
-                            : scheme.error,
+                        color:
+                            _isTextValid ? scheme.outlineVariant : scheme.error,
                         width: 1.5,
                       ),
                     ),
                   ),
-                  errorText: _isTextValid
-                      ? null
-                      : '格式无效，支持 #RRGGBB 或 #RGB (如 #333)',
+                  errorText:
+                      _isTextValid ? null : '格式无效，支持 #RRGGBB 或 #RGB (如 #333)',
                   isDense: true,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -568,8 +565,7 @@ class _SaturationValuePainter extends CustomPainter {
       end: Alignment.centerRight,
       colors: [Colors.white, baseColor],
     );
-    final horizPaint = Paint()
-      ..shader = horizontalGradient.createShader(rect);
+    final horizPaint = Paint()..shader = horizontalGradient.createShader(rect);
     canvas.drawRect(rect, horizPaint);
 
     // 垂直渐变: 透明到黑色
@@ -578,8 +574,7 @@ class _SaturationValuePainter extends CustomPainter {
       end: Alignment.bottomCenter,
       colors: [Colors.transparent, Colors.black],
     );
-    final vertPaint = Paint()
-      ..shader = verticalGradient.createShader(rect);
+    final vertPaint = Paint()..shader = verticalGradient.createShader(rect);
     canvas.drawRect(rect, vertPaint);
 
     // 绘制指示器手柄
