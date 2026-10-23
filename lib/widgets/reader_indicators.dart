@@ -48,7 +48,9 @@ class ReaderIndicators extends StatelessWidget {
                                     key: const ValueKey(
                                         'reader-indicator-title'),
                                     maxLines: 1,
-                                    overflow: TextOverflow.ellipsis))),
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        fontSize: position.fontSize)))),
                         Flexible(
                             child: Align(
                                 alignment: Alignment.bottomCenter,
@@ -89,74 +91,29 @@ class IndicatorPositionSettings extends StatelessWidget {
     this.onEnterEditMode,
   });
 
-  Widget _slider(
-          String label, double current, double max, ValueChanged<double> change,
-          {double min = 0}) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('$label：${current.round()} dp'),
-        Slider(
-            key: ValueKey(label),
-            value: current.clamp(min, max),
-            min: min,
-            max: max,
-            divisions: (max - min).round(),
-            label: '${current.round()} dp',
-            semanticFormatterCallback: (v) => '$label ${v.round()} dp',
-            onChanged: change),
-      ]);
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return ExpansionTile(
-      title: const Text('指示器位置'),
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: scheme.primary.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        alignment: Alignment.center,
+        child: Icon(Icons.open_with_rounded, size: 20, color: scheme.primary),
+      ),
+      title: const Text('调整指示器位置',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
       subtitle: Text(
-          '顶部：${value.top.round()} dp · 底部：${value.bottom.round()} dp · 边距：${value.side.round()} dp'),
-      childrenPadding: const EdgeInsets.symmetric(horizontal: 16),
-      children: [
-        if (onEnterEditMode != null) ...[
-          const SizedBox(height: 4),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.tonalIcon(
-              onPressed: onEnterEditMode,
-              icon: const Icon(Icons.open_with_rounded, size: 20),
-              label: const Text('全屏可视化拖动调整'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(0, 44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '直接在真机阅读画面上拖动微调，精准避开刘海与挖孔屏',
-            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 10),
-        ],
-        _slider(
-            '顶部距离', value.top, 96, (v) => onChanged(value.copyWith(top: v))),
-        _slider('底部距离', value.bottom, 96,
-            (v) => onChanged(value.copyWith(bottom: v))),
-        _slider(
-            '左右边距', value.side, 96, (v) => onChanged(value.copyWith(side: v))),
-        const Text('顶部标题对齐：左 ← 居中 → 右'),
-        Slider(
-            key: const ValueKey('标题水平对齐'),
-            value: value.titleAlignment,
-            min: -1,
-            max: 1,
-            divisions: 2,
-            onChanged: (v) => onChanged(value.copyWith(titleAlignment: v))),
-        TextButton.icon(
-            icon: const Icon(Icons.restart_alt),
-            onPressed: () => onChanged(const IndicatorPosition()),
-            label: const Text('恢复默认位置')),
-      ],
+        '顶部 ${value.top.round()}dp · 底部 ${value.bottom.round()}dp · 边距 ${value.side.round()}dp · 字号 ${value.fontSize.round()}sp',
+        style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+      ),
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: onEnterEditMode,
     );
   }
 }
@@ -189,9 +146,8 @@ class IndicatorEditOverlay extends StatefulWidget {
 }
 
 class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
-  // 当前微调选择的目标：0 = 顶部标题, 1 = 底部信息, 2 = 左右边距
+  // 当前微调选择的目标：0 = 顶部标题, 1 = 底部信息, 2 = 左右边距, 3 = 字号大小
   int _selectedTarget = 0;
-  bool _controlBarAtTop = false;
 
   void _step(int delta) {
     final current = widget.position;
@@ -201,9 +157,12 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
     } else if (_selectedTarget == 1) {
       final next = (current.bottom + delta).clamp(0.0, 96.0);
       widget.onChanged(current.copyWith(bottom: next));
-    } else {
+    } else if (_selectedTarget == 2) {
       final next = (current.side + delta).clamp(0.0, 96.0);
       widget.onChanged(current.copyWith(side: next));
+    } else {
+      final next = (current.fontSize + delta).clamp(8.0, 20.0);
+      widget.onChanged(current.copyWith(fontSize: next));
     }
   }
 
@@ -341,13 +300,12 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
             ),
           ),
 
-          // 5. 悬浮微调与控制面板（支持切换停靠顶部或底部，避免遮挡）
-          Positioned(
-            top: _controlBarAtTop ? safe.top + 50 : null,
-            bottom: _controlBarAtTop ? null : safe.bottom + 40,
-            left: 16,
-            right: 16,
-            child: _buildControlCard(context, scheme, position),
+          // 5. 悬浮微调与控制面板（居中悬浮，绝不遮挡顶部标题与底部状态栏）
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: _buildControlCard(context, scheme, position),
+            ),
           ),
         ],
       ),
@@ -429,71 +387,60 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
     final targetName = switch (_selectedTarget) {
       0 => '顶部',
       1 => '底部',
-      _ => '边距',
+      2 => '边距',
+      _ => '字号',
     };
     final targetValue = switch (_selectedTarget) {
       0 => '${pos.top.round()} dp',
       1 => '${pos.bottom.round()} dp',
-      _ => '${pos.side.round()} dp',
+      2 => '${pos.side.round()} dp',
+      _ => '${pos.fontSize.round()} sp',
     };
 
     return Card(
-      elevation: 6,
+      elevation: 8,
       color: scheme.surfaceContainerHigh,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 第一行：目标项选择 Segment + 调转面板位置按钮
-            Row(
-              children: [
-                Expanded(
-                  child: SegmentedButton<int>(
-                    segments: [
-                      ButtonSegment(
-                        value: 0,
-                        label: Text('顶部 (${pos.top.round()})',
-                            style: const TextStyle(fontSize: 11)),
-                      ),
-                      ButtonSegment(
-                        value: 1,
-                        label: Text('底部 (${pos.bottom.round()})',
-                            style: const TextStyle(fontSize: 11)),
-                      ),
-                      ButtonSegment(
-                        value: 2,
-                        label: Text('边距 (${pos.side.round()})',
-                            style: const TextStyle(fontSize: 11)),
-                      ),
-                    ],
-                    selected: {_selectedTarget},
-                    onSelectionChanged: (set) =>
-                        setState(() => _selectedTarget = set.first),
-                    style: const ButtonStyle(
-                      visualDensity: VisualDensity.compact,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
+            // 第一行：目标项选择 Segment
+            SegmentedButton<int>(
+              segments: [
+                ButtonSegment(
+                  value: 0,
+                  label: Text('顶部(${pos.top.round()})',
+                      style: const TextStyle(fontSize: 10)),
                 ),
-                const SizedBox(width: 6),
-                IconButton(
-                  tooltip: _controlBarAtTop ? '移到底部' : '移到顶部',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () =>
-                      setState(() => _controlBarAtTop = !_controlBarAtTop),
-                  icon: Icon(
-                      _controlBarAtTop
-                          ? Icons.vertical_align_bottom_rounded
-                          : Icons.vertical_align_top_rounded,
-                      size: 18),
+                ButtonSegment(
+                  value: 1,
+                  label: Text('底部(${pos.bottom.round()})',
+                      style: const TextStyle(fontSize: 10)),
+                ),
+                ButtonSegment(
+                  value: 2,
+                  label: Text('边距(${pos.side.round()})',
+                      style: const TextStyle(fontSize: 10)),
+                ),
+                ButtonSegment(
+                  value: 3,
+                  label: Text('字号(${pos.fontSize.round()})',
+                      style: const TextStyle(fontSize: 10)),
                 ),
               ],
+              selected: {_selectedTarget},
+              onSelectionChanged: (set) =>
+                  setState(() => _selectedTarget = set.first),
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
 
-            // 第二行：精确 1dp / 5dp 微调按钮群
+            // 第二行：精确微调按钮群
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -506,13 +453,15 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
                         fontWeight: FontWeight.bold,
                         color: scheme.primary)),
                 const SizedBox(width: 8),
-                _stepButton('-5', () => _step(-5)),
+                _stepButton(_selectedTarget == 3 ? '-2' : '-5',
+                    () => _step(_selectedTarget == 3 ? -2 : -5)),
                 const SizedBox(width: 4),
                 _stepButton('-1', () => _step(-1)),
                 const SizedBox(width: 4),
                 _stepButton('+1', () => _step(1)),
                 const SizedBox(width: 4),
-                _stepButton('+5', () => _step(5)),
+                _stepButton(_selectedTarget == 3 ? '+2' : '+5',
+                    () => _step(_selectedTarget == 3 ? 2 : 5)),
               ],
             ),
 

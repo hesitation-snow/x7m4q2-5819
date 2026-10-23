@@ -82,10 +82,8 @@ void main() {
         ),
       ),
     ));
-    await tester.tap(find.text('指示器位置'));
-    await tester.pumpAndSettle();
-    expect(find.text('全屏可视化拖动调整'), findsOneWidget);
-    await tester.tap(find.text('全屏可视化拖动调整'));
+    expect(find.text('调整指示器位置'), findsOneWidget);
+    await tester.tap(find.text('调整指示器位置'));
     expect(editModeTriggered, isTrue);
   });
 }

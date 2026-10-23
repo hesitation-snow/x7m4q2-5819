@@ -804,7 +804,8 @@ class ReaderPrefs {
           top: prefs.getDouble('r_ind_top'),
           bottom: prefs.getDouble('r_ind_bottom'),
           side: prefs.getDouble('r_ind_side'),
-          titleAlignment: prefs.getDouble('r_ind_align')),
+          titleAlignment: prefs.getDouble('r_ind_align'),
+          fontSize: prefs.getDouble('r_ind_size')),
       traditional: prefs.getBool('r_trad') ?? false,
       simplified: prefs.getBool('r_simp') ?? false,
       pagedMode: prefs.getBool('r_paged') ?? false,
@@ -922,6 +923,7 @@ class ReaderPrefs {
       prefs.setDouble('r_ind_bottom', v.bottom),
       prefs.setDouble('r_ind_side', v.side),
       prefs.setDouble('r_ind_align', v.titleAlignment),
+      prefs.setDouble('r_ind_size', v.fontSize),
     ]);
   }
 

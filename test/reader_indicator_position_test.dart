@@ -37,7 +37,8 @@ void main() {
     expect(settings.showIndicators, false);
   });
 
-  testWidgets('position controls adjust and restore defaults', (tester) async {
+  testWidgets('position controls trigger edit mode and display summary',
+      (tester) async {
     var value = const IndicatorPosition();
     var editModeCalled = false;
     await tester.pumpWidget(MaterialApp(
@@ -48,26 +49,14 @@ void main() {
                         value: value,
                         onEnterEditMode: () => editModeCalled = true,
                         onChanged: (v) => setState(() => value = v)))))));
-    await tester.tap(find.text('指示器位置'));
-    await tester.pumpAndSettle();
-    expect(find.text('全屏可视化拖动调整'), findsOneWidget);
-    await tester.tap(find.text('全屏可视化拖动调整'));
+    expect(find.text('调整指示器位置'), findsOneWidget);
+    expect(find.text('顶部 6dp · 底部 8dp · 边距 16dp · 字号 11sp'), findsOneWidget);
+    await tester.tap(find.text('调整指示器位置'));
     expect(editModeCalled, isTrue);
-    await tester.ensureVisible(find.byKey(const ValueKey('顶部距离')));
-    await tester.pumpAndSettle();
-    await tester.drag(find.byKey(const ValueKey('顶部距离')), const Offset(120, 0));
-    await tester.pumpAndSettle();
-    expect(value.top, greaterThan(6));
-    await tester.ensureVisible(find.text('恢复默认位置'));
-    await tester.tap(find.text('恢复默认位置'));
-    await tester.pumpAndSettle();
-    expect(value.top, 6);
-    expect(value.bottom, 8);
-    expect(value.side, 16);
-    expect(value.titleAlignment, 0);
   });
 
-  testWidgets('IndicatorEditOverlay interactive dragging and 1dp micro-tuning',
+  testWidgets(
+      'IndicatorEditOverlay interactive dragging, font size, and micro-tuning',
       (tester) async {
     var value = const IndicatorPosition();
     var saved = false;
@@ -108,10 +97,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(value.top, closeTo(draggedTop + 1, 0.1));
 
-    // Test -1 dp micro tuning
+    // Test font size tuning
+    await tester.tap(find.textContaining('字号'));
+    await tester.pumpAndSettle();
+    expect(value.fontSize, 11);
+    await tester.tap(find.text('+2'));
+    await tester.pumpAndSettle();
+    expect(value.fontSize, 13);
     await tester.tap(find.text('-1'));
     await tester.pumpAndSettle();
-    expect(value.top, closeTo(draggedTop, 0.1));
+    expect(value.fontSize, 12);
 
     // Test actions
     await tester.tap(find.text('保存'));
