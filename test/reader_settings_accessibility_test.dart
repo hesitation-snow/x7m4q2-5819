@@ -67,33 +67,25 @@ void main() {
     });
   }
 
-  testWidgets('position preview reuses overlay and scales distances uniformly',
+  testWidgets(
+      'IndicatorPositionSettings provides full-screen edit mode trigger',
       (tester) async {
-    Future<void> show(IndicatorPosition position) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: IndicatorPositionSettings(
-              value: position,
-              onChanged: (_) {},
-            ),
+    var editModeTriggered = false;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: IndicatorPositionSettings(
+            value: const IndicatorPosition(),
+            onChanged: (_) {},
+            onEnterEditMode: () => editModeTriggered = true,
           ),
         ),
-      ));
-      if (find.byType(ReaderIndicators).evaluate().isEmpty) {
-        await tester.tap(find.text('指示器位置'));
-      }
-      await tester.pumpAndSettle();
-    }
-
-    await show(const IndicatorPosition(titleAlignment: -1));
-    final title = find.byKey(const ValueKey('reader-indicator-title'));
-    final before = tester.getTopLeft(title);
-    final scale = tester.getRect(find.byType(ReaderIndicators)).width / 360;
-    await show(const IndicatorPosition(top: 30, side: 40, titleAlignment: -1));
-    final after = tester.getTopLeft(title);
-    expect(after.dy - before.dy, closeTo(24 * scale, .01));
-    expect(after.dx - before.dx, closeTo(24 * scale, .01));
-    expect(tester.takeException(), isNull);
+      ),
+    ));
+    await tester.tap(find.text('指示器位置'));
+    await tester.pumpAndSettle();
+    expect(find.text('全屏可视化拖动调整'), findsOneWidget);
+    await tester.tap(find.text('全屏可视化拖动调整'));
+    expect(editModeTriggered, isTrue);
   });
 }

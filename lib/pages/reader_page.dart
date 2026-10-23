@@ -261,6 +261,8 @@ class _ReaderPageState extends State<ReaderPage>
   ModalRoute<dynamic>? _observedRoute;
   bool _indicators = true;
   IndicatorPosition _indicatorPosition = const IndicatorPosition();
+  bool _isEditingIndicators = false;
+  IndicatorPosition _savedIndicatorPosition = const IndicatorPosition();
   bool _traditional = false;
   bool _simplified = false;
 
@@ -1240,6 +1242,13 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   Future<void> _requestExit(Object? result) async {
+    if (_isEditingIndicators) {
+      setState(() {
+        _isEditingIndicators = false;
+        _indicatorPosition = _savedIndicatorPosition;
+      });
+      return;
+    }
     if (_exitInFlight || ModalRoute.of(context)?.isCurrent != true) return;
     if (_exitConfirmationTimer?.isActive != true) {
       final messenger = ScaffoldMessenger.of(context);
@@ -2710,6 +2719,15 @@ class _ReaderPageState extends State<ReaderPage>
                                       unawaited(
                                           ReaderPrefs.saveIndicatorPosition(
                                               value));
+                                    },
+                                    onEnterEditMode: () {
+                                      Navigator.pop(context);
+                                      setState(() {
+                                        _chrome = false;
+                                        _savedIndicatorPosition =
+                                            _indicatorPosition;
+                                        _isEditingIndicators = true;
+                                      });
                                     },
                                   ),
                                 ]),
@@ -4373,6 +4391,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _handleBodyTap(Offset position) {
+    if (_isEditingIndicators) return;
     final width = MediaQuery.of(context).size.width;
     if (_paged) {
       if (position.dx < width / 3) {
@@ -4535,7 +4554,10 @@ class _ReaderPageState extends State<ReaderPage>
                                             ReaderContentCache.generation));
                                   },
                                   child: const Text('重试'))))),
-                if (_indicators && !_chrome && !_loading)
+                if (_indicators &&
+                    !_chrome &&
+                    !_loading &&
+                    !_isEditingIndicators)
                   Positioned.fill(
                     child: DefaultTextStyle(
                       style: TextStyle(
@@ -4557,6 +4579,55 @@ class _ReaderPageState extends State<ReaderPage>
                                     color: _textColor.withValues(alpha: 0.45)))
                             : null,
                       ),
+                    ),
+                  ),
+                if (_isEditingIndicators)
+                  Positioned.fill(
+                    child: IndicatorEditOverlay(
+                      position: _indicatorPosition,
+                      title: _title,
+                      progress: RepaintBoundary(
+                        child: _paged
+                            ? Text('第 ${_pageIndex + 1}/${_pages.length} 页',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color:
+                                        Theme.of(context).colorScheme.primary))
+                            : ValueListenableBuilder<double>(
+                                valueListenable: _progressN,
+                                builder: (_, v, __) => Text(
+                                    '${(v * 100).toStringAsFixed(1)}%',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary))),
+                      ),
+                      deviceStatus: _hideBar && _loadError == null
+                          ? RepaintBoundary(
+                              child: ReaderDeviceStatus(
+                                  color: Theme.of(context).colorScheme.primary))
+                          : null,
+                      onChanged: (pos) =>
+                          setState(() => _indicatorPosition = pos),
+                      onSave: () {
+                        setState(() => _isEditingIndicators = false);
+                        unawaited(ReaderPrefs.saveIndicatorPosition(
+                            _indicatorPosition));
+                        showFloatingPrompt(context, '指示器位置已保存');
+                      },
+                      onCancel: () {
+                        setState(() {
+                          _isEditingIndicators = false;
+                          _indicatorPosition = _savedIndicatorPosition;
+                        });
+                      },
+                      onReset: () {
+                        setState(() =>
+                            _indicatorPosition = const IndicatorPosition());
+                      },
                     ),
                   ),
                 // 顶栏

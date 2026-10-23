@@ -39,20 +39,20 @@ void main() {
 
   testWidgets('position controls adjust and restore defaults', (tester) async {
     var value = const IndicatorPosition();
+    var editModeCalled = false;
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(
             body: StatefulBuilder(
                 builder: (context, setState) => SingleChildScrollView(
                     child: IndicatorPositionSettings(
                         value: value,
+                        onEnterEditMode: () => editModeCalled = true,
                         onChanged: (v) => setState(() => value = v)))))));
     await tester.tap(find.text('指示器位置'));
     await tester.pumpAndSettle();
-    expect(find.text('指示器位置示意预览'), findsOneWidget);
-    expect(find.byType(ReaderIndicators), findsOneWidget);
-    expect(find.text('第一章 标题'), findsOneWidget);
-    expect(find.text('12:34'), findsOneWidget);
-    expect(find.text('45.0%'), findsOneWidget);
+    expect(find.text('全屏可视化拖动调整'), findsOneWidget);
+    await tester.tap(find.text('全屏可视化拖动调整'));
+    expect(editModeCalled, isTrue);
     await tester.ensureVisible(find.byKey(const ValueKey('顶部距离')));
     await tester.pumpAndSettle();
     await tester.drag(find.byKey(const ValueKey('顶部距离')), const Offset(120, 0));
@@ -65,6 +65,63 @@ void main() {
     expect(value.bottom, 8);
     expect(value.side, 16);
     expect(value.titleAlignment, 0);
+  });
+
+  testWidgets('IndicatorEditOverlay interactive dragging and 1dp micro-tuning',
+      (tester) async {
+    var value = const IndicatorPosition();
+    var saved = false;
+    var canceled = false;
+    var reset = false;
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: StatefulBuilder(
+          builder: (context, setState) => IndicatorEditOverlay(
+            position: value,
+            title: '测试章节 标题',
+            progress: const Text('50.0%'),
+            deviceStatus: const Text('10:00'),
+            onChanged: (v) => setState(() => value = v),
+            onSave: () => saved = true,
+            onCancel: () => canceled = true,
+            onReset: () => reset = true,
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('测试章节 标题'), findsOneWidget);
+    expect(find.text('50.0%'), findsOneWidget);
+    expect(find.text('10:00'), findsOneWidget);
+    expect(find.text('标题 · 可直接拖拽'), findsOneWidget);
+
+    // Test dragging top title
+    await tester.drag(find.text('标题 · 可直接拖拽'), const Offset(0, 50));
+    await tester.pumpAndSettle();
+    expect(value.top, greaterThan(6));
+    final draggedTop = value.top;
+
+    // Test +1 dp micro tuning
+    await tester.tap(find.text('+1'));
+    await tester.pumpAndSettle();
+    expect(value.top, closeTo(draggedTop + 1, 0.1));
+
+    // Test -1 dp micro tuning
+    await tester.tap(find.text('-1'));
+    await tester.pumpAndSettle();
+    expect(value.top, closeTo(draggedTop, 0.1));
+
+    // Test actions
+    await tester.tap(find.text('保存'));
+    expect(saved, isTrue);
+
+    await tester.tap(find.text('取消'));
+    expect(canceled, isTrue);
+
+    await tester.tap(find.text('默认'));
+    expect(reset, isTrue);
   });
 
   for (final size in [

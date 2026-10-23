@@ -2894,8 +2894,9 @@ class _WelfarePageState extends State<WelfarePage>
     final prereqType = TreasureTask.prerequisite(box);
     if (prereqType == 'watch_ad') return '免广告';
     if (prereqType == 'read_book') return '去浏览';
-    if (prereqType.contains('collect') || prereqType.contains('shelf'))
+    if (prereqType.contains('collect') || prereqType.contains('shelf')) {
       return '去收藏';
+    }
     return '待解锁';
   }
 
