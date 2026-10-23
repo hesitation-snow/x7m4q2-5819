@@ -2254,9 +2254,22 @@ class LKDynamicItem {
     final brief = _jsonMap(j['target_brief']) ?? const <String, dynamic>{};
     final targetType =
         (j['target_type'] ?? brief['target_type'] ?? '').toString();
+    final eventType = (j['event_type'] ?? '').toString();
     // target_brief.target_id 对纯动态指向动态内容本身，不能当作书号。
     final rawBookId = brief['book_id'] ??
         (targetType == 'book' ? brief['target_id'] : j['book_id']);
+    final isWorkPost = _jsonInt(rawBookId) > 0 ||
+        const {
+          'book_created',
+          'volume_created',
+          'chapter_published',
+        }.contains(eventType) ||
+        const {'book', 'volume', 'chapter'}.contains(targetType);
+    final rawTopTitle = (j['title'] ?? '').toString();
+    final briefTitle = (brief['title'] ?? '').toString();
+    final resolvedTitle = rawTopTitle.trim().isNotEmpty
+        ? rawTopTitle
+        : (!isWorkPost && briefTitle.trim().isNotEmpty ? briefTitle : '');
     final rawMedia = j['media'];
     final rawMedals = author['medals'] ??
         author['medal_list'] ??
@@ -2292,7 +2305,7 @@ class LKDynamicItem {
       nickname: (author['nickname'] ?? j['nickname'] ?? '').toString(),
       avatar: (author['avatar'] ?? j['avatar'] ?? '').toString(),
       authorMedals: authorMedals,
-      title: (j['title'] ?? '').toString(),
+      title: resolvedTitle,
       summary:
           (j['summary'] ?? j['content'] ?? j['content_text'] ?? '').toString(),
       likeCount: _jsonInt(stats['like_count'] ?? j['like_count'] ?? j['likes']),

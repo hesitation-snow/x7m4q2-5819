@@ -863,10 +863,10 @@ class _DynamicPageState extends State<DynamicPage> {
                                                   ),
                                                 ]),
                                             const SizedBox(height: 6),
-                                            if (d.title.isNotEmpty &&
-                                                d.summary
-                                                    .trim()
-                                                    .isNotEmpty) ...[
+                                            if (d.title.trim().isNotEmpty &&
+                                                d.summary.trim().isNotEmpty &&
+                                                d.title.trim() !=
+                                                    d.summary.trim()) ...[
                                               Text(
                                                 d.title,
                                                 style: const TextStyle(

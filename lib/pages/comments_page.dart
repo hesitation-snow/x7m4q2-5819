@@ -605,7 +605,9 @@ class _CommentsPageState extends State<CommentsPage> {
                         TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               ]),
               const SizedBox(height: 12),
-              if (item.title.isNotEmpty && item.summary.trim().isNotEmpty) ...[
+              if (item.title.trim().isNotEmpty &&
+                  item.summary.trim().isNotEmpty &&
+                  item.title.trim() != item.summary.trim()) ...[
                 Text(item.title,
                     style: const TextStyle(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),

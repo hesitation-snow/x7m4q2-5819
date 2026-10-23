@@ -56,6 +56,9 @@ void main() {
 
     expect(item.bookId, 0);
     expect(item.isWorkPost, isFalse);
+    expect(item.title, '纯动态标题');
+    expect(item.summary, '纯动态');
+    expect(item.displayContent, '纯动态');
     expect(item.bookTitle, '纯动态标题');
     expect(item.media, hasLength(1));
     expect(item.media.single.width, 1973);
