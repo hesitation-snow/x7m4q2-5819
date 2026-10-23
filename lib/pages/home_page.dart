@@ -1003,40 +1003,40 @@ class _FeedTabState extends State<FeedTab>
       );
     }
 
-    final rankSelectorCount = showRankSelector ? 1 : 0;
-    final recommendCount = showRecommend ? 1 : 0;
-    final listView = ListView.builder(
+    final listView = CustomScrollView(
       controller: _listScrollController,
       scrollCacheExtent: const ScrollCacheExtent.viewport(1.0),
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(10, 6, 10, 12),
-      itemCount: visibleItems.length +
-          rankSelectorCount +
-          recommendCount +
-          (_hasMore ? 1 : 0),
-      itemBuilder: (_, i) {
-        if (showRankSelector && i == 0) return _rankSelector();
-        if (showRecommend && i == rankSelectorCount) {
-          return _HomeRecommendCard(
-            books: visibleRecommend,
-            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
-          );
-        }
-        final j = i - rankSelectorCount - recommendCount;
-        if (j >= visibleItems.length) {
-          return _loadMoreFooter();
-        }
-        final book = visibleItems[j];
-        return BookCard(
-          book: book,
-          rank: _rankOf(j),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (_) => BookDetailPage(bookId: book.bookId)),
+      slivers: [
+        if (showRankSelector) SliverToBoxAdapter(child: _rankSelector()),
+        if (showRecommend)
+          SliverToBoxAdapter(
+            child: _HomeRecommendCard(books: visibleRecommend),
           ),
-        );
-      },
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(10, 1, 10, 12),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (_, i) {
+                if (i >= visibleItems.length) {
+                  return _loadMoreFooter();
+                }
+                final book = visibleItems[i];
+                return BookCard(
+                  book: book,
+                  rank: _rankOf(i),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => BookDetailPage(bookId: book.bookId)),
+                  ),
+                );
+              },
+              childCount: visibleItems.length + (_hasMore ? 1 : 0),
+            ),
+          ),
+        ),
+      ],
     );
 
     final gridView = NotificationListener<ScrollNotification>(
@@ -1147,7 +1147,6 @@ class _FeedTabState extends State<FeedTab>
 
 class _HomeRecommendCard extends StatelessWidget {
   final List<LKBook> books;
-  final EdgeInsetsGeometry padding;
 
   static double _coverWidthFor(double screenWidth) =>
       screenWidth >= 600 ? 112 : 96;
@@ -1159,7 +1158,6 @@ class _HomeRecommendCard extends StatelessWidget {
 
   const _HomeRecommendCard({
     required this.books,
-    this.padding = const EdgeInsets.fromLTRB(12, 8, 12, 8),
   });
 
   @override
@@ -1169,7 +1167,7 @@ class _HomeRecommendCard extends StatelessWidget {
     final itemWidth = _coverWidthFor(MediaQuery.sizeOf(context).width);
     final coverHeight = itemWidth * (4 / 3);
     return Padding(
-      padding: padding,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1197,14 +1195,6 @@ class _HomeRecommendCard extends StatelessWidget {
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  '${books.length} 本',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Theme.of(context).colorScheme.outline,
                   ),
                 ),
               ],
