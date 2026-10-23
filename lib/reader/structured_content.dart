@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
+import '../services/illustration_cache.dart';
 import 'reader_indent.dart';
 
 const double _rubyAnnotationFontSizeScale = 0.58;
@@ -1313,9 +1314,10 @@ class StructuredContentParser {
               _imageHeightRe.firstMatch(node.outerHtml)?.group(1);
           final wi = int.tryParse(wAttr ?? '') ?? 0;
           final hi = int.tryParse(hAttr ?? '') ?? 0;
+          final cachedAspect = YomiruIllustrationCache.getAspect(src);
           blocks.add(StructuredBlock.image(
             src,
-            imageAspect: (wi > 0 && hi > 0) ? wi / hi : null,
+            imageAspect: (wi > 0 && hi > 0) ? wi / hi : cachedAspect,
           ));
         }
         return;

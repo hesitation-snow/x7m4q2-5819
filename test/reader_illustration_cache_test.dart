@@ -110,5 +110,33 @@ void main() {
       await YomiruIllustrationCache.prefetchUrls([]);
       await YomiruIllustrationCache.prefetchUrls(['   ', '']);
     });
+
+    test('parseAspectFromBytes correctly parses JPEG dimensions and aspect ratio', () {
+      final jpegBytes = <int>[
+        0xFF, 0xD8,
+        0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+        0xFF, 0xC0, 0x00, 0x11, 0x08, 0x05, 0x94, 0x07, 0xD0, 0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+      ];
+      final aspect = YomiruIllustrationCache.parseAspectFromBytes(jpegBytes);
+      expect(aspect, closeTo(2000 / 1428, 0.001));
+    });
+
+    test('parseAspectFromBytes correctly parses PNG dimensions and aspect ratio', () {
+      final pngBytes = <int>[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x07, 0x80, // width 1920
+        0x00, 0x00, 0x04, 0x38, // height 1080
+      ];
+      final aspect = YomiruIllustrationCache.parseAspectFromBytes(pngBytes);
+      expect(aspect, closeTo(1920 / 1080, 0.001));
+    });
+
+    test('aspect ratios are stored and retrieved via getAspect/setAspect', () {
+      const testUrl = 'https://img.lightnovel.us/landscape_test.jpg';
+      expect(YomiruIllustrationCache.getAspect(testUrl), isNull);
+      YomiruIllustrationCache.setAspect(testUrl, 1.401);
+      expect(YomiruIllustrationCache.getAspect(testUrl), 1.401);
+    });
   });
 }

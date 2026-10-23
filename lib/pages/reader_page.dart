@@ -53,7 +53,7 @@ final RegExp _readerFootnoteReferencePattern = RegExp(r'\[\s*([^\]]+?)\s*\]');
 /// 正文块:文本(可含链接区间)或插画
 class _BodyBlock {
   final String? image;
-  final double? aspect; // 插画宽高比(width/height),用于翻页模式精确命中区域
+  double? aspect; // 插画宽高比(width/height),用于翻页模式精确命中区域与滚动模式自适应高度
   final String text;
 
   /// 链接区间 (start, end, url),相对于 [text] 的下标
@@ -582,12 +582,12 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   double _scrollImageHeight(_BodyBlock block, double contentWidth) {
-    final aspect = block.aspect;
+    final aspect = block.aspect ??
+        YomiruIllustrationCache.getAspect(block.image ?? '');
     if (aspect != null && aspect > 0) {
       return (contentWidth / aspect).clamp(1.0, 10000.0).toDouble();
     }
-    // 未提供原图比例时保留一个稳定的竖向插画区域，并使用 contain
-    // 展示完整图片。固定布局尺寸可避免图片解码后改变全文滚动坐标。
+    // 未提供原图比例时保留一个适中的初始高度，一旦图片头数据或解码完成便会自动贴合真实高度
     return (contentWidth * 1.35).clamp(180.0, 720.0).toDouble();
   }
 
@@ -753,20 +753,48 @@ class _ReaderPageState extends State<ReaderPage>
         .toList(growable: false);
     if (urls.isEmpty) return;
 
-    // 1. 同步加载内存中已标记为磁盘存在的插画
-    for (final u in urls) {
+    // 1. 同步加载内存中已标记为磁盘存在的插画，并同步解析已知插画宽高比
+    var needsLayoutRefresh = false;
+    for (final b in blocks) {
+      final u = b.image;
+      if (u == null) continue;
       if (YomiruIllustrationCache.isKnownCached(u)) {
         _diskCachedImages.add(u);
       }
+      if (b.aspect == null) {
+        final cachedAspect = YomiruIllustrationCache.getAspect(u);
+        if (cachedAspect != null) {
+          b.aspect = cachedAspect;
+          needsLayoutRefresh = true;
+        }
+      }
+    }
+    if (needsLayoutRefresh) {
+      _scrollLayoutIndexKey = '';
     }
 
-    // 2. 异步检测其余磁盘缓存，已存在则触发刷新直接展示
+    // 2. 异步检测其余磁盘缓存，解析宽高比并触发刷新
     unawaited(() async {
       final cached = await YomiruIllustrationCache.filterCached(urls);
-      if (cached.isNotEmpty && mounted) {
-        setState(() {
-          _diskCachedImages.addAll(cached);
-        });
+      if (!mounted) return;
+      var updated = false;
+      if (cached.isNotEmpty) {
+        _diskCachedImages.addAll(cached);
+        updated = true;
+      }
+      for (final b in blocks) {
+        final u = b.image;
+        if (u != null && b.aspect == null) {
+          final aspect = await YomiruIllustrationCache.resolveAspect(u);
+          if (aspect != null && b.aspect == null) {
+            b.aspect = aspect;
+            updated = true;
+            _scrollLayoutIndexKey = '';
+          }
+        }
+      }
+      if (updated && mounted) {
+        setState(() {});
       }
     }());
 
@@ -2072,8 +2100,9 @@ class _ReaderPageState extends State<ReaderPage>
       if (imageUri != null &&
           imageUri.scheme == 'https' &&
           imageUri.host.isNotEmpty) {
+        final cachedAspect = YomiruIllustrationCache.getAspect(imageUrl);
         blocks.add(_BodyBlock.image(imageUrl,
-            aspect: (wi > 0 && hi > 0) ? wi / hi : null));
+            aspect: (wi > 0 && hi > 0) ? wi / hi : cachedAspect));
       }
       pos = m.end;
     }
@@ -3099,10 +3128,41 @@ class _ReaderPageState extends State<ReaderPage>
     );
   }
 
+  void _attachImageAspectListener(String imageUrl, _BodyBlock block) {
+    if (block.aspect != null) return;
+    final cached = YomiruIllustrationCache.getAspect(imageUrl);
+    if (cached != null) {
+      block.aspect = cached;
+      return;
+    }
+    final provider = YomiruIllustrationCache.provider(imageUrl);
+    final stream = provider.resolve(ImageConfiguration.empty);
+    late ImageStreamListener listener;
+    listener = ImageStreamListener((info, _) {
+      final w = info.image.width;
+      final h = info.image.height;
+      if (w > 0 && h > 0) {
+        final aspect = w / h;
+        YomiruIllustrationCache.setAspect(imageUrl, aspect);
+        if (block.aspect == null && mounted) {
+          setState(() {
+            block.aspect = aspect;
+            _scrollLayoutIndexKey = '';
+          });
+        }
+      }
+      stream.removeListener(listener);
+    }, onError: (_, __) {
+      stream.removeListener(listener);
+    });
+    stream.addListener(listener);
+  }
+
   Widget _scrollBlockWidget(int index, {required bool lockedBody}) {
     final block = _blocks[index];
     if (block.image != null) {
       final imageUrl = block.image!;
+      _attachImageAspectListener(imageUrl, block);
       final isDataSaver = LKStore.dataSaverMode.value &&
           !_manuallyLoadedImages.contains(imageUrl) &&
           !_diskCachedImages.contains(imageUrl);
