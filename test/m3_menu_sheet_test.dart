@@ -87,7 +87,7 @@ void main() {
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(find.byIcon(Icons.check_circle_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.check_rounded), findsOneWidget);
       await tester.tap(find.byTooltip('关闭'));
       await tester.pumpAndSettle();
       expect(LKStore.gridColumnCount.value, 0);

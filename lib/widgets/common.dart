@@ -929,11 +929,11 @@ SliverGridDelegate bookGridDelegate(
 Future<void> showGridColumnsSheet(BuildContext context) async {
   final current = LKStore.gridColumnCount.value;
   final options = [
-    (0, '自动', '根据屏幕宽度自适应列数（手机通常 2 列）'),
-    (2, '2 列', '经典双列大图海报，展示最全信息'),
-    (3, '3 列', '紧凑排版，兼顾封面与浏览效率'),
-    (4, '4 列', '高密度速览，一屏纵览更多作品'),
-    (5, '5 列', '极密浏览，适合大屏或快速检索'),
+    (0, '自动', '根据屏幕宽度自适应列数（手机通常 2 列）', Icons.auto_awesome_outlined),
+    (2, '2 列', '经典双列大图海报，展示最全信息', Icons.grid_view_rounded),
+    (3, '3 列', '紧凑排版，兼顾封面与浏览效率', Icons.view_column_outlined),
+    (4, '4 列', '高密度速览，一屏纵览更多作品', Icons.view_comfy_alt_outlined),
+    (5, '5 列', '极密浏览，适合大屏或快速检索', Icons.apps_rounded),
   ];
 
   await showModalBottomSheet<void>(
@@ -949,14 +949,13 @@ Future<void> showGridColumnsSheet(BuildContext context) async {
         icon: Icons.grid_view_rounded,
         children: [
           ...options.map((opt) {
-            final (count, title, subtitle) = opt;
+            final (count, title, subtitle, icon) = opt;
             final selected = current == count;
             return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 6),
               child: Material(
-                color: selected
-                    ? scheme.primaryContainer.withValues(alpha: 0.35)
-                    : scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                color:
+                    selected ? scheme.secondaryContainer : Colors.transparent,
                 borderRadius: BorderRadius.circular(14),
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
@@ -966,9 +965,17 @@ Future<void> showGridColumnsSheet(BuildContext context) async {
                   },
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 14),
+                        horizontal: 14, vertical: 12),
                     child: Row(
                       children: [
+                        Icon(
+                          icon,
+                          size: 20,
+                          color: selected
+                              ? scheme.onSecondaryContainer
+                              : scheme.onSurface,
+                        ),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -983,7 +990,7 @@ Future<void> showGridColumnsSheet(BuildContext context) async {
                                           ? FontWeight.bold
                                           : FontWeight.w500,
                                       color: selected
-                                          ? scheme.primary
+                                          ? scheme.onSecondaryContainer
                                           : scheme.onSurface,
                                     ),
                                   ),
@@ -991,18 +998,23 @@ Future<void> showGridColumnsSheet(BuildContext context) async {
                                     const SizedBox(width: 6),
                                     Container(
                                       padding: const EdgeInsets.symmetric(
-                                          horizontal: 5, vertical: 1),
+                                          horizontal: 6, vertical: 1.5),
                                       decoration: BoxDecoration(
-                                        color: scheme.primary
-                                            .withValues(alpha: 0.12),
-                                        borderRadius: BorderRadius.circular(4),
+                                        color: selected
+                                            ? scheme.primary
+                                                .withValues(alpha: 0.18)
+                                            : scheme.primary
+                                                .withValues(alpha: 0.12),
+                                        borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: Text(
                                         '默认',
                                         style: TextStyle(
                                           fontSize: 10,
                                           fontWeight: FontWeight.w600,
-                                          color: scheme.primary,
+                                          color: selected
+                                              ? scheme.onSecondaryContainer
+                                              : scheme.primary,
                                         ),
                                       ),
                                     ),
@@ -1014,15 +1026,23 @@ Future<void> showGridColumnsSheet(BuildContext context) async {
                                 subtitle,
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: scheme.onSurfaceVariant,
+                                  color: selected
+                                      ? scheme.onSecondaryContainer
+                                          .withValues(alpha: 0.8)
+                                      : scheme.onSurfaceVariant,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        if (selected)
-                          Icon(Icons.check_circle_rounded,
-                              color: scheme.primary, size: 20),
+                        if (selected) ...[
+                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.check_rounded,
+                            size: 20,
+                            color: scheme.onSecondaryContainer,
+                          ),
+                        ],
                       ],
                     ),
                   ),
