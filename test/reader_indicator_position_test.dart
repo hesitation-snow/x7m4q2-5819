@@ -48,6 +48,12 @@ void main() {
                         onChanged: (v) => setState(() => value = v)))))));
     await tester.tap(find.text('指示器位置'));
     await tester.pumpAndSettle();
+    expect(find.text('屏幕指示器实时预览'), findsOneWidget);
+    expect(find.text('第一章 标题'), findsOneWidget);
+    expect(find.text('12:34'), findsOneWidget);
+    expect(find.text('45.0%'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('顶部距离')));
+    await tester.pumpAndSettle();
     await tester.drag(find.byKey(const ValueKey('顶部距离')), const Offset(120, 0));
     await tester.pumpAndSettle();
     expect(value.top, greaterThan(6));

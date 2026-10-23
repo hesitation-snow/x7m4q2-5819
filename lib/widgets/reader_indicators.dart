@@ -104,6 +104,8 @@ class IndicatorPositionSettings extends StatelessWidget {
           subtitle: const Text('仅移动指示器，不改变正文排版；距离从安全区起算'),
           childrenPadding: const EdgeInsets.symmetric(horizontal: 16),
           children: [
+            _IndicatorPreview(position: value),
+            const SizedBox(height: 8),
             _slider('顶部距离', value.top, 96,
                 (v) => onChanged(value.copyWith(top: v))),
             _slider('底部距离', value.bottom, 96,
@@ -122,4 +124,215 @@ class IndicatorPositionSettings extends StatelessWidget {
                 onPressed: () => onChanged(const IndicatorPosition()),
                 child: const Text('恢复默认位置')),
           ]);
+}
+
+class _IndicatorPreview extends StatelessWidget {
+  final IndicatorPosition position;
+
+  const _IndicatorPreview({required this.position});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    const deviceWidth = 140.0;
+    const deviceHeight = 190.0;
+    const miniSafeTop = 14.0;
+    const miniSafeBottom = 12.0;
+
+    final topOffset =
+        miniSafeTop + (position.top.clamp(0.0, 96.0) / 96.0 * 24.0);
+    final bottomOffset =
+        miniSafeBottom + (position.bottom.clamp(0.0, 96.0) / 96.0 * 20.0);
+    final sideOffset = 8.0 + (position.side.clamp(0.0, 96.0) / 96.0 * 18.0);
+
+    final titleAlign = Alignment(
+      position.titleAlignment.clamp(-1.0, 1.0),
+      -1.0,
+    );
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.smartphone_rounded, size: 16, color: scheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                '屏幕指示器实时预览',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: scheme.primary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Center(
+            child: Container(
+              width: deviceWidth,
+              height: deviceHeight,
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E2025) : Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: isDark ? Colors.grey.shade700 : Colors.grey.shade400,
+                  width: 2.0,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.08),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Stack(
+                  children: [
+                    // 正文段落模拟线条
+                    Positioned.fill(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 42),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            for (var w in [1.0, 0.9, 0.85, 0.95, 0.6])
+                              FractionallySizedBox(
+                                widthFactor: w,
+                                child: Container(
+                                  height: 3,
+                                  decoration: BoxDecoration(
+                                    color: (isDark
+                                            ? Colors.white
+                                            : Colors.black)
+                                        .withValues(alpha: 0.08),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // 顶部刘海 / 挖孔条
+                    Align(
+                      alignment: Alignment.topCenter,
+                      child: Container(
+                        margin: const EdgeInsets.only(top: 4),
+                        width: 26,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: isDark ? Colors.black : Colors.grey.shade800,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+
+                    // 顶部章节标题指示器
+                    Positioned(
+                      top: topOffset,
+                      left: sideOffset,
+                      right: sideOffset,
+                      child: Align(
+                        alignment: titleAlign,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '第一章 标题',
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.primary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // 底部时间与阅读进度指示器
+                    Positioned(
+                      bottom: bottomOffset,
+                      left: sideOffset,
+                      right: sideOffset,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 3, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: scheme.onSurface.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              '12:34',
+                              style: TextStyle(
+                                fontSize: 7,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 3, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: scheme.primary.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              '45.0%',
+                              style: TextStyle(
+                                fontSize: 7,
+                                fontWeight: FontWeight.bold,
+                                color: scheme.primary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // 底部手势小横条
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 3),
+                        width: 32,
+                        height: 2.5,
+                        decoration: BoxDecoration(
+                          color: (isDark ? Colors.white : Colors.black)
+                              .withValues(alpha: 0.25),
+                          borderRadius: BorderRadius.circular(1.5),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
