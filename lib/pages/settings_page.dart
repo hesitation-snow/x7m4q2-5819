@@ -722,22 +722,30 @@ class _SettingsPageState extends State<SettingsPage> {
     final revision = LKClient.sessionRev.value;
     _checkingBrave = true;
     try {
-      final profile = await LKApi.myProfile();
+      final profile = await LKStore.cachedMyProfile(uid);
       if (!mounted ||
           !session.isLoggedIn ||
           session.uid != uid ||
           session.securityKey != key ||
-          LKClient.sessionRev.value != revision ||
-          profile.uid != uid ||
-          !profile.isBrave) {
+          LKClient.sessionRev.value != revision) {
         return;
       }
-      unawaited(LKStore.cacheMyProfile(uid, profile));
+      if (profile == null) {
+        showFloatingPrompt(context, '个人资料尚未加载，请先打开“我的”页面');
+        return;
+      }
+      if (profile.uid != uid || !profile.isBrave) return;
       await Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (_) => const LaboratoryPage(),
       ));
     } catch (_) {
-      // 资料获取失败时保持在设置页。
+      if (mounted &&
+          session.isLoggedIn &&
+          session.uid == uid &&
+          session.securityKey == key &&
+          LKClient.sessionRev.value == revision) {
+        showFloatingPrompt(context, '个人资料尚未加载，请先打开“我的”页面');
+      }
     } finally {
       _checkingBrave = false;
     }

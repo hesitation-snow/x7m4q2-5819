@@ -7,13 +7,37 @@ import 'package:yomiru/pages/laboratory_page.dart';
 import 'package:yomiru/widgets/liquid_glass_bottom_bar.dart';
 
 void main() {
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    LKStore.glassConfiguration.value = GlassConfiguration.defaults;
+    LKStore.loadGlassConfiguration(await SharedPreferences.getInstance());
     LKStore.liquidGlassBottomBarEnabled.value = false;
     LKStore.dailyTreasureEnabled.value = false;
     LKStore.allMedalsEnabled.value = false;
   });
+  test('device presets and partial legacy preferences do not overwrite data',
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final size in [const Size(390, 844), const Size(844, 390)]) {
+      final c = LKStore.glassConfigurationFor(size);
+      expect([c.tint, c.barWidth, c.barHeight], [.5, 252, 59]);
+    }
+    for (final size in [const Size(768, 1024), const Size(1024, 768)]) {
+      final c = LKStore.glassConfigurationFor(size);
+      expect([c.tint, c.barWidth, c.barHeight], [.5, 360, 60]);
+    }
+    await LKStore.flushGlassConfiguration();
+    expect(prefs.getKeys(), isEmpty);
+    await prefs.setDouble('glass_tint', .09);
+    await prefs.setDouble('glass_bar_width', 277);
+    LKStore.loadGlassConfiguration(prefs);
+    final tablet = LKStore.glassConfigurationFor(const Size(1024, 768));
+    expect([tablet.tint, tablet.barWidth, tablet.barHeight], [.09, 277, 60]);
+    final phone = LKStore.glassConfigurationFor(const Size(844, 390));
+    expect([phone.tint, phone.barWidth, phone.barHeight], [.09, 277, 59]);
+    await LKStore.flushGlassConfiguration();
+    expect(prefs.containsKey('glass_bar_height'), isFalse);
+  });
+
   test('invalid preferences are finite and bounded; legacy strength ignored',
       () async {
     SharedPreferences.setMockInitialValues({
@@ -65,7 +89,7 @@ void main() {
   testWidgets(
       'live preview, continuous sliders, debounce, reset and dispose flush',
       (tester) async {
-    tester.view.physicalSize = const Size(600, 2000);
+    tester.view.physicalSize = const Size(599, 2000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -101,7 +125,7 @@ void main() {
   });
   testWidgets('custom dimensions and keep-visible setting update live',
       (tester) async {
-    tester.view.physicalSize = const Size(600, 2000);
+    tester.view.physicalSize = const Size(599, 2000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -209,5 +233,29 @@ void main() {
     expect(find.text('液态玻璃'), findsOneWidget);
     expect(find.byType(LiquidGlassBottomBar), findsOneWidget);
     expect(find.byKey(const ValueKey('glass-controls')), findsOneWidget);
+  });
+
+  testWidgets('tablet preview and reset use device preset and save snapshot',
+      (tester) async {
+    tester.view.physicalSize = const Size(768, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(const MaterialApp(home: LiquidGlassLabPage()));
+    expect(tester.getSize(find.byKey(const ValueKey('liquid-glass-surface'))),
+        const Size(360, 60));
+    expect(tester.widget<Slider>(find.byKey(const ValueKey('底色遮罩'))).value, .5);
+    expect(
+        tester.widget<Slider>(find.byKey(const ValueKey('底栏宽度'))).value, 360);
+    tester.widget<Slider>(find.byKey(const ValueKey('底栏宽度'))).onChanged!(280);
+    await tester.pump();
+    await tester.scrollUntilVisible(find.text('重置玻璃默认参数'), 300,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('重置玻璃默认参数'));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(find.byKey(const ValueKey('liquid-glass-surface'))),
+        const Size(360, 60));
+    expect(LKStore.glassConfiguration.value.barWidth, 360);
+    expect(LKStore.glassConfigurationFor(const Size(844, 390)).barWidth, 360);
   });
 }

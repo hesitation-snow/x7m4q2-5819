@@ -47,7 +47,7 @@ class GlassConfiguration {
 
   static const defaults = GlassConfiguration._(
     3,
-    .09,
+    .5,
     .25,
     .74,
     252,
@@ -55,6 +55,20 @@ class GlassConfiguration {
     18,
     false,
   );
+
+  static const tabletDefaults = GlassConfiguration._(
+    3,
+    .5,
+    .25,
+    .74,
+    360,
+    60,
+    18,
+    false,
+  );
+
+  static GlassConfiguration defaultsFor(Size size) =>
+      size.shortestSide >= 600 ? tabletDefaults : defaults;
 
   final double blur, tint, refraction, highlight;
   final double barWidth, barHeight, floatingHeight;
@@ -65,7 +79,7 @@ class GlassConfiguration {
 
   factory GlassConfiguration({
     Object? blur = 3,
-    Object? tint = .09,
+    Object? tint = .5,
     Object? refraction = .25,
     Object? highlight = .74,
     Object? barWidth = 252,
@@ -142,8 +156,52 @@ class LKStore {
   }
 
   static final glassConfiguration = ValueNotifier(GlassConfiguration.defaults);
+  static const _glassKeys = <String>{
+    'glass_blur',
+    'glass_tint',
+    'glass_refraction',
+    'glass_highlight',
+    'glass_bar_width',
+    'glass_bar_height',
+    'glass_floating_height',
+    'glass_keep_visible_on_scroll',
+  };
+  // Before preferences are loaded, retain direct notifier assignments used by
+  // callers. Loading switches missing fields to device-dependent defaults.
+  static Set<String> _savedGlassKeys = Set.of(_glassKeys);
+
+  static GlassConfiguration glassConfigurationFor(Size size) {
+    final c = glassConfiguration.value;
+    final d = GlassConfiguration.defaultsFor(size);
+    return GlassConfiguration(
+      blur: _savedGlassKeys.contains('glass_blur') ? c.blur : d.blur,
+      tint: _savedGlassKeys.contains('glass_tint') ? c.tint : d.tint,
+      refraction: _savedGlassKeys.contains('glass_refraction')
+          ? c.refraction
+          : d.refraction,
+      highlight: _savedGlassKeys.contains('glass_highlight')
+          ? c.highlight
+          : d.highlight,
+      barWidth:
+          _savedGlassKeys.contains('glass_bar_width') ? c.barWidth : d.barWidth,
+      barHeight: _savedGlassKeys.contains('glass_bar_height')
+          ? c.barHeight
+          : d.barHeight,
+      floatingHeight: _savedGlassKeys.contains('glass_floating_height')
+          ? c.floatingHeight
+          : d.floatingHeight,
+      keepVisibleOnScroll:
+          _savedGlassKeys.contains('glass_keep_visible_on_scroll')
+              ? c.keepVisibleOnScroll
+              : d.keepVisibleOnScroll,
+    );
+  }
+
   static Timer? _glassSaveTimer;
+  static bool _glassDirty = false;
   static void updateGlassConfiguration(GlassConfiguration value) {
+    _glassDirty = true;
+    _savedGlassKeys = Set.of(_glassKeys);
     glassConfiguration.value = value;
     _glassSaveTimer?.cancel();
     _glassSaveTimer = Timer(const Duration(milliseconds: 300), () {
@@ -155,6 +213,8 @@ class LKStore {
   static Future<void> flushGlassConfiguration() {
     _glassSaveTimer?.cancel();
     _glassSaveTimer = null;
+    if (!_glassDirty) return _glassSaveQueue;
+    _glassDirty = false;
     final c = glassConfiguration.value;
     return _glassSaveQueue = _glassSaveQueue.then((_) async {
       final p = await SharedPreferences.getInstance();
@@ -172,6 +232,10 @@ class LKStore {
   }
 
   static void loadGlassConfiguration(SharedPreferences p) {
+    _glassSaveTimer?.cancel();
+    _glassSaveTimer = null;
+    _glassDirty = false;
+    _savedGlassKeys = _glassKeys.where(p.containsKey).toSet();
     glassConfiguration.value = GlassConfiguration(
       blur: p.get('glass_blur') ?? GlassConfiguration.defaults.blur,
       tint: p.get('glass_tint') ?? GlassConfiguration.defaults.tint,

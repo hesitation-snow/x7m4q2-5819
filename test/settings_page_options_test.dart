@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,7 +7,6 @@ import 'package:http/testing.dart';
 import 'package:yomiru/api/lk_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/lk_client.dart';
-import 'package:yomiru/api/models.dart';
 import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/feedback_options_sheet.dart';
 import 'package:yomiru/pages/settings_page.dart';
@@ -236,25 +234,8 @@ void main() {
     LKClient.shared.session
       ..securityKey = 'test-token'
       ..uid = 42;
-    await LKStore.cacheMyProfile(
-      42,
-      LKMyProfile(
-        uid: 42,
-        nickname: '勇者测试',
-        avatar: '',
-        signature: '',
-        levelName: 'Lv.5',
-        level: 5,
-        coin: 100,
-        isBrave: true,
-        followersCount: 0,
-        followingCount: 0,
-        postCount: 0,
-        bookshelfCount: 0,
-        historyCount: 0,
-        medals: const [],
-      ),
-    );
+    await (await SharedPreferences.getInstance()).setString(
+        'my_profile_cache_42', jsonEncode({'uid': 42, 'isBrave': true}));
 
     mockProfile(() async => response({'uid': 42, 'isBrave': true}));
     gesture = await tester.startGesture(tester.getCenter(aboutTile));
@@ -287,10 +268,6 @@ void main() {
     await tester.tap(glassSwitch);
     await tester.pumpAndSettle();
     expect(LKStore.liquidGlassBottomBarEnabled.value, isFalse);
-    // The successful profile lookup starts an unawaited cache write. Drain the
-    // shared session-write queue before this widget test's fake async zone ends.
-    await LKStore.cacheMyProfile(42, LKMyProfile(uid: 42, isBrave: true));
-    await tester.pump();
   });
   testWidgets('moving beyond touch slop cancels hidden entry', (tester) async {
     LKClient.shared.session
@@ -316,46 +293,81 @@ void main() {
     expect(find.text('实验室'), findsNothing);
   });
 
-  testWidgets(
-      'stale brave cache and failed or non-brave live profile do not enter',
+  testWidgets('cached identity follows current account without network',
       (tester) async {
-    LKClient.shared.session
-      ..securityKey = 'token'
-      ..uid = 42;
+    var calls = 0;
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      calls++;
+      return http.Response('offline', 500);
+    }));
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
-      'my_profile_cache_42',
-      jsonEncode({'uid': 42, 'isBrave': true}),
-    );
-    var calls = 0;
-    mockProfile(() async {
-      calls++;
-      if (calls == 1) return http.Response('offline', 500);
-      return response({'uid': 42, 'isBrave': false});
-    });
+        'my_profile_cache_42', jsonEncode({'uid': 42, 'isBrave': true}));
+    await prefs.setString(
+        'my_profile_cache_43', jsonEncode({'uid': 43, 'isBrave': false}));
+    LKClient.shared.session
+      ..securityKey = 'brave'
+      ..uid = 42;
     await showSettings(tester);
     await tester.drag(find.byType(ListView), const Offset(0, -300));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('关于'));
     await tester.pumpAndSettle();
-    for (var i = 0; i < 2; i++) {
+
+    Future<void> press() async {
       final gesture =
           await tester.startGesture(tester.getCenter(find.text('关于')));
       await tester.pump(const Duration(seconds: 1));
       await gesture.up();
       await tester.pumpAndSettle();
-      expect(find.text('实验室'), findsNothing);
     }
-    expect(calls, 2);
+
+    await press();
+    expect(find.text('实验室'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    LKClient.shared.session
+      ..securityKey = 'ordinary'
+      ..uid = 43;
+    LKClient.sessionRev.value++;
+    await tester.pumpAndSettle();
+    await press();
+    expect(find.text('实验室'), findsNothing);
+
+    LKClient.shared.session
+      ..securityKey = 'new'
+      ..uid = 44;
+    LKClient.sessionRev.value++;
+    await tester.pumpAndSettle();
+    await press();
+    expect(find.text('实验室'), findsNothing);
+    expect(find.textContaining('个人资料尚未加载'), findsOneWidget);
+
+    LKClient.shared.session.clear();
+    LKClient.sessionRev.value++;
+    await tester.pumpAndSettle();
+    await press();
+    expect(find.text('实验室'), findsNothing);
+    expect(calls, 0);
   });
 
-  testWidgets('account change during brave check cannot enter', (tester) async {
+  testWidgets('updated cache is used without a network request',
+      (tester) async {
+    var calls = 0;
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      calls++;
+      return response({'uid': 42, 'isBrave': true});
+    }));
     LKClient.shared.session
-      ..securityKey = 'old'
+      ..securityKey = 'token'
       ..uid = 42;
-    final pending = Completer<http.Response>();
-    mockProfile(() => pending.future);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        'my_profile_cache_42', jsonEncode({'uid': 42, 'isBrave': true}));
     await showSettings(tester);
+    await prefs.setString(
+        'my_profile_cache_42', jsonEncode({'uid': 42, 'isBrave': false}));
     await tester.drag(find.byType(ListView), const Offset(0, -300));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('关于'));
@@ -364,13 +376,9 @@ void main() {
         await tester.startGesture(tester.getCenter(find.text('关于')));
     await tester.pump(const Duration(seconds: 1));
     await gesture.up();
-    LKClient.shared.session
-      ..securityKey = 'new'
-      ..uid = 43;
-    LKClient.sessionRev.value++;
-    pending.complete(response({'uid': 42, 'isBrave': true}));
     await tester.pumpAndSettle();
     expect(find.text('实验室'), findsNothing);
+    expect(calls, 0);
   });
 
   testWidgets(

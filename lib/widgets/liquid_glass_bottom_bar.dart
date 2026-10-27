@@ -387,7 +387,8 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
   Widget build(BuildContext context) =>
       ValueListenableBuilder<GlassConfiguration>(
         valueListenable: LKStore.glassConfiguration,
-        builder: (context, optics, _) => _buildGlass(context, optics),
+        builder: (context, _, __) => _buildGlass(
+            context, LKStore.glassConfigurationFor(MediaQuery.sizeOf(context))),
       );
   Widget _buildGlass(BuildContext context, GlassConfiguration optics) {
     final media = MediaQuery.of(context);
