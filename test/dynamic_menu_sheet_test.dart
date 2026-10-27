@@ -21,9 +21,16 @@ void main() {
           LKClient.shared.session.securityKey = 'mock';
         }
         final writes = <String>[];
+        var failNextToggle = false;
         LKApi.client =
             LKClient.forTesting(httpClient: MockClient((request) async {
-          if (request.url.path.contains('toggle')) writes.add(request.body);
+          if (request.url.path.contains('toggle')) {
+            writes.add(request.body);
+            if (failNextToggle) {
+              return http.Response(
+                  jsonEncode({'code': 9, 'message': 'failed'}), 200);
+            }
+          }
           final data = request.url.path.endsWith('get-feed-v1')
               ? {
                   'list': [
@@ -76,6 +83,20 @@ void main() {
           expect(writes, hasLength(1));
           expect(jsonDecode(writes.single)['dynamic_id'], 17);
           expect(jsonDecode(writes.single)['act'], 'unfavorite');
+          await tester.longPress(find.text('menu fixture').first);
+          await tester.pumpAndSettle();
+          expect(find.text('收藏此动态'), findsOneWidget);
+          failNextToggle = true;
+          await tester.ensureVisible(find.text('收藏此动态'));
+          await tester.tap(find.text('收藏此动态'));
+          await tester.pump();
+          expect(find.text('收藏操作失败，请重试'), findsOneWidget);
+          await tester.pumpAndSettle();
+          await tester.longPress(find.text('menu fixture').first);
+          await tester.pumpAndSettle();
+          expect(find.text('收藏此动态'), findsOneWidget);
+          await tester.tap(find.byTooltip('关闭'));
+          await tester.pumpAndSettle();
         } else {
           expect(favorite, findsNothing);
           expect(find.text('点赞此动态'), findsNothing);
@@ -87,4 +108,39 @@ void main() {
       });
     }
   }
+  testWidgets('duplicate append stops even if cursor changes', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    LKClient.shared.session.clear();
+    final pages = <int>[];
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      if (request.url.path.endsWith('get-feed-v1')) {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final page = body['page'] as int;
+        pages.add(page);
+        return http.Response(
+            jsonEncode({
+              'code': 0,
+              'data': {
+                'list': [
+                  {'dynamic_id': 10, 'content': 'repeat fixture'}
+                ],
+                'next_cursor': 'cursor-$page',
+                'has_more': true,
+              }
+            }),
+            200);
+      }
+      return http.Response('{"code":0,"data":{}}', 200);
+    }));
+    addTearDown(() => LKApi.client = LKClient.shared);
+    await tester.pumpWidget(const MaterialApp(home: DynamicPage()));
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 4; i++) {
+      await tester.drag(
+          find.byType(CustomScrollView).first, const Offset(0, -500));
+      await tester.pumpAndSettle();
+    }
+    expect(pages, [1, 2]);
+    expect(find.text('repeat fixture'), findsOneWidget);
+  });
 }

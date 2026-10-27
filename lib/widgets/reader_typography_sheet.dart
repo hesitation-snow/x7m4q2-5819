@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../reader/reader_typography.dart';
 import 'reader_settings_section.dart';
+import 'm3_controls.dart';
 
 /// Material 3 阅读排版设置，预览与提交保持独立。
 class ReaderTypographySheet extends StatefulWidget {
@@ -81,7 +82,8 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
         contentPadding: EdgeInsets.zero,
       ),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        padding: EdgeInsets.fromLTRB(
+            16, 12, 16, 32 + MediaQuery.paddingOf(context).bottom),
         children: [
           // 1. 顶部排版实时预览卡片
           _buildPreviewCard(scheme),
@@ -92,365 +94,363 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
           const SizedBox(height: 16),
 
           // 3. 常用排版滑杆分组
-          Card(
-            margin: EdgeInsets.zero,
-            elevation: 0,
-            color: readerSettingsCardColor(scheme),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22),
-              side: BorderSide(
-                color: scheme.outlineVariant.withValues(alpha: 0.25),
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('文字与版式', style: theme.textTheme.titleMedium),
-                  const SizedBox(height: 16),
-                  Text('字重', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 6),
-                  Text('仅调整阅读正文；部分字体的档位差异可能不明显',
-                      style: TextStyle(
-                          fontSize: 12, color: scheme.onSurfaceVariant)),
-                  const SizedBox(height: 10),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(children: [
-                      for (final weight in ReaderFontWeight.values)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ChoiceChip(
-                            label: Text(weight.label,
-                                style:
-                                    TextStyle(fontWeight: weight.fontWeight)),
-                            selected: _current.weight == weight,
-                            onSelected: (_) => _commitChange(
-                                _current.copyWith(weight: weight)),
-                          ),
-                        ),
-                    ]),
-                  ),
-                  const Divider(height: 16, thickness: 0.5),
-                  // 字号大小
-                  _buildSliderRow(
-                    label: '字号大小',
-                    value: _fontSize,
-                    min: 12.0,
-                    max: 28.0,
-                    divisions: 16,
-                    valueText: '${_fontSize.toStringAsFixed(0)} pt',
-                    defaultValue: 17.0,
-                    onChanged: (v) {
-                      setState(() => _fontSize = v);
-                      widget.onFontSizeChanged?.call(v);
-                    },
-                    onChangeEnd: (v) {
-                      widget.onFontSizeChanged?.call(v);
-                    },
-                  ),
-                  const Divider(height: 16, thickness: 0.5),
-
-                  // 行间距
-                  _buildSliderRow(
-                    label: '行间距',
-                    value: _current.lineHeight,
-                    min: 1.20,
-                    max: 2.40,
-                    divisions: 24,
-                    valueText: _current.lineHeight.toStringAsFixed(2),
-                    defaultValue: 1.70,
-                    onChanged: (v) =>
-                        _updatePreview(_current.copyWith(lineHeight: v)),
-                    onChangeEnd: (v) =>
-                        _commitChange(_current.copyWith(lineHeight: v)),
-                  ),
-                  const Divider(height: 16, thickness: 0.5),
-
-                  // 段落间距
-                  _buildSliderRow(
-                    label: '段落间距',
-                    value: _current.paragraphSpacing,
-                    min: 0.0,
-                    max: 32.0,
-                    divisions: 16,
-                    valueText: '${_current.paragraphSpacing.round()} px',
-                    defaultValue: 12.0,
-                    onChanged: (v) =>
-                        _updatePreview(_current.copyWith(paragraphSpacing: v)),
-                    onChangeEnd: (v) =>
-                        _commitChange(_current.copyWith(paragraphSpacing: v)),
-                  ),
-                  const Divider(height: 16, thickness: 0.5),
-
-                  // 字符间距
-                  _buildSliderRow(
-                    label: '字符间距',
-                    value: _current.letterSpacing,
-                    min: -0.5,
-                    max: 2.5,
-                    divisions: 30,
-                    valueText:
-                        '${_current.letterSpacing >= 0 ? '+' : ''}${_current.letterSpacing.toStringAsFixed(1)} pt',
-                    defaultValue: 0.3,
-                    onChanged: (v) =>
-                        _updatePreview(_current.copyWith(letterSpacing: v)),
-                    onChangeEnd: (v) =>
-                        _commitChange(_current.copyWith(letterSpacing: v)),
-                  ),
-                  const Divider(height: 16, thickness: 0.5),
-
-                  // 页边留白（左右联动）
-                  _buildSliderRow(
-                    label: '页边留白',
-                    value: _current.marginHorizontal,
-                    min: 8.0,
-                    max: 48.0,
-                    divisions: 20,
-                    valueText: '${_current.marginHorizontal.round()} dp',
-                    defaultValue: 20.0,
-                    enabled: !_current.customMargins,
-                    onChanged: (v) =>
-                        _updatePreview(_current.copyWith(marginHorizontal: v)),
-                    onChangeEnd: (v) =>
-                        _commitChange(_current.copyWith(marginHorizontal: v)),
-                  ),
-                  if (_current.customMargins)
-                    Text('已启用独立四周边距，请在下方分别调整；此滑杆暂不生效。',
+          ReaderSettingsSection(
+            title: '文字与版式',
+            children: [
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('字重', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 6),
+                    Text('仅调整阅读正文；部分字体的档位差异可能不明显',
                         style: TextStyle(
                             fontSize: 12, color: scheme.onSurfaceVariant)),
-                  const Divider(height: 16, thickness: 0.5),
-
-                  // 两端对齐开关
-                  _buildSwitchTile(
-                    title: '两端对齐',
-                    subtitle: '段内文字平整铺满，段末行保持自然',
-                    value: _current.justify,
-                    onChanged: (v) {
-                      final updated = _current.copyWith(justify: v);
-                      _commitChange(updated);
-                    },
-                    scheme: scheme,
-                  ),
-                  const Divider(height: 16, thickness: 0.5),
-
-                  // 分栏模式：选项独占一行，窄屏与大字体不挤压标题。
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            '分栏模式',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          Text(
-                            widget.paged ? '自动：宽屏双栏，手机单栏' : '仅对翻页模式生效，请先开启翻页模式',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: scheme.onSurfaceVariant,
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        for (var i = 0;
+                            i < ReaderFontWeight.values.length;
+                            i++) ...[
+                          if (i > 0) const SizedBox(width: 8),
+                          Expanded(
+                            child: M3ChoiceChip(
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                              label: ReaderFontWeight.values[i].label,
+                              selected:
+                                  _current.weight == ReaderFontWeight.values[i],
+                              onSelected: (_) => _commitChange(
+                                  _current.copyWith(
+                                      weight: ReaderFontWeight.values[i])),
                             ),
                           ),
                         ],
-                      ),
-                      const SizedBox(height: 10),
-                      SegmentedButton<ReaderColumnMode>(
-                        segments: const [
-                          ButtonSegment(
-                            value: ReaderColumnMode.auto,
-                            label: Text('自动', style: TextStyle(fontSize: 12)),
-                          ),
-                          ButtonSegment(
-                            value: ReaderColumnMode.single,
-                            label: Text('单栏', style: TextStyle(fontSize: 12)),
-                          ),
-                          ButtonSegment(
-                            value: ReaderColumnMode.doubleColumn,
-                            label: Text('双栏', style: TextStyle(fontSize: 12)),
-                          ),
-                        ],
-                        selected: {_current.columnMode},
-                        onSelectionChanged: !widget.paged
-                            ? null
-                            : (set) {
-                                final updated =
-                                    _current.copyWith(columnMode: set.first);
-                                _commitChange(updated);
-                              },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
+                      ],
+                    ),
+                    const Divider(height: 16, thickness: 0.5),
+                    // 字号大小
+                    _buildSliderRow(
+                      label: '字号大小',
+                      value: _fontSize,
+                      min: 12.0,
+                      max: 28.0,
+                      divisions: 16,
+                      valueText: '${_fontSize.toStringAsFixed(0)} pt',
+                      defaultValue: 17.0,
+                      onChanged: (v) {
+                        setState(() => _fontSize = v);
+                        widget.onFontSizeChanged?.call(v);
+                      },
+                      onChangeEnd: (v) {
+                        widget.onFontSizeChanged?.call(v);
+                      },
+                    ),
+                    const Divider(height: 16, thickness: 0.5),
 
-          // 段落与边距选项直接展示，不再折叠。
-          Card(
-            margin: EdgeInsets.zero,
-            elevation: 0,
-            color: readerSettingsCardColor(scheme),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22),
-              side: BorderSide(
-                  color: scheme.outlineVariant.withValues(alpha: 0.25)),
-            ),
-            child: Column(
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('段落与边距',
+                    // 行间距
+                    _buildSliderRow(
+                      label: '行间距',
+                      value: _current.lineHeight,
+                      min: 1.20,
+                      max: 2.40,
+                      divisions: 24,
+                      valueText: _current.lineHeight.toStringAsFixed(2),
+                      defaultValue: 1.70,
+                      onChanged: (v) =>
+                          _updatePreview(_current.copyWith(lineHeight: v)),
+                      onChangeEnd: (v) =>
+                          _commitChange(_current.copyWith(lineHeight: v)),
+                    ),
+                    const Divider(height: 16, thickness: 0.5),
+
+                    // 段落间距
+                    _buildSliderRow(
+                      label: '段落间距',
+                      value: _current.paragraphSpacing,
+                      min: 0.0,
+                      max: 32.0,
+                      divisions: 16,
+                      valueText: '${_current.paragraphSpacing.round()} px',
+                      defaultValue: 12.0,
+                      onChanged: (v) => _updatePreview(
+                          _current.copyWith(paragraphSpacing: v)),
+                      onChangeEnd: (v) =>
+                          _commitChange(_current.copyWith(paragraphSpacing: v)),
+                    ),
+                    const Divider(height: 16, thickness: 0.5),
+
+                    // 字符间距
+                    _buildSliderRow(
+                      label: '字符间距',
+                      value: _current.letterSpacing,
+                      min: -0.5,
+                      max: 2.5,
+                      divisions: 30,
+                      valueText:
+                          '${_current.letterSpacing >= 0 ? '+' : ''}${_current.letterSpacing.toStringAsFixed(1)} pt',
+                      defaultValue: 0.3,
+                      onChanged: (v) =>
+                          _updatePreview(_current.copyWith(letterSpacing: v)),
+                      onChangeEnd: (v) =>
+                          _commitChange(_current.copyWith(letterSpacing: v)),
+                    ),
+                    const Divider(height: 16, thickness: 0.5),
+
+                    // 页边留白（左右联动）
+                    _buildSliderRow(
+                      label: '页边留白',
+                      value: _current.marginHorizontal,
+                      min: 8.0,
+                      max: 48.0,
+                      divisions: 20,
+                      valueText: '${_current.marginHorizontal.round()} dp',
+                      defaultValue: 20.0,
+                      enabled: !_current.customMargins,
+                      onChanged: (v) => _updatePreview(
+                          _current.copyWith(marginHorizontal: v)),
+                      onChangeEnd: (v) =>
+                          _commitChange(_current.copyWith(marginHorizontal: v)),
+                    ),
+                    if (_current.customMargins)
+                      Text('已启用独立四周边距，请在下方分别调整；此滑杆暂不生效。',
                           style: TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w600))),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Divider(height: 1, thickness: 0.5),
-                      const SizedBox(height: 12),
+                              fontSize: 12, color: scheme.onSurfaceVariant)),
+                    const Divider(height: 16, thickness: 0.5),
 
-                      // 词间距
-                      _buildSliderRow(
-                        label: '词间距',
-                        value: _current.wordSpacing,
-                        min: 0.0,
-                        max: 8.0,
-                        divisions: 16,
-                        valueText:
-                            '${_current.wordSpacing.toStringAsFixed(1)} dp',
-                        defaultValue: 0.0,
-                        onChanged: (v) =>
-                            _updatePreview(_current.copyWith(wordSpacing: v)),
-                        onChangeEnd: (v) =>
-                            _commitChange(_current.copyWith(wordSpacing: v)),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2, bottom: 4),
-                        child: Text(
-                          '仅对空格分隔的外文/数字单词生效，纯中文无空格不影响',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                      const Divider(height: 16, thickness: 0.5),
+                    // 两端对齐开关
+                    _buildSwitchTile(
+                      icon: Icons.format_align_justify_rounded,
+                      title: '两端对齐',
+                      subtitle: '段内文字平整铺满，段末行保持自然',
+                      value: _current.justify,
+                      onChanged: (v) {
+                        final updated = _current.copyWith(justify: v);
+                        _commitChange(updated);
+                      },
+                      scheme: scheme,
+                    ),
+                    const Divider(height: 16, thickness: 0.5),
 
-                      // 首行缩进
-                      _buildSwitchTile(
-                        title: '首行缩进',
-                        subtitle: '普通正文段落首行缩进两字符宽',
-                        value: _current.firstLineIndentChars > 0,
-                        onChanged: (v) {
-                          final updated = _current.copyWith(
-                            firstLineIndentChars: v ? 2.0 : 0.0,
-                          );
-                          _commitChange(updated);
-                        },
-                        scheme: scheme,
-                      ),
-                      const Divider(height: 16, thickness: 0.5),
-
-                      // 独立调整四周边距开关
-                      _buildSwitchTile(
-                        title: '独立四周边距',
-                        subtitle: _current.customMargins
-                            ? '当前使用下方独立边距'
-                            : '开启后可独立微调上、下、左、右边距',
-                        value: _current.customMargins,
-                        onChanged: (v) {
-                          final updated = _current.copyWith(customMargins: v);
-                          _commitChange(updated);
-                        },
-                        scheme: scheme,
-                      ),
-
-                      if (_current.customMargins) ...[
-                        const SizedBox(height: 8),
-                        _buildSliderRow(
-                          label: '上边距',
-                          value: _current.marginTop,
-                          min: 44.0,
-                          max: 120.0,
-                          divisions: 38,
-                          valueText: '${_current.marginTop.round()} dp',
-                          defaultValue: 56.0,
-                          onChanged: (v) =>
-                              _updatePreview(_current.copyWith(marginTop: v)),
-                          onChangeEnd: (v) =>
-                              _commitChange(_current.copyWith(marginTop: v)),
+                    // 分栏模式：选项独占一行，窄屏与大字体不挤压标题。
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '分栏模式',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              widget.paged
+                                  ? '自动：宽屏双栏，手机单栏'
+                                  : '仅对翻页模式生效，请先开启翻页模式',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 8),
-                        _buildSliderRow(
-                          label: '下边距',
-                          value: _current.marginBottom,
-                          min: 50.0,
-                          max: 140.0,
-                          divisions: 45,
-                          valueText: '${_current.marginBottom.round()} dp',
-                          defaultValue: 70.0,
-                          onChanged: (v) => _updatePreview(
-                              _current.copyWith(marginBottom: v)),
-                          onChangeEnd: (v) =>
-                              _commitChange(_current.copyWith(marginBottom: v)),
-                        ),
-                        const SizedBox(height: 8),
-                        _buildSliderRow(
-                          label: '左边距',
-                          value: _current.marginLeft,
-                          min: 8.0,
-                          max: 60.0,
-                          divisions: 26,
-                          valueText: '${_current.marginLeft.round()} dp',
-                          defaultValue: 20.0,
-                          onChanged: (v) =>
-                              _updatePreview(_current.copyWith(marginLeft: v)),
-                          onChangeEnd: (v) =>
-                              _commitChange(_current.copyWith(marginLeft: v)),
-                        ),
-                        const SizedBox(height: 8),
-                        _buildSliderRow(
-                          label: '右边距',
-                          value: _current.marginRight,
-                          min: 8.0,
-                          max: 60.0,
-                          divisions: 26,
-                          valueText: '${_current.marginRight.round()} dp',
-                          defaultValue: 20.0,
-                          onChanged: (v) =>
-                              _updatePreview(_current.copyWith(marginRight: v)),
-                          onChangeEnd: (v) =>
-                              _commitChange(_current.copyWith(marginRight: v)),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            for (var i = 0; i < 3; i++) ...[
+                              if (i > 0) const SizedBox(width: 8),
+                              Expanded(
+                                child: M3ChoiceChip(
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
+                                  label: [
+                                    (ReaderColumnMode.auto, '自动'),
+                                    (ReaderColumnMode.single, '单栏'),
+                                    (ReaderColumnMode.doubleColumn, '双栏'),
+                                  ][i]
+                                      .$2,
+                                  selected: _current.columnMode ==
+                                      [
+                                        (ReaderColumnMode.auto, '自动'),
+                                        (ReaderColumnMode.single, '单栏'),
+                                        (ReaderColumnMode.doubleColumn, '双栏'),
+                                      ][i]
+                                          .$1,
+                                  onSelected: !widget.paged
+                                      ? null
+                                      : (_) => _commitChange(_current.copyWith(
+                                              columnMode: [
+                                            (ReaderColumnMode.auto, '自动'),
+                                            (ReaderColumnMode.single, '单栏'),
+                                            (
+                                              ReaderColumnMode.doubleColumn,
+                                              '双栏'
+                                            ),
+                                          ][i]
+                                                  .$1)),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ],
-                      const SizedBox(height: 16),
+                    ),
+                  ],
+                ),
+              )
+            ],
+          ),
 
-                      // 恢复默认排版按钮
-                      Center(
-                        child: OutlinedButton.icon(
-                          onPressed: () {
-                            final std = ReaderTypography.standard();
-                            _commitChange(std);
-                          },
-                          icon: const Icon(Icons.refresh_rounded, size: 18),
-                          label: const Text('恢复默认排版'),
+          // 段落与边距选项直接展示，不再折叠。
+          ReaderSettingsSection(
+            title: '段落与边距',
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Divider(height: 1, thickness: 0.5),
+                    const SizedBox(height: 12),
+
+                    // 词间距
+                    _buildSliderRow(
+                      label: '词间距',
+                      value: _current.wordSpacing,
+                      min: 0.0,
+                      max: 8.0,
+                      divisions: 16,
+                      valueText:
+                          '${_current.wordSpacing.toStringAsFixed(1)} dp',
+                      defaultValue: 0.0,
+                      onChanged: (v) =>
+                          _updatePreview(_current.copyWith(wordSpacing: v)),
+                      onChangeEnd: (v) =>
+                          _commitChange(_current.copyWith(wordSpacing: v)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2, bottom: 4),
+                      child: Text(
+                        '仅对空格分隔的外文/数字单词生效，纯中文无空格不影响',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
                         ),
                       ),
+                    ),
+                    const Divider(height: 16, thickness: 0.5),
+
+                    // 首行缩进
+                    _buildSwitchTile(
+                      icon: Icons.format_indent_increase_rounded,
+                      title: '首行缩进',
+                      subtitle: '普通正文段落首行缩进两字符宽',
+                      value: _current.firstLineIndentChars > 0,
+                      onChanged: (v) {
+                        final updated = _current.copyWith(
+                          firstLineIndentChars: v ? 2.0 : 0.0,
+                        );
+                        _commitChange(updated);
+                      },
+                      scheme: scheme,
+                    ),
+                    const Divider(height: 16, thickness: 0.5),
+
+                    // 独立调整四周边距开关
+                    _buildSwitchTile(
+                      icon: Icons.space_bar_rounded,
+                      title: '独立四周边距',
+                      subtitle: _current.customMargins
+                          ? '当前使用下方独立边距'
+                          : '开启后可独立微调上、下、左、右边距',
+                      value: _current.customMargins,
+                      onChanged: (v) {
+                        final updated = _current.copyWith(customMargins: v);
+                        _commitChange(updated);
+                      },
+                      scheme: scheme,
+                    ),
+
+                    if (_current.customMargins) ...[
+                      const SizedBox(height: 8),
+                      _buildSliderRow(
+                        label: '上边距',
+                        value: _current.marginTop,
+                        min: 44.0,
+                        max: 120.0,
+                        divisions: 38,
+                        valueText: '${_current.marginTop.round()} dp',
+                        defaultValue: 56.0,
+                        onChanged: (v) =>
+                            _updatePreview(_current.copyWith(marginTop: v)),
+                        onChangeEnd: (v) =>
+                            _commitChange(_current.copyWith(marginTop: v)),
+                      ),
+                      const SizedBox(height: 8),
+                      _buildSliderRow(
+                        label: '下边距',
+                        value: _current.marginBottom,
+                        min: 50.0,
+                        max: 140.0,
+                        divisions: 45,
+                        valueText: '${_current.marginBottom.round()} dp',
+                        defaultValue: 70.0,
+                        onChanged: (v) =>
+                            _updatePreview(_current.copyWith(marginBottom: v)),
+                        onChangeEnd: (v) =>
+                            _commitChange(_current.copyWith(marginBottom: v)),
+                      ),
+                      const SizedBox(height: 8),
+                      _buildSliderRow(
+                        label: '左边距',
+                        value: _current.marginLeft,
+                        min: 8.0,
+                        max: 60.0,
+                        divisions: 26,
+                        valueText: '${_current.marginLeft.round()} dp',
+                        defaultValue: 20.0,
+                        onChanged: (v) =>
+                            _updatePreview(_current.copyWith(marginLeft: v)),
+                        onChangeEnd: (v) =>
+                            _commitChange(_current.copyWith(marginLeft: v)),
+                      ),
+                      const SizedBox(height: 8),
+                      _buildSliderRow(
+                        label: '右边距',
+                        value: _current.marginRight,
+                        min: 8.0,
+                        max: 60.0,
+                        divisions: 26,
+                        valueText: '${_current.marginRight.round()} dp',
+                        defaultValue: 20.0,
+                        onChanged: (v) =>
+                            _updatePreview(_current.copyWith(marginRight: v)),
+                        onChangeEnd: (v) =>
+                            _commitChange(_current.copyWith(marginRight: v)),
+                      ),
                     ],
-                  ),
+                    const SizedBox(height: 16),
+
+                    // 恢复默认排版按钮
+                    Center(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          final std = ReaderTypography.standard();
+                          _commitChange(std);
+                        },
+                        icon: const Icon(Icons.refresh_rounded, size: 18),
+                        label: const Text('恢复默认排版'),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),
@@ -459,6 +459,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
 
   /// 统一的开关行（去除深色独立卡片底色，与排版卡片无缝融合）
   Widget _buildSwitchTile({
+    required IconData icon,
     required String title,
     String? subtitle,
     required bool value,
@@ -470,10 +471,8 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
       shape: const RoundedRectangleBorder(),
       contentPadding: EdgeInsets.zero,
       isThreeLine: false,
-      title: Text(
-        title,
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-      ),
+      secondary: AppSettingIcon(icon),
+      title: Text(title),
       subtitle: subtitle != null
           ? Text(
               subtitle,
@@ -520,32 +519,81 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text('排版预览',
-                  style: Theme.of(context)
-                      .textTheme
-                      .labelLarge
-                      ?.copyWith(color: widget.textColor)),
-              if (widget.onPickTextColor != null)
-                TextButton.icon(
-                  style:
-                      TextButton.styleFrom(foregroundColor: widget.textColor),
-                  onPressed: widget.onPickTextColor,
-                  icon: const Icon(Icons.format_color_text, size: 18),
-                  label: const Text('文字颜色'),
-                ),
-              Text(
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final leftItems = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.visibility_outlined,
+                      size: 16, color: widget.textColor.withValues(alpha: 0.7)),
+                  const SizedBox(width: 6),
+                  Text('排版预览',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          color: widget.textColor.withValues(alpha: 0.7))),
+                  if (widget.onPickTextColor != null) ...[
+                    const SizedBox(width: 14),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: widget.onPickTextColor,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 2),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: widget.textColor,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              '文字颜色',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelMedium
+                                  ?.copyWith(
+                                      color: widget.textColor
+                                          .withValues(alpha: 0.7)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              );
+
+              final rightText = Text(
                 '${_current.currentPreset.label} · 行高 ${_current.lineHeight.toStringAsFixed(2)}',
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
-                    ?.copyWith(color: widget.textColor),
-              ),
-            ],
+                    ?.copyWith(color: widget.textColor.withValues(alpha: 0.7)),
+              );
+
+              if (constraints.maxWidth < 360) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    leftItems,
+                    const SizedBox(height: 4),
+                    Align(alignment: Alignment.centerRight, child: rightText),
+                  ],
+                );
+              }
+
+              return Row(
+                children: [
+                  leftItems,
+                  const Spacer(),
+                  rightText,
+                ],
+              );
+            },
           ),
           const SizedBox(height: 8),
           Text(
@@ -596,29 +644,35 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
   /// 预设选择胶囊栏
   Widget _buildPresetBar(ColorScheme scheme) {
     final active = _current.currentPreset;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+    final presets = [
+      (ReaderTypographyPreset.compact, '紧凑'),
+      (ReaderTypographyPreset.standard, '标准'),
+      (ReaderTypographyPreset.loose, '宽松'),
+      (ReaderTypographyPreset.custom, '自定义'),
+    ];
+
+    return Row(
       children: [
-        for (final preset in [
-          ReaderTypographyPreset.compact,
-          ReaderTypographyPreset.standard,
-          ReaderTypographyPreset.loose,
-        ])
-          ChoiceChip(
-            label: Text(preset.label),
-            selected: active == preset,
-            onSelected: (_) {
-              final target = switch (preset) {
-                ReaderTypographyPreset.compact => ReaderTypography.compact(),
-                ReaderTypographyPreset.loose => ReaderTypography.loose(),
-                _ => ReaderTypography.standard(),
-              };
-              _commitChange(target.copyWith(weight: _current.weight));
-            },
+        for (var i = 0; i < presets.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(
+            child: M3ChoiceChip(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              label: presets[i].$2,
+              selected: active == presets[i].$1,
+              onSelected: (_) {
+                if (presets[i].$1 == ReaderTypographyPreset.custom) return;
+                final target = switch (presets[i].$1) {
+                  ReaderTypographyPreset.compact => ReaderTypography.compact(),
+                  ReaderTypographyPreset.loose => ReaderTypography.loose(),
+                  _ => ReaderTypography.standard(),
+                };
+                _commitChange(target.copyWith(weight: _current.weight));
+              },
+            ),
           ),
-        if (active == ReaderTypographyPreset.custom)
-          const Chip(label: Text('自定义')),
+        ],
       ],
     );
   }

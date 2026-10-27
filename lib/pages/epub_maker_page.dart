@@ -11,6 +11,7 @@ import '../services/app_motion.dart';
 import '../services/epub/epub_download_service.dart';
 import '../services/epub/epub_models.dart';
 import '../widgets/common.dart';
+import '../widgets/m3_controls.dart';
 
 class EpubMakerPage extends StatefulWidget {
   final LKBook book;
@@ -435,20 +436,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                     ),
                   ),
                   child: SwitchListTile(
-                    secondary: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: scheme.primary.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.image_outlined,
-                        color: scheme.primary,
-                        size: 20,
-                      ),
-                    ),
+                    secondary: const AppSettingIcon(Icons.image_outlined),
                     title: const Text('包含封面与插画'),
                     subtitle: Text(
                       _includeIllustrations ? '下载书中插画并在 EPUB 中排版' : '仅纯文本正文',

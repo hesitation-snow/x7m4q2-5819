@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/lk_api.dart';
 import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/reading_session.dart';
+import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/book_detail_page.dart';
 import 'package:yomiru/pages/welfare_page.dart';
 import 'package:yomiru/services/reading_progress_reporter.dart';
@@ -27,10 +28,12 @@ http.Response response(Map<String, dynamic> data, {int code = 0}) =>
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    LKStore.dailyTreasureEnabled.value = true;
     LKClient.shared.session.securityKey = 'mock';
     LKClient.shared.session.uid = 12345;
   });
   tearDown(() {
+    LKStore.dailyTreasureEnabled.value = false;
     LKClient.shared.session.clear();
     LKApi.client = LKClient.shared;
   });

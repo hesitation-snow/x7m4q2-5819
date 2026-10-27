@@ -45,6 +45,8 @@ import '../reader/reader_typography.dart';
 import '../widgets/reader_typography_sheet.dart';
 import '../widgets/reader_text_color_picker.dart';
 import '../widgets/reader_settings_section.dart';
+import '../widgets/m3_controls.dart';
+import '../widgets/m3_menu_sheet.dart';
 
 final RegExp _readerFootnoteDefinitionPattern =
     RegExp(r'^[\s\u3000]*\[\s*([^\]]+?)\s*\]\s*(.*)$', dotAll: true);
@@ -309,6 +311,8 @@ class _ReaderPageState extends State<ReaderPage>
   bool _restoringScrollAnchor = false;
   bool _progressUpdateScheduled = false;
   Timer? _positionPersistTimer;
+  // 尚未读取并应用本章的位置时，任何临时布局位置都不可持久化。
+  bool _positionRestored = false;
   double _scrollLayoutWidth = 0;
   bool _scrollLayoutLockedBody = false;
   double? _immersiveHeight;
@@ -448,12 +452,18 @@ class _ReaderPageState extends State<ReaderPage>
 
   void _onScroll() {
     if (!_sc.hasClients) return;
-    if (_paged || _restoringScrollAnchor || _progressUpdateScheduled) return;
+    if (!_positionRestored ||
+        _paged ||
+        _restoringScrollAnchor ||
+        _progressUpdateScheduled) {
+      return;
+    }
     final generation = _scrollProgressGeneration;
     _progressUpdateScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _progressUpdateScheduled = false;
       if (!mounted ||
+          !_positionRestored ||
           _paged ||
           _restoringScrollAnchor ||
           generation != _scrollProgressGeneration) {
@@ -1290,7 +1300,7 @@ class _ReaderPageState extends State<ReaderPage>
   void _savePos() {
     final anchor = _positionController.value;
     final frac = _progress;
-    if (anchor != null && frac > 0.005) {
+    if (_positionRestored && anchor != null) {
       unawaited(ReaderPrefs.setReadPosFrac(widget.chapterId, frac));
       unawaited(ReaderPrefs.setPosition(widget.chapterId, anchor));
     }
@@ -1530,6 +1540,10 @@ class _ReaderPageState extends State<ReaderPage>
   // ==================== 加载与解析 ====================
 
   Future<void> _load() async {
+    if (_detail == null) {
+      _positionRestored = false;
+      _positionPersistTimer?.cancel();
+    }
     final loadSerial = ++_loadSerial;
     setState(() {
       _loading = true;
@@ -1633,16 +1647,11 @@ class _ReaderPageState extends State<ReaderPage>
             ownerUid: cacheOwnerUid, expectedGeneration: cacheGeneration));
       }
       if (d.locked && !d.unlocked) _refreshCoins();
-      if (LKClient.shared.session.isLoggedIn && !d.locked) {
+      if (LKClient.shared.session.isLoggedIn && (!d.locked || d.unlocked)) {
         unawaited(() async {
           try {
-            await LKApi.saveHistory(
-                widget.bookId,
-                _effectiveVolumeId,
-                widget.chapterId,
-                (initialLoad ? restore : _progress * 100)
-                    .round()
-                    .clamp(0, 100));
+            await LKApi.saveHistory(widget.bookId, _effectiveVolumeId,
+                widget.chapterId, (_progress * 100).round().clamp(0, 100));
           } catch (_) {}
         }());
       }
@@ -1706,7 +1715,9 @@ class _ReaderPageState extends State<ReaderPage>
     if (restorePosition || existingAnchor != null) {
       final anchor = _normalizeAnchor(
           existingAnchor ?? savedPosition ?? _anchorForProgress(restore));
-      _publishPosition(anchor, transitionId: transitionId, persist: false);
+      final accepted =
+          _publishPosition(anchor, transitionId: transitionId, persist: false);
+      if (accepted && restorePosition) _positionRestored = true;
       // 保存值对应正文逻辑位置，不直接换算尚未稳定的滚动总高度。
       if (_paged) {
         _pendingPagedAnchor = anchor;
@@ -2317,85 +2328,41 @@ class _ReaderPageState extends State<ReaderPage>
       context: context,
       isScrollControlled: true,
       sheetAnimationStyle: AppMotion.style(context),
-      backgroundColor: _bgColor,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
+      clipBehavior: Clip.antiAlias,
       builder: (sheetContext) {
         final screenHeight = MediaQuery.sizeOf(sheetContext).height;
+        final scheme = Theme.of(sheetContext).colorScheme;
         return SafeArea(
           top: false,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxHeight: screenHeight * 0.62),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 34,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: _textColor.withValues(alpha: 0.26),
-                        borderRadius: BorderRadius.circular(99),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                M3SheetHeader(
+                  title: '注释 [$reference]',
+                  icon: Icons.notes_rounded,
+                  onClose: () => Navigator.pop(sheetContext),
+                ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(22, 8, 22, 24),
+                    child: Text(
+                      noteText,
+                      style: TextStyle(
+                        color: scheme.onSurface,
+                        fontSize: 16,
+                        height: 1.65,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      Text(
-                        '注释',
-                        style: TextStyle(
-                          color: _textColor,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 9, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _linkColor.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '[$reference]',
-                          style: TextStyle(
-                            color: _linkColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        tooltip: '关闭',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: () => Navigator.pop(sheetContext),
-                        icon: Icon(Icons.close_rounded,
-                            color: _textColor.withValues(alpha: 0.68)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Flexible(
-                    child: SingleChildScrollView(
-                      child: Text(
-                        noteText,
-                        style: TextStyle(
-                          color: _textColor.withValues(alpha: 0.92),
-                          fontSize: 16,
-                          height: 1.65,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         );
@@ -2581,11 +2548,10 @@ class _ReaderPageState extends State<ReaderPage>
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF1E2025)
-          : Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      clipBehavior: Clip.antiAlias,
       builder: (sheetCtx) {
         final scheme = Theme.of(sheetCtx).colorScheme;
         final isDark = Theme.of(sheetCtx).brightness == Brightness.dark;
@@ -2599,30 +2565,14 @@ class _ReaderPageState extends State<ReaderPage>
               child: SafeArea(
                   top: false,
                   child: Column(children: [
-                    Container(
-                      width: 32,
-                      height: 4,
-                      margin: const EdgeInsets.only(top: 10),
-                      decoration: BoxDecoration(
-                          color: scheme.outlineVariant,
-                          borderRadius: BorderRadius.circular(4)),
+                    M3SheetHeader(
+                      title: '阅读设置',
+                      icon: Icons.tune_rounded,
+                      closeTooltip: '关闭阅读设置',
+                      onClose: () => Navigator.pop(sheetCtx),
                     ),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 4, 8, 0),
-                      child: Row(children: [
-                        const Expanded(
-                            child: Text('阅读设置',
-                                style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w600))),
-                        IconButton(
-                            tooltip: '关闭阅读设置',
-                            onPressed: () => Navigator.pop(sheetCtx),
-                            icon: const Icon(Icons.close_rounded, size: 20)),
-                      ]),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: TabBar(
                         dividerColor: Colors.transparent,
                         indicatorSize: TabBarIndicatorSize.tab,
@@ -2648,12 +2598,12 @@ class _ReaderPageState extends State<ReaderPage>
                           children: [
 // ---- 外观 ----
                             ListView(
-                              padding:
-                                  const EdgeInsets.fromLTRB(12, 16, 12, 24),
+                              padding: EdgeInsets.fromLTRB(16, 12, 16,
+                                  32 + MediaQuery.paddingOf(sheetCtx).bottom),
                               children: [
                                 ReaderSettingsSection(title: '主题', children: [
                                   const Padding(
-                                    padding: EdgeInsets.only(top: 8, bottom: 6),
+                                    padding: EdgeInsets.fromLTRB(16, 12, 16, 6),
                                     child: Text('配色',
                                         style: TextStyle(
                                             fontSize: 15,
@@ -2678,13 +2628,6 @@ class _ReaderPageState extends State<ReaderPage>
                                   ),
                                   const SizedBox(height: 8),
                                   _textColorTile(scheme, setSheet),
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 12),
-                                    child: Text('用于正文和章节标题，可恢复配色默认值。',
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            color: scheme.onSurfaceVariant)),
-                                  ),
                                 ]),
                                 ReaderSettingsSection(title: '显示', children: [
                                   _switchTile(
@@ -2798,8 +2741,8 @@ class _ReaderPageState extends State<ReaderPage>
                             ),
                             // ---- 操作 ----
                             ListView(
-                              padding:
-                                  const EdgeInsets.fromLTRB(12, 16, 12, 24),
+                              padding: EdgeInsets.fromLTRB(16, 12, 16,
+                                  32 + MediaQuery.paddingOf(sheetCtx).bottom),
                               children: [
                                 ReaderSettingsSection(title: '翻页', children: [
                                   _switchTile(scheme, Icons.touch_app_outlined,
@@ -2865,10 +2808,8 @@ class _ReaderPageState extends State<ReaderPage>
       bool value, Function(bool) onChanged,
       {String? subtitle}) {
     return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      secondary: Icon(icon, size: 20, color: scheme.onSurfaceVariant),
-      title: Text(title,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+      secondary: AppSettingIcon(icon),
+      title: Text(title),
       subtitle: subtitle == null
           ? null
           : Text(subtitle,
@@ -2882,30 +2823,18 @@ class _ReaderPageState extends State<ReaderPage>
     final isCustom = _customTextColorValue != null;
     final hex = formatHexColor(_textColor);
     return ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      title: const Text(
-        '文字颜色',
-        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-      ),
+      leading: const AppSettingIcon(Icons.format_color_text_rounded),
+      title: const Text('文字颜色'),
       subtitle: Text(
-        hex,
+        isCustom ? '$hex · 自定义' : '$hex · 跟随配色预设',
         style: TextStyle(
           fontSize: 12,
-          color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
+          color: scheme.onSurfaceVariant,
         ),
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                  color: _textColor,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: scheme.outlineVariant))),
-          const SizedBox(width: 8),
           if (isCustom)
             TextButton(
               style: TextButton.styleFrom(
@@ -2919,6 +2848,14 @@ class _ReaderPageState extends State<ReaderPage>
               },
               child: const Text('恢复默认', style: TextStyle(fontSize: 12)),
             ),
+          Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                  color: _textColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: scheme.outlineVariant))),
+          const SizedBox(width: 4),
           const Icon(Icons.chevron_right_rounded, size: 20),
         ],
       ),
@@ -2948,9 +2885,8 @@ class _ReaderPageState extends State<ReaderPage>
   Widget _aaTile(
       ColorScheme scheme, IconData icon, String label, VoidCallback onTap) {
     return ListTile(
-      dense: true,
-      leading: Icon(icon, size: 20, color: scheme.primary),
-      title: Text(label, style: const TextStyle(fontSize: 14)),
+      leading: AppSettingIcon(icon),
+      title: Text(label),
       onTap: onTap,
     );
   }
@@ -3822,11 +3758,10 @@ class _ReaderPageState extends State<ReaderPage>
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
       isScrollControlled: true,
-      backgroundColor: Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF1E2025)
-          : Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      clipBehavior: Clip.antiAlias,
       builder: (_) => SizedBox(
         height: MediaQuery.of(context).size.height * 0.7,
         child: ReaderCatalogSheet(
@@ -4590,7 +4525,7 @@ class _ReaderPageState extends State<ReaderPage>
                         child: _paged
                             ? Text('第 ${_pageIndex + 1}/${_pages.length} 页',
                                 style: TextStyle(
-                                    fontSize: 11,
+                                    fontSize: _indicatorPosition.bottomFontSize,
                                     fontWeight: FontWeight.bold,
                                     color:
                                         Theme.of(context).colorScheme.primary))
@@ -4599,7 +4534,8 @@ class _ReaderPageState extends State<ReaderPage>
                                 builder: (_, v, __) => Text(
                                     '${(v * 100).toStringAsFixed(1)}%',
                                     style: TextStyle(
-                                        fontSize: 11,
+                                        fontSize:
+                                            _indicatorPosition.bottomFontSize,
                                         fontWeight: FontWeight.bold,
                                         color: Theme.of(context)
                                             .colorScheme
@@ -4608,6 +4544,7 @@ class _ReaderPageState extends State<ReaderPage>
                       deviceStatus: _hideBar && _loadError == null
                           ? RepaintBoundary(
                               child: ReaderDeviceStatus(
+                                  fontSize: _indicatorPosition.bottomFontSize,
                                   color: Theme.of(context).colorScheme.primary))
                           : null,
                       onChanged: (pos) =>

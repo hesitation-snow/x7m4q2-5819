@@ -62,14 +62,26 @@ void main() {
             embedded ? Scaffold(body: SafeArea(child: page)) : page,
             brightness);
         expect(find.text('2 部作品 · 默认顺序'), findsOneWidget);
-        await tester.tap(find.widgetWithText(ChoiceChip, '有更新'));
+        expect(find.byType(ChoiceChip), findsNothing);
+        if (embedded) {
+          expect(find.text('书架'), findsOneWidget);
+          final titleRect = tester.getRect(find.text('书架'));
+          final sourceRect =
+              tester.getRect(find.widgetWithText(TextButton, '本机书架'));
+          expect(sourceRect.left, greaterThan(titleRect.right));
+          final actionsRect = tester
+              .getRect(find.byKey(const ValueKey('shelf-toolbar-actions')));
+          final viewportWidth =
+              tester.view.physicalSize.width / tester.view.devicePixelRatio;
+          expect(viewportWidth - actionsRect.right, lessThanOrEqualTo(16));
+        }
+        await tester.tap(find.byTooltip('筛选与排序'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(PopupMenuItem<String>, '有更新'));
         await tester.pumpAndSettle();
         expect(find.text('1 部作品 · 默认顺序'), findsOneWidget);
         expect(find.byKey(const ValueKey('shelf-book-2')), findsOneWidget);
         expect(find.byKey(const ValueKey('shelf-book-1')), findsNothing);
-        final selected =
-            tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '有更新'));
-        expect(selected.selected, isTrue);
         expect(tester.takeException(), isNull);
       });
     }
@@ -92,6 +104,7 @@ void main() {
         'author_name': '作者名称',
         'publisher_name': '发布者名称',
         'publisher_uid': 88,
+        'updated_at': '2026-05-06 12:34:56',
         'summary': List.filled(30, '正文简介应保持舒适的行距与主题对比度。').join(),
         'tags': ['奇幻', '一段很长很长的作品分类标签', '原创'],
         'default_chapter_id': 9,
@@ -107,11 +120,74 @@ void main() {
         return http.Response(jsonEncode({'code': 0, 'data': data}), 200,
             headers: {'content-type': 'application/json; charset=utf-8'});
       }));
+      addTearDown(() => LKApi.client = LKClient.shared);
       await pumpPage(tester, const BookDetailPage(bookId: 42), brightness);
+      final publisher = find.byKey(const ValueKey('book-publisher-row'));
+      expect(publisher, findsOneWidget);
+      final publisherGap = find.byKey(const ValueKey('publisher-row-gap'));
+      expect(publisherGap, findsOneWidget);
+      expect(tester.getSize(publisherGap).height, 12);
+      final publisherName =
+          find.descendant(of: publisher, matching: find.text('发布者名称'));
+      expect(publisherName, findsOneWidget);
+      expect(
+          find.descendant(of: publisher, matching: find.textContaining('UID')),
+          findsNothing);
+      expect(
+          find.descendant(
+              of: publisher,
+              matching: find.byKey(const ValueKey('publisher-medals'))),
+          findsNothing);
+      final updateText = find.descendant(
+          of: publisher, matching: find.text('2026-05-06 12:34'));
+      expect(updateText, findsOneWidget);
+      expect(
+          find.descendant(of: publisher, matching: find.textContaining('最后更新')),
+          findsNothing);
+      final avatar = tester.getRect(find.descendant(
+          of: publisher, matching: find.byType(CircleAvatar).first));
+      final nameRect = tester.getRect(publisherName);
+      final updateRect = tester.getRect(updateText);
+      final follow = tester
+          .getRect(find.descendant(of: publisher, matching: find.text('关注')));
+      expect(updateRect.left - avatar.right, greaterThanOrEqualTo(8));
+      expect(updateRect.top, greaterThan(nameRect.bottom));
+      expect(follow.left - nameRect.right, greaterThanOrEqualTo(8));
+
       final action = find.byKey(const ValueKey('primary-reading-action'));
+      final actionVisibility =
+          find.byKey(const ValueKey('reading-action-visibility'));
       expect(action.hitTestable(), findsOneWidget);
       expect(tester.widget<FloatingActionButton>(action).onPressed, isNotNull);
-      expect(find.byType(FloatingActionButton), findsOneWidget);
+      expect(tester.widget<IgnorePointer>(actionVisibility).ignoring, isFalse);
+      final detailScaffold = tester.widget<Scaffold>(
+          find.ancestor(of: action, matching: find.byType(Scaffold).first));
+      expect(detailScaffold.floatingActionButtonAnimator,
+          same(FloatingActionButtonAnimator.noAnimation));
+      expect(find.ancestor(of: action, matching: find.byType(AnimatedSlide)),
+          findsOneWidget);
+      expect(find.ancestor(of: action, matching: find.byType(AnimatedOpacity)),
+          findsOneWidget);
+      expect(
+          tester
+              .widget<AnimatedOpacity>(find.ancestor(
+                  of: action, matching: find.byType(AnimatedOpacity)))
+              .opacity,
+          1);
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -320));
+      await tester.pump();
+      expect(tester.widget<IgnorePointer>(actionVisibility).ignoring, isTrue);
+      final slide =
+          find.ancestor(of: action, matching: find.byType(AnimatedSlide));
+      final fade =
+          find.ancestor(of: action, matching: find.byType(AnimatedOpacity));
+      expect(tester.widget<AnimatedSlide>(slide).offset, const Offset(0, 2));
+      expect(tester.widget<AnimatedOpacity>(fade).opacity, 0);
+      expect(action, findsOneWidget);
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 320));
+      await tester.pump();
+      expect(tester.widget<IgnorePointer>(actionVisibility).ignoring, isFalse);
+      await tester.pump(const Duration(milliseconds: 700));
       expect(tester.takeException(), isNull);
     });
   }

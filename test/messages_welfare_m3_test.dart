@@ -113,9 +113,13 @@ void main() {
           expect(find.text('会话摘要'), findsOneWidget);
           expect(tester.takeException(), isNull);
         } else if (page == 'chat') {
-          final text = tester.widget<Text>(find.text('对方的消息'));
+          final text = tester.widget<SelectableText>(find.byWidgetPredicate(
+              (widget) => widget is SelectableText && widget.data == '对方的消息'));
           expect(text.style!.color, scheme.onSurface);
-          final mine = tester.widget<Text>(find.text('自己的长消息，保持清晰可读且可以自然换行。'));
+          final mine = tester.widget<SelectableText>(find.byWidgetPredicate(
+              (widget) =>
+                  widget is SelectableText &&
+                  widget.data == '自己的长消息，保持清晰可读且可以自然换行。'));
           expect(mine.style!.color, scheme.onPrimaryContainer);
           await tester.enterText(find.byType(TextField), '多行输入\n第二行');
           await tester.pump();

@@ -1,21 +1,51 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:yomiru/api/lk_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/lk_client.dart';
+import 'package:yomiru/api/models.dart';
 import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/feedback_options_sheet.dart';
 import 'package:yomiru/pages/settings_page.dart';
+import 'package:yomiru/widgets/app_theme_color_picker.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
+    PackageInfo.setMockInitialValues(
+      appName: 'Yomiru',
+      packageName: 'moe.yutro.yomiru',
+      version: '1.5.1',
+      buildNumber: '2013',
+      buildSignature: '',
+    );
     SharedPreferences.setMockInitialValues({});
     LKClient.shared.session.clear();
     LKStore.epubDownloadEnabled.value = false;
     LKStore.enhancedContentStyleEnabled.value = true;
   });
-  tearDown(() => LKClient.shared.session.clear());
+  tearDown(() {
+    LKClient.shared.session.clear();
+    LKApi.client = LKClient.shared;
+  });
+
+  http.Response response(Map<String, dynamic> data) => http.Response(
+        jsonEncode({'code': 0, 'data': data}),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+  void mockProfile(Future<http.Response> Function() profile) {
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      if (request.url.path.contains('my-home-v1')) return profile();
+      return response({});
+    }));
+  }
 
   Future<void> showSettings(WidgetTester tester) async {
     tester.view.physicalSize = const Size(430, 1600);
@@ -95,6 +125,45 @@ void main() {
     expect(telegramFeedbackUrl, 'https://t.me/FurippuFurappazu');
   });
 
+  testWidgets(
+      'about dialog displays project repo and settings has expandable disclaimer',
+      (tester) async {
+    await showSettings(tester);
+
+    final aboutTile = find.text('关于');
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.tap(aboutTile);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('项目仓库'), findsOneWidget);
+    await tester.tap(find.text('好'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+
+    expect(find.text('免责声明'), findsOneWidget);
+    expect(find.textContaining('非官方声明'), findsNothing);
+
+    await tester.tap(find.text('免责声明'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('非官方声明'), findsOneWidget);
+    expect(find.textContaining('非商业用途'), findsOneWidget);
+    expect(find.textContaining('数据与网络'), findsOneWidget);
+    expect(find.textContaining('云书架与阅读历史'), findsOneWidget);
+    expect(find.textContaining('仅存储在您的设备本地'), findsNothing);
+    expect(find.textContaining('所有网络请求均直接发送至官方服务器'), findsNothing);
+    expect(find.textContaining('版权与内容归属'), findsOneWidget);
+    expect(find.textContaining('账号安全'), findsOneWidget);
+    expect(find.textContaining('官方协议准则'), findsOneWidget);
+    expect(find.textContaining('声明认可'), findsOneWidget);
+
+    await tester.tap(find.text('免责声明'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('非官方声明'), findsNothing);
+  });
+
   testWidgets('auto check update switch toggles store and shared preferences',
       (tester) async {
     await showSettings(tester);
@@ -119,5 +188,206 @@ void main() {
         (await SharedPreferences.getInstance())
             .getBool('auto_check_update_enabled'),
         isTrue);
+  });
+
+  testWidgets('theme color palette stays inline in settings', (tester) async {
+    await showSettings(tester);
+
+    final pureBlack = find.widgetWithText(SwitchListTile, '深色模式使用纯黑主题');
+    expect(pureBlack, findsOneWidget);
+    expect(tester.widget<SwitchListTile>(pureBlack).value, isFalse);
+
+    await tester.tap(pureBlack);
+    await tester.pump();
+    expect(LKStore.pureBlackDark.value, isTrue);
+    expect((await SharedPreferences.getInstance()).getBool('pure_black_dark'),
+        isTrue);
+
+    final themeColorTile = find.text('主题配色');
+    expect(themeColorTile, findsOneWidget);
+    await tester.tap(themeColorTile);
+    await tester.pumpAndSettle();
+
+    expect(find.text('配色'), findsNothing);
+    expect(find.text('深色模式使用纯黑主题'), findsOneWidget);
+    expect(find.byType(AppThemeColorSection), findsOneWidget);
+  });
+
+  testWidgets('liquid glass bottom bar toggles and persists', (tester) async {
+    SharedPreferences.setMockInitialValues({'liquid_glass_intensity': 2});
+    await showSettings(tester);
+
+    expect(find.text('实验室'), findsNothing);
+    expect(find.byKey(const ValueKey('laboratory-liquid-glass-switch')),
+        findsNothing);
+
+    final aboutTile = find.text('关于');
+    await tester.ensureVisible(aboutTile);
+    await tester.pumpAndSettle();
+    expect(aboutTile, findsOneWidget);
+
+    var gesture = await tester.startGesture(tester.getCenter(aboutTile));
+    await tester.pump(const Duration(seconds: 1));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('laboratory-liquid-glass-switch')),
+        findsNothing);
+
+    LKClient.shared.session
+      ..securityKey = 'test-token'
+      ..uid = 42;
+    await LKStore.cacheMyProfile(
+      42,
+      LKMyProfile(
+        uid: 42,
+        nickname: '勇者测试',
+        avatar: '',
+        signature: '',
+        levelName: 'Lv.5',
+        level: 5,
+        coin: 100,
+        isBrave: true,
+        followersCount: 0,
+        followingCount: 0,
+        postCount: 0,
+        bookshelfCount: 0,
+        historyCount: 0,
+        medals: const [],
+      ),
+    );
+
+    mockProfile(() async => response({'uid': 42, 'isBrave': true}));
+    gesture = await tester.startGesture(tester.getCenter(aboutTile));
+    await tester.pump(const Duration(seconds: 1));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('laboratory-liquid-glass-details-entry')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('laboratory-liquid-glass-switch')),
+        findsNothing);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    final glassSwitch =
+        find.byKey(const ValueKey('settings-liquid-glass-switch'));
+    await tester.ensureVisible(glassSwitch);
+    expect(glassSwitch, findsOneWidget);
+    expect(tester.widget<SwitchListTile>(glassSwitch).value, isFalse);
+
+    await tester.tap(glassSwitch);
+    await tester.pumpAndSettle();
+    expect(LKStore.liquidGlassBottomBarEnabled.value, isTrue);
+    expect(
+        (await SharedPreferences.getInstance())
+            .getBool('liquid_glass_bottom_bar_enabled'),
+        isTrue);
+    for (final label in ['柔和', '标准', '强烈']) {
+      expect(find.text(label), findsNothing);
+    }
+    await tester.tap(glassSwitch);
+    await tester.pumpAndSettle();
+    expect(LKStore.liquidGlassBottomBarEnabled.value, isFalse);
+    // The successful profile lookup starts an unawaited cache write. Drain the
+    // shared session-write queue before this widget test's fake async zone ends.
+    await LKStore.cacheMyProfile(42, LKMyProfile(uid: 42, isBrave: true));
+    await tester.pump();
+  });
+  testWidgets('moving beyond touch slop cancels hidden entry', (tester) async {
+    LKClient.shared.session
+      ..securityKey = 'token'
+      ..uid = 42;
+    var calls = 0;
+    mockProfile(() async {
+      calls++;
+      return response({'uid': 42, 'isBrave': true});
+    });
+    await showSettings(tester);
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('关于'));
+    await tester.pumpAndSettle();
+    final gesture =
+        await tester.startGesture(tester.getCenter(find.text('关于')));
+    await gesture.moveBy(const Offset(0, -30));
+    await tester.pump(const Duration(seconds: 3));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(calls, 0);
+    expect(find.text('实验室'), findsNothing);
+  });
+
+  testWidgets(
+      'stale brave cache and failed or non-brave live profile do not enter',
+      (tester) async {
+    LKClient.shared.session
+      ..securityKey = 'token'
+      ..uid = 42;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'my_profile_cache_42',
+      jsonEncode({'uid': 42, 'isBrave': true}),
+    );
+    var calls = 0;
+    mockProfile(() async {
+      calls++;
+      if (calls == 1) return http.Response('offline', 500);
+      return response({'uid': 42, 'isBrave': false});
+    });
+    await showSettings(tester);
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('关于'));
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 2; i++) {
+      final gesture =
+          await tester.startGesture(tester.getCenter(find.text('关于')));
+      await tester.pump(const Duration(seconds: 1));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.text('实验室'), findsNothing);
+    }
+    expect(calls, 2);
+  });
+
+  testWidgets('account change during brave check cannot enter', (tester) async {
+    LKClient.shared.session
+      ..securityKey = 'old'
+      ..uid = 42;
+    final pending = Completer<http.Response>();
+    mockProfile(() => pending.future);
+    await showSettings(tester);
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('关于'));
+    await tester.pumpAndSettle();
+    final gesture =
+        await tester.startGesture(tester.getCenter(find.text('关于')));
+    await tester.pump(const Duration(seconds: 1));
+    await gesture.up();
+    LKClient.shared.session
+      ..securityKey = 'new'
+      ..uid = 43;
+    LKClient.sessionRev.value++;
+    pending.complete(response({'uid': 42, 'isBrave': true}));
+    await tester.pumpAndSettle();
+    expect(find.text('实验室'), findsNothing);
+  });
+
+  testWidgets(
+      'account change while export notice is open does not enable export',
+      (tester) async {
+    LKClient.shared.session
+      ..securityKey = 'old'
+      ..uid = 42;
+    await showSettings(tester);
+    await tester.tap(find.widgetWithText(SwitchListTile, '书籍导出'));
+    await tester.pumpAndSettle();
+    LKClient.shared.session
+      ..securityKey = 'new'
+      ..uid = 43;
+    LKClient.sessionRev.value++;
+    await tester.tap(find.text('确认'));
+    await tester.pumpAndSettle();
+    expect(LKStore.epubDownloadEnabled.value, isFalse);
   });
 }

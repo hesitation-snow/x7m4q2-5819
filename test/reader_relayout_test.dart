@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yomiru/api/store.dart';
 import 'package:yomiru/reader/reader_typography.dart';
 import 'package:yomiru/widgets/reader_typography_sheet.dart';
+import 'package:yomiru/widgets/m3_controls.dart';
 import 'reader_controls_test.dart' show withReader;
 
 void main() {
@@ -48,9 +49,9 @@ void main() {
               find.byType(ReaderTypographySheet));
           sheet.onFontSizeChanged!(23);
           expect(sheet.paged, paged);
-          final columns = tester.widget<SegmentedButton<ReaderColumnMode>>(
-              find.byType(SegmentedButton<ReaderColumnMode>));
-          expect(columns.onSelectionChanged, paged ? isNotNull : isNull);
+          final columns = tester
+              .widget<M3ChoiceChip>(find.widgetWithText(M3ChoiceChip, '双栏'));
+          expect(columns.onSelected, paged ? isNotNull : isNull);
           sheet.onFontSizeChanged!(24);
           sheet.onFontSizeChanged!(25);
           await tester.pumpAndSettle();

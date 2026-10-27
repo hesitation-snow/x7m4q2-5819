@@ -15,8 +15,10 @@ import '../api/pagination.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../services/app_update_service.dart';
+import '../widgets/liquid_glass_bottom_bar.dart';
 import '../widgets/common.dart';
 import '../widgets/filtered_list_continuation.dart';
+import '../widgets/m3_controls.dart';
 import 'book_detail_page.dart';
 import 'brave_quiz_page.dart';
 import 'channel_page.dart';
@@ -166,11 +168,11 @@ class _HomePageState extends State<HomePage> {
     final result = await showModalBottomSheet<HomeChannelPickerResult>(
       context: context,
       sheetAnimationStyle: AppMotion.style(context),
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      showDragHandle: true,
+      showDragHandle: false,
       isScrollControlled: true,
       builder: (_) => HomeChannelPicker(
         order: _channelOrder,
@@ -248,286 +250,329 @@ class _HomePageState extends State<HomePage> {
         statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
         statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
       ),
-      child: Scaffold(
-        body: Column(
-          children: [
-            // 顶栏:状态栏条固定,搜索区与频道导航随滚动向上滑出
-            // 采用让渡式收合;其它 Tab 只留状态栏背景
-            SizedBox(
-              height: padTop,
-              width: double.infinity,
-              child: ColoredBox(
-                color: pageColor,
-              ),
-            ),
-            ValueListenableBuilder<double>(
-              valueListenable: _barFrac,
-              builder: (context, barFrac, _) => SizedBox(
-                height: _tab == 0 ? _barFlex * barFrac : 0.0,
-                child: Stack(
-                  clipBehavior: Clip.hardEdge,
-                  children: [
-                    Positioned(
-                      top: _tab == 0 ? -_barFlex * (1.0 - barFrac) : 0.0,
-                      left: 0,
-                      right: 0,
-                      height: _barFlex,
-                      child: ColoredBox(
-                        color: pageColor,
-                        // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告
-                        child: SingleChildScrollView(
-                          physics: const NeverScrollableScrollPhysics(),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(20),
-                                        onTap: () => Navigator.push(
-                                            context,
-                                            MaterialPageRoute(
-                                                builder: (_) =>
-                                                    const SearchPage())),
-                                        child: Container(
-                                          height: 40,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 14),
-                                          alignment: Alignment.centerLeft,
-                                          decoration: BoxDecoration(
-                                            color:
-                                                Theme.of(context).brightness ==
-                                                        Brightness.dark
-                                                    ? const Color(0xFF1E2025)
-                                                    : Theme.of(context)
-                                                            .cardTheme
-                                                            .color ??
-                                                        Colors.white,
-                                            borderRadius:
-                                                BorderRadius.circular(16),
-                                            border: Border.all(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .outlineVariant
-                                                  .withValues(alpha: 0.25),
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Icon(Icons.search_rounded,
-                                                  size: 19,
-                                                  color: Colors.grey.shade500),
-                                              const SizedBox(width: 8),
-                                              Flexible(
-                                                child: Text(
-                                                  '搜索书名或作者',
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                      fontSize: 13.5,
-                                                      color:
-                                                          Colors.grey.shade500),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    // 首页排版切换(网格/单列，长按可快速选择网格列数)
-                                    GestureDetector(
-                                      onLongPress: () =>
-                                          showGridColumnsSheet(context),
-                                      child: IconButton(
-                                        tooltip: _listMode
-                                            ? '切换为网格（长按设置列数）'
-                                            : '切换为列表（长按设置列数）',
-                                        visualDensity: VisualDensity.compact,
-                                        icon: Icon(
-                                          _listMode
-                                              ? Icons.grid_view_rounded
-                                              : Icons.view_agenda_outlined,
-                                          size: 21,
-                                        ),
-                                        onPressed: () {
-                                          setState(
-                                              () => _listMode = !_listMode);
-                                          ReaderPrefs.setFeedListMode(
-                                              _listMode);
-                                        },
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              // 前三个标签来自用户排序；分类入口可浏览所有频道。
-                              SizedBox(
-                                height: 40,
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.fromLTRB(12, 0, 12, 4),
-                                  child: Row(
-                                    children: [
-                                      for (final code in _channelOrder
-                                          .take(homePrimaryChannelCount))
+      child: ValueListenableBuilder<bool>(
+        valueListenable: LKStore.liquidGlassBottomBarEnabled,
+        builder: (context, useLiquidGlass, _) {
+          return Scaffold(
+            extendBody: useLiquidGlass,
+            body: Column(
+              children: [
+                // 顶栏:状态栏条固定,搜索区与频道导航随滚动向上滑出
+                // 采用让渡式收合;其它 Tab 只留状态栏背景
+                SizedBox(
+                  height: padTop,
+                  width: double.infinity,
+                  child: ColoredBox(
+                    color: pageColor,
+                  ),
+                ),
+                ValueListenableBuilder<double>(
+                  valueListenable: _barFrac,
+                  builder: (context, barFrac, _) => SizedBox(
+                    height: _tab == 0 ? _barFlex * barFrac : 0.0,
+                    child: Stack(
+                      clipBehavior: Clip.hardEdge,
+                      children: [
+                        Positioned(
+                          top: _tab == 0 ? -_barFlex * (1.0 - barFrac) : 0.0,
+                          left: 0,
+                          right: 0,
+                          height: _barFlex,
+                          child: ColoredBox(
+                            color: pageColor,
+                            // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告
+                            child: SingleChildScrollView(
+                              physics: const NeverScrollableScrollPhysics(),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    child: Row(
+                                      children: [
                                         Expanded(
                                           child: InkWell(
                                             borderRadius:
-                                                BorderRadius.circular(10),
-                                            onTap: () =>
-                                                _selectHomeChannel(code),
-                                            child: Column(
-                                              children: [
-                                                Expanded(
-                                                  child: Center(
-                                                    child:
-                                                        AnimatedDefaultTextStyle(
-                                                      duration:
-                                                          AppMotion.duration(
-                                                              context, 160),
+                                                BorderRadius.circular(20),
+                                            onTap: () => Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                    builder: (_) =>
+                                                        const SearchPage())),
+                                            child: Container(
+                                              height: 40,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 14),
+                                              alignment: Alignment.centerLeft,
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .surfaceContainerHigh,
+                                                borderRadius:
+                                                    BorderRadius.circular(16),
+                                                border: Border.all(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .outlineVariant
+                                                      .withValues(alpha: 0.25),
+                                                ),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(Icons.search_rounded,
+                                                      size: 19,
+                                                      color:
+                                                          Colors.grey.shade500),
+                                                  const SizedBox(width: 8),
+                                                  Flexible(
+                                                    child: Text(
+                                                      '搜索书名或作者',
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
                                                       style: TextStyle(
-                                                        fontSize: 13.5,
-                                                        fontWeight:
-                                                            _channelCode == code
-                                                                ? FontWeight
-                                                                    .w600
-                                                                : FontWeight
-                                                                    .w500,
-                                                        color: _channelCode ==
-                                                                code
-                                                            ? Theme.of(context)
-                                                                .colorScheme
-                                                                .primary
-                                                            : Theme.of(context)
-                                                                .colorScheme
-                                                                .onSurfaceVariant,
-                                                      ),
-                                                      child: Text(
-                                                        homeChannelByCode(code)
-                                                            .label,
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                      ),
+                                                          fontSize: 13.5,
+                                                          color: Colors
+                                                              .grey.shade500),
                                                     ),
                                                   ),
-                                                ),
-                                                AnimatedContainer(
-                                                  duration: AppMotion.duration(
-                                                      context, 180),
-                                                  width: _channelCode == code
-                                                      ? 18
-                                                      : 0,
-                                                  height: 2,
-                                                  decoration: BoxDecoration(
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .primary,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            2),
-                                                  ),
-                                                ),
-                                              ],
+                                                ],
+                                              ),
                                             ),
                                           ),
                                         ),
-                                      const SizedBox(width: 4),
-                                      IconButton(
-                                        tooltip: !_channelOrder
-                                                .take(homePrimaryChannelCount)
-                                                .contains(_channelCode)
-                                            ? '分类：${homeChannelByCode(_channelCode).label}'
-                                            : '选择分类',
-                                        onPressed: _showCategoryPicker,
-                                        style: IconButton.styleFrom(
-                                          foregroundColor: !_channelOrder
-                                                  .take(homePrimaryChannelCount)
-                                                  .contains(_channelCode)
-                                              ? Theme.of(context)
-                                                  .colorScheme
-                                                  .primary
-                                              : Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurfaceVariant,
+                                        const SizedBox(width: 4),
+                                        // 首页排版切换(网格/单列，长按可快速选择网格列数)
+                                        GestureDetector(
+                                          onLongPress: () =>
+                                              showGridColumnsSheet(context),
+                                          child: IconButton(
+                                            tooltip: _listMode
+                                                ? '切换为网格（长按设置列数）'
+                                                : '切换为列表（长按设置列数）',
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            icon: Icon(
+                                              _listMode
+                                                  ? Icons.grid_view_rounded
+                                                  : Icons.view_agenda_outlined,
+                                              size: 21,
+                                            ),
+                                            onPressed: () {
+                                              setState(
+                                                  () => _listMode = !_listMode);
+                                              ReaderPrefs.setFeedListMode(
+                                                  _listMode);
+                                            },
+                                          ),
                                         ),
-                                        constraints: const BoxConstraints(
-                                            minWidth: 40, minHeight: 32),
-                                        padding: EdgeInsets.zero,
-                                        visualDensity: VisualDensity.compact,
-                                        icon: const Icon(Icons.menu_rounded,
-                                            size: 22),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
-                                ),
+                                  // 前三个标签来自用户排序；分类入口可浏览所有频道。
+                                  SizedBox(
+                                    height: 40,
+                                    child: Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          12, 0, 12, 4),
+                                      child: Row(
+                                        children: [
+                                          for (final code in _channelOrder
+                                              .take(homePrimaryChannelCount))
+                                            Expanded(
+                                              child: InkWell(
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                                onTap: () =>
+                                                    _selectHomeChannel(code),
+                                                child: Column(
+                                                  children: [
+                                                    Expanded(
+                                                      child: Center(
+                                                        child:
+                                                            AnimatedDefaultTextStyle(
+                                                          duration: AppMotion
+                                                              .duration(
+                                                                  context, 160),
+                                                          style: TextStyle(
+                                                            fontSize: 13.5,
+                                                            fontWeight:
+                                                                _channelCode ==
+                                                                        code
+                                                                    ? FontWeight
+                                                                        .w600
+                                                                    : FontWeight
+                                                                        .w500,
+                                                            color: _channelCode ==
+                                                                    code
+                                                                ? Theme.of(
+                                                                        context)
+                                                                    .colorScheme
+                                                                    .primary
+                                                                : Theme.of(
+                                                                        context)
+                                                                    .colorScheme
+                                                                    .onSurfaceVariant,
+                                                          ),
+                                                          child: Text(
+                                                            homeChannelByCode(
+                                                                    code)
+                                                                .label,
+                                                            maxLines: 1,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    AnimatedContainer(
+                                                      duration:
+                                                          AppMotion.duration(
+                                                              context, 180),
+                                                      width:
+                                                          _channelCode == code
+                                                              ? 18
+                                                              : 0,
+                                                      height: 2,
+                                                      decoration: BoxDecoration(
+                                                        color: Theme.of(context)
+                                                            .colorScheme
+                                                            .primary,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(2),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          const SizedBox(width: 4),
+                                          IconButton(
+                                            tooltip: !_channelOrder
+                                                    .take(
+                                                        homePrimaryChannelCount)
+                                                    .contains(_channelCode)
+                                                ? '分类：${homeChannelByCode(_channelCode).label}'
+                                                : '选择分类',
+                                            onPressed: _showCategoryPicker,
+                                            style: IconButton.styleFrom(
+                                              foregroundColor: !_channelOrder
+                                                      .take(
+                                                          homePrimaryChannelCount)
+                                                      .contains(_channelCode)
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .primary
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant,
+                                            ),
+                                            constraints: const BoxConstraints(
+                                                minWidth: 40, minHeight: 32),
+                                            padding: EdgeInsets.zero,
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            icon: const Icon(Icons.menu_rounded,
+                                                size: 22),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (n) {
+                      // 顶栏随滚动向上滑出(拖动增量让渡给顶栏)
+                      _onFeedScroll(n);
+                      return false;
+                    },
+                    child: IndexedStack(
+                      index: _tab,
+                      children: List<Widget>.generate(4, _tabBody),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            bottomNavigationBar: useLiquidGlass
+                ? ValueListenableBuilder<double>(
+                    valueListenable: _barFrac,
+                    builder: (context, barFrac, _) => LiquidGlassBottomBar(
+                      selectedIndex: _tab,
+                      onDestinationSelected: _selectTab,
+                      barFrac: barFrac,
+                      destinations: const [
+                        LiquidGlassDestination(
+                            icon: Icons.home_outlined,
+                            selectedIcon: Icons.home,
+                            label: '首页'),
+                        LiquidGlassDestination(
+                            icon: Icons.bookmark_border_rounded,
+                            selectedIcon: Icons.bookmark_rounded,
+                            label: '书架'),
+                        LiquidGlassDestination(
+                            icon: Icons.dynamic_feed_outlined,
+                            selectedIcon: Icons.dynamic_feed,
+                            label: '动态'),
+                        LiquidGlassDestination(
+                            icon: Icons.person_outline,
+                            selectedIcon: Icons.person,
+                            label: '我的'),
+                      ],
+                    ),
+                  )
+                : ValueListenableBuilder<double>(
+                    valueListenable: _barFrac,
+                    builder: (context, barFrac, _) => ClipRect(
+                      // 底栏随顶栏一起 1:1 伸缩；只重建底栏，不再重建四个页面。
+                      child: SizedBox(
+                        height: (64 + MediaQuery.of(context).padding.bottom) *
+                            barFrac,
+                        child: SingleChildScrollView(
+                          physics: const NeverScrollableScrollPhysics(),
+                          child: NavigationBar(
+                            animationDuration: AppMotion.duration(context, 500),
+                            selectedIndex: _tab,
+                            onDestinationSelected: _selectTab,
+                            destinations: const [
+                              NavigationDestination(
+                                  icon: Icon(Icons.home_outlined),
+                                  selectedIcon: Icon(Icons.home),
+                                  label: '首页'),
+                              NavigationDestination(
+                                  icon: Icon(Icons.bookmark_border_rounded),
+                                  selectedIcon: Icon(Icons.bookmark_rounded),
+                                  label: '书架'),
+                              NavigationDestination(
+                                  icon: Icon(Icons.dynamic_feed_outlined),
+                                  selectedIcon: Icon(Icons.dynamic_feed),
+                                  label: '动态'),
+                              NavigationDestination(
+                                  icon: Icon(Icons.person_outline),
+                                  selectedIcon: Icon(Icons.person),
+                                  label: '我的'),
                             ],
                           ),
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-            Expanded(
-              child: NotificationListener<ScrollNotification>(
-                onNotification: (n) {
-                  // 顶栏随滚动向上滑出(拖动增量让渡给顶栏)
-                  _onFeedScroll(n);
-                  return false;
-                },
-                child: IndexedStack(
-                  index: _tab,
-                  children: List<Widget>.generate(4, _tabBody),
-                ),
-              ),
-            ),
-          ],
-        ),
-        bottomNavigationBar: ValueListenableBuilder<double>(
-          valueListenable: _barFrac,
-          builder: (context, barFrac, _) => ClipRect(
-            // 底栏随顶栏一起 1:1 伸缩；只重建底栏，不再重建四个页面。
-            child: SizedBox(
-              height: (64 + MediaQuery.of(context).padding.bottom) * barFrac,
-              child: SingleChildScrollView(
-                physics: const NeverScrollableScrollPhysics(),
-                child: NavigationBar(
-                  animationDuration: AppMotion.duration(context, 500),
-                  selectedIndex: _tab,
-                  onDestinationSelected: _selectTab,
-                  destinations: const [
-                    NavigationDestination(
-                        icon: Icon(Icons.home_outlined),
-                        selectedIcon: Icon(Icons.home),
-                        label: '首页'),
-                    NavigationDestination(
-                        icon: Icon(Icons.bookmark_border_rounded),
-                        selectedIcon: Icon(Icons.bookmark_rounded),
-                        label: '书架'),
-                    NavigationDestination(
-                        icon: Icon(Icons.dynamic_feed_outlined),
-                        selectedIcon: Icon(Icons.dynamic_feed),
-                        label: '动态'),
-                    NavigationDestination(
-                        icon: Icon(Icons.person_outline),
-                        selectedIcon: Icon(Icons.person),
-                        label: '我的'),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
+                  ),
+          );
+        },
       ),
     );
   }
@@ -575,7 +620,8 @@ class _FeedTabState extends State<FeedTab>
 
   bool get _showRankSelector => widget.path == 'rank';
 
-  static const double _rankSelectorHeight = 46;
+  double get _rankSelectorHeight =>
+      60 + (MediaQuery.textScalerOf(context).scale(14) - 14).clamp(0.0, 40.0);
 
   @override
   void initState() {
@@ -884,49 +930,27 @@ class _FeedTabState extends State<FeedTab>
   }
 
   Widget _rankSelector() {
-    final scheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
-      child: Row(
-        children: [
-          for (final (label, value) in [
-            ('综合热度', 'weekly_hot'),
-            ('新书', 'daily_fresh')
-          ]) ...[
-            Material(
-              color: _rankScene == value
-                  ? (isDark
-                      ? scheme.primary.withValues(alpha: 0.22)
-                      : scheme.primary.withValues(alpha: 0.12))
-                  : (isDark
-                      ? const Color(0xFF1E2025)
-                      : scheme.surfaceContainerHighest.withValues(alpha: 0.5)),
-              borderRadius: BorderRadius.circular(20),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(20),
-                onTap: () => _selectRankScene(value),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: _rankScene == value
-                          ? FontWeight.w600
-                          : FontWeight.w500,
-                      color: _rankScene == value
-                          ? scheme.primary
-                          : scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
+    return SizedBox(
+      height: _rankSelectorHeight,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+        child: Row(
+          children: [
+            for (final (label, icon, value) in [
+              ('综合热度', Icons.local_fire_department_rounded, 'weekly_hot'),
+              ('新书', Icons.auto_stories_rounded, 'daily_fresh'),
+            ]) ...[
+              M3ChoiceChip(
+                icon: icon,
+                label: label,
+                selected: _rankScene == value,
+                onSelected: (_) => _selectRankScene(value),
               ),
-            ),
-            const SizedBox(width: 8),
+              const SizedBox(width: 8),
+            ],
+            const Spacer(),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -1014,7 +1038,8 @@ class _FeedTabState extends State<FeedTab>
             child: _HomeRecommendCard(books: visibleRecommend),
           ),
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(10, 1, 10, 12),
+          padding: EdgeInsets.fromLTRB(
+              10, 1, 10, 12 + MediaQuery.paddingOf(context).bottom),
           sliver: SliverList(
             delegate: SliverChildBuilderDelegate(
               (_, i) {
@@ -1060,7 +1085,8 @@ class _FeedTabState extends State<FeedTab>
             SliverToBoxAdapter(
                 child: _HomeRecommendCard(books: visibleRecommend)),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+            padding: EdgeInsets.fromLTRB(
+                12, 6, 12, 12 + MediaQuery.paddingOf(context).bottom),
             sliver: SliverGrid(
               gridDelegate: bookGridDelegate(context),
               delegate: SliverChildBuilderDelegate(
@@ -2035,7 +2061,8 @@ class _MyTabState extends State<MyTab> {
       onRefresh: () => _reloadProfile(waitForMessages: true),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(
+            16, 16, 16, 16 + MediaQuery.paddingOf(context).bottom),
         children: [
           // 用户主页资料卡:用户信息、统计入口和勋章统一放在同一张卡片内。
           Card(
@@ -2169,7 +2196,7 @@ class _MyTabState extends State<MyTab> {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
-        leading: Icon(icon),
+        leading: AppSettingIcon(icon),
         title: Text(title),
         subtitle: subtitle == null ? null : Text(subtitle),
         trailing: Row(

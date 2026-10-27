@@ -110,7 +110,12 @@ void main() {
       testWidgets('${spec.$1} close and select at 2x $brightness',
           (tester) async {
         await host(tester, brightness, const SettingsPage());
-        await tester.scrollUntilVisible(find.text(spec.$1), 120);
+        await tester.scrollUntilVisible(find.text(spec.$1), 120,
+            scrollable: find
+                .descendant(
+                    of: find.byType(SettingsPage),
+                    matching: find.byType(Scrollable))
+                .first);
         await tester.pumpAndSettle();
         await tester.tap(find.text(spec.$1).first);
         await tester.pumpAndSettle();

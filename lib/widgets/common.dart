@@ -1,4 +1,5 @@
 import 'm3_menu_sheet.dart';
+import 'm3_controls.dart';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -25,137 +26,26 @@ Future<bool?> showLogoutScopeDialog(BuildContext context) {
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     showDragHandle: false,
-    builder: (sheetContext) {
-      final scheme = Theme.of(sheetContext).colorScheme;
-
-      Widget option({
-        required IconData icon,
-        required String title,
-        required String subtitle,
-        required Color color,
-        required VoidCallback onTap,
-      }) {
-        return Material(
-          color: scheme.surfaceContainerHighest.withValues(alpha: 0.42),
-          borderRadius: BorderRadius.circular(18),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Row(
-                children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(icon, color: color),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title,
-                            style: const TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 3),
-                        Text(subtitle,
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: scheme.onSurfaceVariant,
-                                height: 1.25)),
-                      ],
-                    ),
-                  ),
-                  Icon(Icons.chevron_right_rounded,
-                      color: scheme.onSurfaceVariant),
-                ],
-              ),
-            ),
-          ),
-        );
-      }
-
-      return SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-          child: Material(
-            color: scheme.surface,
-            borderRadius: BorderRadius.circular(28),
-            clipBehavior: Clip.antiAlias,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 28, 16, 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: scheme.primary.withValues(alpha: 0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child:
-                            Icon(Icons.logout_rounded, color: scheme.primary),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('退出登录',
-                                style: TextStyle(
-                                    fontSize: 18, fontWeight: FontWeight.w800)),
-                            SizedBox(height: 3),
-                            Text('选择要退出的登录范围', style: TextStyle(fontSize: 13)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  option(
-                    icon: Icons.smartphone_rounded,
-                    title: '仅退出本机',
-                    subtitle: '只清除此设备的登录状态',
-                    color: scheme.primary,
-                    onTap: () => Navigator.pop(sheetContext, false),
-                  ),
-                  const SizedBox(height: 10),
-                  option(
-                    icon: Icons.devices_rounded,
-                    title: '退出所有设备',
-                    subtitle: '使其他设备上的登录状态也失效',
-                    color: scheme.error,
-                    onTap: () => Navigator.pop(sheetContext, true),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: TextButton(
-                      onPressed: () => Navigator.pop(sheetContext),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: const StadiumBorder(),
-                      ),
-                      child: const Text('取消'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+    builder: (sheetContext) => M3MenuSheet(
+      title: '退出登录',
+      icon: Icons.logout_rounded,
+      description: '选择要退出的登录范围',
+      children: [
+        M3OptionTile(
+          icon: Icons.smartphone_outlined,
+          title: '仅退出本机',
+          subtitle: '只清除此设备的登录状态',
+          onTap: () => Navigator.pop(sheetContext, false),
         ),
-      );
-    },
+        M3OptionTile(
+          icon: Icons.devices_outlined,
+          title: '退出所有设备',
+          subtitle: '使其他设备上的登录状态也失效',
+          danger: true,
+          onTap: () => Navigator.pop(sheetContext, true),
+        ),
+      ],
+    ),
   );
 }
 
@@ -536,30 +426,26 @@ class BookCard extends StatelessWidget {
                               color: titleColor),
                         ),
                         const SizedBox(height: 5),
-                        Row(
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            Flexible(
-                              child: Text(
-                                book.authorName.isEmpty
-                                    ? '佚名'
-                                    : book.authorName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: isDark
-                                        ? Colors.grey.shade400
-                                        : Colors.grey.shade600),
-                              ),
+                            Text(
+                              book.authorName.isEmpty
+                                  ? '佚名'
+                                  : book.authorName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: isDark
+                                      ? Colors.grey.shade400
+                                      : Colors.grey.shade600),
                             ),
-                            const SizedBox(width: 6),
                             _statusBadge(scheme, status, borderColor),
-                            if (book.isBrave) ...[
-                              const SizedBox(width: 6),
-                              _braveBadge(scheme),
-                            ],
-                            if (book.unreadChapterCount > 0) ...[
-                              const SizedBox(width: 6),
+                            if (book.isBrave) _braveBadge(scheme),
+                            if (book.unreadChapterCount > 0)
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 6, vertical: 2),
@@ -575,7 +461,6 @@ class BookCard extends StatelessWidget {
                                   ),
                                 ),
                               ),
-                            ],
                           ],
                         ),
                         const SizedBox(height: 6),
@@ -945,117 +830,24 @@ Future<void> showGridColumnsSheet(BuildContext context) async {
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     showDragHandle: false,
-    builder: (sheetContext) {
-      final scheme = Theme.of(sheetContext).colorScheme;
-      return M3MenuSheet(
-        title: '网格列数（每行几本）',
-        icon: Icons.grid_view_rounded,
-        children: [
-          ...options.map((opt) {
-            final (count, title, subtitle, icon) = opt;
-            final selected = current == count;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Material(
-                color:
-                    selected ? scheme.secondaryContainer : Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    LKStore.setGridColumnCount(count);
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 12),
-                    child: Row(
-                      children: [
-                        Icon(
-                          icon,
-                          size: 20,
-                          color: selected
-                              ? scheme.onSecondaryContainer
-                              : scheme.onSurface,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Text(
-                                    title,
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: selected
-                                          ? FontWeight.bold
-                                          : FontWeight.w500,
-                                      color: selected
-                                          ? scheme.onSecondaryContainer
-                                          : scheme.onSurface,
-                                    ),
-                                  ),
-                                  if (count == 0) ...[
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 1.5),
-                                      decoration: BoxDecoration(
-                                        color: selected
-                                            ? scheme.primary
-                                                .withValues(alpha: 0.18)
-                                            : scheme.primary
-                                                .withValues(alpha: 0.12),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        '默认',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w600,
-                                          color: selected
-                                              ? scheme.onSecondaryContainer
-                                              : scheme.primary,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                subtitle,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: selected
-                                      ? scheme.onSecondaryContainer
-                                          .withValues(alpha: 0.8)
-                                      : scheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (selected) ...[
-                          const SizedBox(width: 8),
-                          Icon(
-                            Icons.check_rounded,
-                            size: 20,
-                            color: scheme.onSecondaryContainer,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }),
-        ],
-      );
-    },
+    builder: (sheetContext) => M3MenuSheet(
+      title: '网格列数',
+      icon: Icons.grid_view_outlined,
+      description: '选择每行展示的书籍数量',
+      children: [
+        for (final (count, title, subtitle, icon) in options)
+          M3OptionTile(
+            title: title,
+            subtitle: subtitle,
+            icon: icon,
+            selected: current == count,
+            onTap: () {
+              Navigator.pop(sheetContext);
+              LKStore.setGridColumnCount(count);
+            },
+          ),
+      ],
+    ),
   );
 }
 

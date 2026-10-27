@@ -5,6 +5,7 @@ import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
+import 'account_access_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -26,6 +27,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _login() async {
+    if (_busy) return;
     final u = _user.text.trim();
     final p = _pwd.text;
     if (u.isEmpty || p.isEmpty) return;
@@ -37,6 +39,30 @@ class _LoginPageState extends State<LoginPage> {
       Navigator.pop(context, true);
     } catch (e) {
       if (mounted) showLkError(context, _loginError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    if (_busy) return;
+    final session = LKClient.shared.session;
+    final uid = session.uid;
+    final key = session.securityKey;
+    setState(() => _busy = true);
+    try {
+      final allDevices = await showLogoutScopeDialog(context);
+      if (!mounted ||
+          allDevices == null ||
+          session.uid != uid ||
+          session.securityKey != key) {
+        return;
+      }
+      await LKApi.logout(allDevices: allDevices);
+      if (!mounted || session.isLoggedIn) return;
+      showLkError(context, allDevices ? '已退出所有设备' : '已退出本机');
+    } catch (_) {
+      if (mounted) showLkError(context, '退出失败，请重试或选择“仅退出本机”');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -56,6 +82,7 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     final s = LKClient.shared.session;
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('登录轻之国度')),
       body: Center(
@@ -65,9 +92,7 @@ class _LoginPageState extends State<LoginPage> {
             constraints: const BoxConstraints(maxWidth: 420),
             child: Card(
               elevation: 0,
-              color: Theme.of(context).brightness == Brightness.dark
-                  ? const Color(0xFF1E2025)
-                  : Colors.white,
+              color: scheme.surfaceContainerLow,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20)),
               child: Padding(
@@ -81,23 +106,11 @@ class _LoginPageState extends State<LoginPage> {
                       height: 64,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            Colors.indigo.shade300,
-                            Colors.indigo.shade600
-                          ],
-                        ),
+                        color: scheme.primaryContainer,
                         borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                              color:
-                                  Colors.indigo.shade200.withValues(alpha: 0.6),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4)),
-                        ],
                       ),
-                      child: const Icon(Icons.menu_book_rounded,
-                          size: 32, color: Colors.white),
+                      child: Icon(Icons.menu_book_outlined,
+                          size: 32, color: scheme.onPrimaryContainer),
                     ),
                     const SizedBox(height: 20),
                     TextField(
@@ -127,21 +140,35 @@ class _LoginPageState extends State<LoginPage> {
                               child: MotionProgressIndicator(strokeWidth: 2))
                           : Text(s.isLoggedIn ? '重新登录' : '登录'),
                     ),
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      children: [
+                        for (final register in [true, false])
+                          TextButton(
+                            onPressed: _busy
+                                ? null
+                                : () async {
+                                    final message =
+                                        await Navigator.push<String>(
+                                      context,
+                                      MaterialPageRoute(
+                                          builder: (_) => AccountAccessPage(
+                                              register: register)),
+                                    );
+                                    if (message != null && context.mounted) {
+                                      showLkError(context, message);
+                                    }
+                                  },
+                            child: Text(register ? '注册账号' : '重置密码'),
+                          ),
+                      ],
+                    ),
                     if (s.isLoggedIn) ...[
                       const SizedBox(height: 8),
                       OutlinedButton(
-                        onPressed: () async {
-                          final allDevices =
-                              await showLogoutScopeDialog(context);
-                          if (allDevices == null) return;
-                          await LKApi.logout(allDevices: allDevices);
-                          await LKStore.clear();
-                          if (!context.mounted) return;
-                          setState(() {});
-                          showLkError(context, '已退出登录');
-                        },
+                        onPressed: _busy ? null : _logout,
                         style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.redAccent),
+                            foregroundColor: scheme.error),
                         child: Text('退出登录(当前: ${s.nickname})'),
                       ),
                     ],

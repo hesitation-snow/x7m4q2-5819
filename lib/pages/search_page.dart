@@ -1,5 +1,6 @@
-import '../services/app_motion.dart';
 import 'dart:async';
+
+import '../services/app_motion.dart';
 
 import 'package:flutter/material.dart';
 
@@ -7,6 +8,7 @@ import '../api/lk_api.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
 import '../widgets/filtered_list_continuation.dart';
+import '../widgets/m3_controls.dart';
 import 'book_detail_page.dart';
 
 /// 搜索页:关键词 + 分类(轻小说/原创/同人/EPUB)+ 标签(含"最近更新"更新时间筛选)+ 排序(相关/最新)
@@ -225,12 +227,11 @@ class _SearchPageState extends State<SearchPage> {
                     ),
                   ),
                   // 分类
-                  SizedBox(
-                    height: 42,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    child: Row(
                       children: [
                         _chip('全部', _channel == null, () {
                           setState(() => _channel = null);
@@ -365,61 +366,24 @@ class _SearchPageState extends State<SearchPage> {
 
   Widget _segBtn(String label, String value) {
     final sel = _sort == value;
-    final scheme = Theme.of(context).colorScheme;
-    return GestureDetector(
-      onTap: () {
+    return M3ChoiceChip(
+      label: label,
+      selected: sel,
+      onSelected: (_) {
         setState(() => _sort = value);
         _search(0, false);
       },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        decoration: BoxDecoration(
-          color: sel ? scheme.primary : Colors.transparent,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
-            color: sel ? Colors.white : Colors.grey.shade600,
-          ),
-        ),
-      ),
     );
   }
 
   Widget _chip(String label, bool selected, VoidCallback onTap,
       {bool trailingPadding = true}) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: EdgeInsets.only(right: trailingPadding ? 8 : 0),
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: AppMotion.duration(context, 150),
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected
-                ? scheme.primary
-                : (isDark ? const Color(0xFF1E2025) : Colors.white),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: selected
-                  ? scheme.primary
-                  : (isDark ? Colors.grey.shade800 : Colors.grey.shade300),
-              width: 0.8,
-            ),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12.5,
-              color: selected ? Colors.white : Colors.grey.shade600,
-            ),
-          ),
-        ),
+      child: M3ChoiceChip(
+        label: label,
+        selected: selected,
+        onSelected: (_) => onTap(),
       ),
     );
   }

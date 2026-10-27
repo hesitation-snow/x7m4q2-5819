@@ -2,6 +2,8 @@ import '../services/app_motion.dart';
 import '../widgets/account_scope.dart';
 import '../api/lk_client.dart';
 import 'dart:async';
+import 'dart:math' as math;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -946,8 +948,8 @@ class _CommentsPageState extends State<CommentsPage> {
         title: Text(_isDynamic
             ? '动态详情'
             : _isVolume
-                ? '本卷评论 · '
-                : '书评 · '),
+                ? '本卷评论'
+                : '书评'),
         actions: [
           if (_isDynamic)
             PopupMenuButton<String>(
@@ -1038,7 +1040,7 @@ class _CommentsPageState extends State<CommentsPage> {
           controller: _input,
           emojiGroups: _emojiGroups,
           isVolume: _isVolume,
-          hintText: _isDynamic ? '写下你的动态评论…' : null,
+          hintText: _isDynamic ? '输入回复内容' : null,
           replyLabel: _replyTarget == null
               ? null
               : '回复 @${_replyTarget!.nickname.isEmpty ? '用户' : _replyTarget!.nickname}',
@@ -1094,21 +1096,44 @@ class _CommentsInputBar extends StatefulWidget {
 }
 
 class _CommentsInputBarState extends State<_CommentsInputBar> {
+  static double _globalKeyboardHeight = 0;
+
   final _focus = FocusNode();
   bool _showEmoji = false;
-  bool _keyboardReturning = false;
-  double _keyboardTransitionHeight = 0;
-  Timer? _keyboardTransitionTimer;
+  bool _keyboardTransitioning = false;
+  double _transitionHeight = 0;
+  Timer? _transitionTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_globalKeyboardHeight == 0) {
+      SharedPreferences.getInstance().then((p) {
+        final saved = p.getDouble('last_keyboard_height');
+        if (saved != null && saved > 150) {
+          _globalKeyboardHeight = saved;
+        }
+      });
+    }
+  }
 
   @override
   void dispose() {
-    _keyboardTransitionTimer?.cancel();
+    _transitionTimer?.cancel();
     _focus.dispose();
     super.dispose();
   }
 
   double _emojiPanelHeight() {
     final media = MediaQuery.of(context);
+    final isLandscape = media.size.width > media.size.height;
+    final minH = isLandscape ? 160.0 : 260.0;
+    final maxH = isLandscape ? 220.0 : 380.0;
+
+    if (_globalKeyboardHeight > 150 && !isLandscape) {
+      return _globalKeyboardHeight.clamp(minH, maxH).toDouble();
+    }
+
     final inputHeight = media.textScaler.scale(64).clamp(96.0, 180.0) +
         (widget.pendingImageUrl == null ? 0 : 70) +
         (widget.replyLabel == null ? 0 : 36);
@@ -1116,24 +1141,26 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
             media.viewPadding.vertical -
             kToolbarHeight -
             inputHeight -
-            64)
-        .clamp(0.0, 360.0);
-    return (media.size.height * 0.42).clamp(0.0, available).toDouble();
+            32)
+        .clamp(minH, maxH);
+    final defaultH =
+        (media.size.height * 0.40).clamp(minH, available).toDouble();
+    return defaultH;
   }
 
   void _returnToKeyboard() {
-    _keyboardTransitionTimer?.cancel();
-    final reserveHeight = _emojiPanelHeight();
+    _transitionTimer?.cancel();
+    final currentH = _emojiPanelHeight();
     setState(() {
       _showEmoji = false;
-      _keyboardReturning = true;
-      _keyboardTransitionHeight = reserveHeight;
+      _keyboardTransitioning = true;
+      _transitionHeight = currentH;
     });
     _focus.requestFocus();
-    // 输入法出现期间继续占住表情面板高度，避免输入栏先落底再弹起。
-    _keyboardTransitionTimer = Timer(const Duration(milliseconds: 450), () {
-      if (!mounted) return;
-      setState(() => _keyboardReturning = false);
+    _transitionTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted && _keyboardTransitioning) {
+        setState(() => _keyboardTransitioning = false);
+      }
     });
   }
 
@@ -1145,11 +1172,11 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
     if (_showEmoji) {
       _returnToKeyboard();
     } else {
-      _keyboardTransitionTimer?.cancel();
+      _transitionTimer?.cancel();
+      _keyboardTransitioning = false;
       _focus.unfocus();
       setState(() {
         _showEmoji = true;
-        _keyboardReturning = false;
       });
     }
   }
@@ -1166,45 +1193,46 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
 
   @override
   Widget build(BuildContext context) {
-    // 系统已经在动画中逐帧更新 viewInsets，不再叠加 AnimatedPadding。
-    final inset = MediaQuery.viewInsetsOf(context).bottom;
-    final panelH = _showEmoji ? _emojiPanelHeight() : 0.0;
-    final double bottomPad;
-    if (_showEmoji) {
-      bottomPad = panelH;
-    } else if (_keyboardReturning) {
-      final reserve = _keyboardTransitionHeight.clamp(0.0, _emojiPanelHeight());
-      bottomPad = inset > reserve ? inset : reserve;
-    } else {
-      bottomPad = inset;
+    final theme = Theme.of(context);
+    final media = MediaQuery.of(context);
+    final inset = media.viewInsets.bottom;
+    if (inset > 150) {
+      if (inset > _globalKeyboardHeight) {
+        _globalKeyboardHeight = inset;
+        SharedPreferences.getInstance().then((p) {
+          p.setDouble('last_keyboard_height', inset);
+        });
+      }
+    }
+    if (_keyboardTransitioning && inset >= _transitionHeight - 1.0) {
+      _keyboardTransitioning = false;
+      _transitionTimer?.cancel();
     }
 
-    return Stack(children: [
-      if (_showEmoji)
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: panelH,
-          child: Material(
-            color: Theme.of(context).brightness == Brightness.dark
-                ? const Color(0xFF1E2025)
-                : Colors.white,
-            child: SafeArea(
-              top: false,
-              child: _EmojiPanel(
-                groups: widget.emojiGroups,
-                onPick: _pickEmoji,
-              ),
+    final panelH = _emojiPanelHeight();
+    final double bottomSpacing;
+    if (_showEmoji) {
+      bottomSpacing = panelH;
+    } else if (_keyboardTransitioning) {
+      bottomSpacing = math.max(_transitionHeight, inset);
+    } else {
+      bottomSpacing = inset;
+    }
+    // iOS 等带底部安全区设备：当表情面板展开或键盘弹起/过渡时，底部已有遮挡，不额外在输入栏与面板之间叠加 safe area
+    final hasBottomCover = _showEmoji || bottomSpacing > 0;
+
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              8,
+              8,
+              8,
+              hasBottomCover ? 8 : media.padding.bottom + 8,
             ),
-          ),
-        ),
-      Padding(
-        padding: EdgeInsets.only(bottom: bottomPad),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.all(8),
             child: Column(children: [
               if (widget.replyLabel != null && widget.replyLabel!.isNotEmpty)
                 Align(
@@ -1289,10 +1317,40 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
                       }
                     },
                     decoration: InputDecoration(
-                        hintText: widget.hintText ??
-                            (widget.isVolume ? '写下本卷评论…' : '写下你的书评…'),
-                        isDense: true,
-                        border: const OutlineInputBorder()),
+                      hintText: widget.hintText ??
+                          (widget.isVolume ? '写下本卷评论…' : '写下你的书评…'),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      filled: true,
+                      fillColor: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.6),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide(
+                          color: theme.colorScheme.outlineVariant
+                              .withValues(alpha: 0.5),
+                          width: 1,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide(
+                          color: theme.colorScheme.outlineVariant
+                              .withValues(alpha: 0.5),
+                          width: 1,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide(
+                          color: theme.colorScheme.primary,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1302,9 +1360,25 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
               ]),
             ]),
           ),
-        ),
+          if (_showEmoji)
+            SizedBox(
+              height: panelH,
+              child: Material(
+                color: Theme.of(context).colorScheme.surfaceContainer,
+                child: SafeArea(
+                  top: false,
+                  child: _EmojiPanel(
+                    groups: widget.emojiGroups,
+                    onPick: _pickEmoji,
+                  ),
+                ),
+              ),
+            )
+          else if (bottomSpacing > 0)
+            SizedBox(height: bottomSpacing),
+        ],
       ),
-    ]);
+    );
   }
 }
 

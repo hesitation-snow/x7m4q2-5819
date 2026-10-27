@@ -12,7 +12,7 @@ class DynamicFeedSourceSwitch extends StatelessWidget {
         builder: (context, mode, _) => SwitchListTile(
           secondary: secondary,
           title: const Text('使用旧版动态数据源'),
-          subtitle: const Text('如果动态加载有问题时可以启用'),
+          subtitle: const Text('动态加载有问题时可以启用'),
           value: mode == DynamicFeedMode.legacyMixed,
           onChanged: (enabled) async {
             try {

@@ -13,11 +13,13 @@ import 'package:url_launcher/url_launcher.dart';
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/reading_session.dart';
+import '../api/store.dart';
 import '../services/reading_progress_reporter.dart';
 import '../services/daily_task_claims.dart';
 import '../services/treasure_task.dart';
 import '../services/deadline_countdown.dart';
 import '../widgets/common.dart';
+import '../widgets/m3_menu_sheet.dart';
 import 'book_detail_page.dart';
 import 'dynamic_page.dart';
 import 'reader_page.dart';
@@ -2148,99 +2150,74 @@ class _WelfarePageState extends State<WelfarePage>
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      sheetAnimationStyle: AppMotion.style(context),
       builder: (ctx) {
         final scheme = Theme.of(ctx).colorScheme;
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.group_add_rounded, color: Colors.amber),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        '邀请好友得轻币',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  ruleText.isNotEmpty
-                      ? ruleText
-                      : '每成功邀请一位好友可获得 50 轻币奖励，好友亦可获赠轻币。',
-                  style:
-                      TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color:
-                        scheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: scheme.outlineVariant.withValues(alpha: 0.4)),
-                  ),
-                  child: Row(
+        return M3MenuSheet(
+          title: '邀请好友得轻币',
+          icon: Icons.group_add_rounded,
+          description:
+              ruleText.isNotEmpty ? ruleText : '每成功邀请一位好友可获得 50 轻币奖励，好友亦可获赠轻币。',
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: scheme.outlineVariant.withValues(alpha: 0.4)),
+              ),
+              child: Wrap(
+                spacing: 16,
+                runSpacing: 12,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('我的专属邀请码',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: scheme.onSurfaceVariant)),
-                          const SizedBox(height: 3),
-                          Text(
-                            code.isNotEmpty ? code : '——',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 2.0,
-                              color: scheme.primary,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Spacer(),
-                      FilledButton.tonalIcon(
-                        onPressed: () {
-                          final textToCopy = shareText.isNotEmpty
-                              ? shareText
-                              : (code.isNotEmpty ? '邀请码: $code' : '');
-                          if (textToCopy.isNotEmpty) {
-                            Clipboard.setData(ClipboardData(text: textToCopy));
-                            showLkError(context, '邀请文案已复制到剪贴板');
-                          }
-                        },
-                        icon: const Icon(Icons.copy_rounded, size: 16),
-                        label: const Text('复制文案'),
+                      Text('我的专属邀请码',
+                          style: TextStyle(
+                              fontSize: 11, color: scheme.onSurfaceVariant)),
+                      const SizedBox(height: 3),
+                      Text(
+                        code.isNotEmpty ? code : '——',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 2.0,
+                          color: scheme.primary,
+                        ),
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 16),
-                Center(
-                  child: Text(
-                    '好友注册并完成阅读后，奖励自动发放到轻币账户',
-                    style:
-                        TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                  FilledButton.tonalIcon(
+                    onPressed: () {
+                      final textToCopy = shareText.isNotEmpty
+                          ? shareText
+                          : (code.isNotEmpty ? '邀请码: $code' : '');
+                      if (textToCopy.isNotEmpty) {
+                        Clipboard.setData(ClipboardData(text: textToCopy));
+                        showLkError(context, '邀请文案已复制到剪贴板');
+                      }
+                    },
+                    icon: const Icon(Icons.copy_rounded, size: 16),
+                    label: const Text('复制文案'),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+            const SizedBox(height: 16),
+            Center(
+              child: Text(
+                '好友注册并完成阅读后，奖励自动发放到轻币账户',
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -2443,10 +2420,16 @@ class _WelfarePageState extends State<WelfarePage>
                           builder: (_, __, ___) => _buildSleepCard(),
                         ),
                       ],
-                      if (_hasTreasureData) ...[
-                        const SizedBox(height: 10),
-                        _buildTreasureCard(),
-                      ],
+                      ValueListenableBuilder<bool>(
+                        valueListenable: LKStore.dailyTreasureEnabled,
+                        builder: (context, enabled, _) =>
+                            enabled && _hasTreasureData
+                                ? Padding(
+                                    padding: const EdgeInsets.only(top: 10),
+                                    child: _buildTreasureCard(),
+                                  )
+                                : const SizedBox.shrink(),
+                      ),
                       if (_displayTasks.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         _buildTaskCard(),
@@ -2892,7 +2875,7 @@ class _WelfarePageState extends State<WelfarePage>
       return '待解锁';
     }
     final prereqType = TreasureTask.prerequisite(box);
-    if (prereqType == 'watch_ad') return '免广告';
+    if (prereqType == 'watch_ad') return '看广告';
     if (prereqType == 'read_book') return '去浏览';
     if (prereqType.contains('collect') || prereqType.contains('shelf')) {
       return '去收藏';
@@ -3044,7 +3027,7 @@ class _WelfarePageState extends State<WelfarePage>
               ? _int(_deepField(claimRes, const ['reward', 'coin']))
               : _int(_deepField(claimRes, const ['reward_coin']));
       showLkError(
-          context, rewardCoin > 0 ? '免广告开箱成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
+          context, rewardCoin > 0 ? '开箱成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
       await _load();
     } catch (e) {
       if (mounted) {
@@ -3464,7 +3447,7 @@ class _WelfarePageState extends State<WelfarePage>
                   ? null
                   : () => _completeWatchAdAndClaim(boxIdx),
               icon: const Icon(Icons.bolt_rounded, size: 16),
-              label: Text(isActing ? '开启中' : '免广告开启'),
+              label: Text(isActing ? '开启中' : '开启'),
             )
           else if (isReadBook)
             Row(
@@ -3537,47 +3520,39 @@ class _WelfarePageState extends State<WelfarePage>
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      showDragHandle: false,
+      sheetAnimationStyle: AppMotion.style(context),
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      clipBehavior: Clip.antiAlias,
       builder: (ctx) {
         final scheme = Theme.of(ctx).colorScheme;
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          top: false,
+          child: SizedBox(
+            height: MediaQuery.sizeOf(ctx).height * 0.75,
             child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.calendar_month_rounded,
-                        color: Colors.amber),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        '宝箱 7 天奖励计划',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
+                const M3SheetHeader(
+                  title: '宝箱 7 天奖励计划',
+                  icon: Icons.calendar_month_rounded,
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  '每天完成宝箱任务即可开启对应数量宝箱并领取轻币。',
-                  style:
-                      TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+                  child: Text(
+                    '每天完成宝箱任务即可开启对应数量宝箱并领取轻币。',
+                    style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                  ),
                 ),
-                const SizedBox(height: 16),
                 if (weekPlan.isNotEmpty)
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxHeight: MediaQuery.sizeOf(ctx).height * 0.45,
-                    ),
+                  Expanded(
                     child: ListView.separated(
-                      shrinkWrap: true,
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
                       itemCount: weekPlan.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (_, index) {
@@ -3615,12 +3590,14 @@ class _WelfarePageState extends State<WelfarePage>
                               ),
                             ),
                           ),
-                          title: Row(
+                          title: Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Text(
                                   '第 $dayNo 天 ${date.isNotEmpty ? '($date)' : ''}'),
                               if (isToday) ...[
-                                const SizedBox(width: 6),
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 5, vertical: 1),
@@ -3628,10 +3605,10 @@ class _WelfarePageState extends State<WelfarePage>
                                     color: scheme.primary,
                                     borderRadius: BorderRadius.circular(4),
                                   ),
-                                  child: const Text(
+                                  child: Text(
                                     '今日',
                                     style: TextStyle(
-                                        color: Colors.white, fontSize: 10),
+                                        color: scheme.onPrimary, fontSize: 10),
                                   ),
                                 ),
                               ],
@@ -3640,23 +3617,18 @@ class _WelfarePageState extends State<WelfarePage>
                           subtitle: Text('$totalBoxes 个宝箱'),
                           trailing: Text(
                             '+$totalReward 轻币',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.amber,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: scheme.primary,
                               fontSize: 14,
                             ),
                           ),
                         );
                       },
                     ),
-                  ),
-                const SizedBox(height: 12),
-                Center(
-                  child: FilledButton.tonal(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('我知道了'),
-                  ),
-                ),
+                  )
+                else
+                  const Expanded(child: SizedBox()),
               ],
             ),
           ),

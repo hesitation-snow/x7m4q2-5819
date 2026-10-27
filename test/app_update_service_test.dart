@@ -155,10 +155,16 @@ void main() {
     ));
     await tester.pump();
 
-    expect(find.byType(Card), findsAtLeastNWidgets(3));
+    expect(find.widgetWithText(ListTile, '主题模式'), findsOneWidget);
+    expect(find.text('显示'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
-    await tester.scrollUntilVisible(find.text('关于'), 100);
+    await tester.scrollUntilVisible(find.text('关于'), 100,
+        scrollable: find
+            .descendant(
+                of: find.byType(SettingsPage),
+                matching: find.byType(Scrollable))
+            .first);
     await tester.ensureVisible(find.widgetWithText(ListTile, '关于'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('关于'));

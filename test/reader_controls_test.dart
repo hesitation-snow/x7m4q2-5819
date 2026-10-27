@@ -14,10 +14,11 @@ import 'package:yomiru/api/reader_cache.dart';
 import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/reader_page.dart';
 import 'package:yomiru/reader/reader_indent.dart';
-import 'package:yomiru/reader/reader_typography.dart';
 import 'package:yomiru/services/app_motion.dart';
 import 'package:yomiru/services/reader_volume_keys.dart';
 import 'package:yomiru/widgets/reader_typography_sheet.dart';
+import 'package:yomiru/widgets/m3_controls.dart';
+import 'package:yomiru/widgets/m3_menu_sheet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -149,6 +150,21 @@ void main() {
       await tester.tap(find.byTooltip('阅读设置'));
       await tester.pumpAndSettle();
 
+      expect(find.byType(M3SheetHeader), findsOneWidget);
+      final header = tester.widget<M3SheetHeader>(find.byType(M3SheetHeader));
+      expect(header.title, '阅读设置');
+      expect(
+          find.ancestor(
+              of: find.byType(TabBarView),
+              matching: find.byType(SingleChildScrollView)),
+          findsNothing);
+      final sheet = tester.widget<BottomSheet>(find.byType(BottomSheet));
+      final scheme =
+          Theme.of(tester.element(find.byType(M3SheetHeader))).colorScheme;
+      expect(sheet.backgroundColor, scheme.surfaceContainer);
+      expect((sheet.shape as RoundedRectangleBorder).borderRadius,
+          const BorderRadius.vertical(top: Radius.circular(28)));
+
       // Verify TabBar has 外观, 排版, 操作, and NO 边距
       expect(find.text('外观'), findsOneWidget);
       expect(find.text('排版'), findsOneWidget);
@@ -173,9 +189,8 @@ void main() {
       expect(typographySheet.paged, isTrue);
       expect(
           tester
-              .widget<SegmentedButton<ReaderColumnMode>>(
-                  find.byType(SegmentedButton<ReaderColumnMode>))
-              .onSelectionChanged,
+              .widget<M3ChoiceChip>(find.widgetWithText(M3ChoiceChip, '双栏'))
+              .onSelected,
           isNotNull);
       expect(find.text('两端对齐'), findsOneWidget);
       expect(find.text('分栏模式'), findsOneWidget);

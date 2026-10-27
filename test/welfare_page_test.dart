@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/lk_api.dart';
 import 'package:yomiru/api/lk_client.dart';
+import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/welfare_page.dart';
 import 'package:yomiru/api/reading_session.dart';
 import 'package:yomiru/services/reading_progress_reporter.dart';
@@ -22,6 +23,7 @@ http.Response _jsonResponse(Map<String, dynamic> data, [int status = 200]) {
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    LKStore.dailyTreasureEnabled.value = false;
     WelfarePage.clearClaimedTestingState();
     LKClient.shared.session.securityKey = 'mock_token';
     LKClient.shared.session.uid = 12345;
@@ -133,8 +135,11 @@ void main() {
     expect(WelfarePage.filterVisibleTasks([treasureTask]), isEmpty);
     await tester.pumpWidget(const MaterialApp(home: WelfarePage()));
     await tester.pumpAndSettle();
-    expect(find.text('每日开宝箱'), findsOneWidget);
+    expect(find.text('每日开宝箱'), findsNothing);
     expect(find.text('每日签到'), findsOneWidget);
+    await LKStore.setDailyTreasureEnabled(true);
+    await tester.pumpAndSettle();
+    expect(find.text('每日开宝箱'), findsOneWidget);
     expect(paths.any((path) => path.contains('welfare-treasure-box-detail')),
         isTrue);
     expect(tester.takeException(), isNull);
@@ -947,6 +952,7 @@ void main() {
         return _jsonResponse({'code': 0, 'data': {}});
       });
       LKApi.client = LKClient.forTesting(httpClient: mock);
+      await LKStore.setDailyTreasureEnabled(true);
 
       await tester.pumpWidget(
         const MaterialApp(home: Scaffold(body: WelfarePage())),
@@ -1016,14 +1022,16 @@ void main() {
         return _jsonResponse({'code': 0, 'data': {}});
       });
       LKApi.client = LKClient.forTesting(httpClient: mock);
+      await LKStore.setDailyTreasureEnabled(true);
 
       await tester.pumpWidget(
         const MaterialApp(home: Scaffold(body: WelfarePage())),
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('免广告开启'), findsOneWidget);
-      await tester.tap(find.text('免广告开启'));
+      expect(find.text('免广告'), findsOneWidget);
+      expect(find.text('开启'), findsOneWidget);
+      await tester.tap(find.text('开启'));
       await tester.pump();
       for (var i = 0; i < 5; i++) {
         await tester.pump(const Duration(milliseconds: 50));

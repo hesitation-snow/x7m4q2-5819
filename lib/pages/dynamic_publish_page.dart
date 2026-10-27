@@ -8,6 +8,7 @@ import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
+import '../widgets/m3_menu_sheet.dart';
 
 class DynamicPublishPage extends StatefulWidget {
   const DynamicPublishPage({super.key});
@@ -66,68 +67,64 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
     final code = await showModalBottomSheet<String>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: SizedBox(
-          height: 360,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: _emojiGroups
-                  .map(
-                    (group) => Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (group.name.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Text(group.name,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600)),
-                            ),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: group.items
-                                .where((item) => item.isImage)
-                                .map(
-                                  (item) => InkWell(
-                                    borderRadius: BorderRadius.circular(8),
-                                    onTap: () =>
-                                        Navigator.pop(context, item.code),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(3),
-                                      child: CachedNetworkImage(
-                                        fadeOutDuration:
-                                            AppMotion.duration(context, 1000),
-                                        fadeInDuration:
-                                            AppMotion.duration(context, 500),
-                                        imageUrl:
-                                            YomiruEmojiCatalog.normalizeUrl(
-                                                item.url),
-                                        width: 38,
-                                        height: 38,
-                                        memCacheWidth:
-                                            imageCacheDimension(context, 38),
-                                        fit: BoxFit.contain,
-                                        errorWidget: (_, __, ___) =>
-                                            Text(item.code),
-                                      ),
-                                    ),
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 460),
+        child: M3MenuSheet(
+          title: '选择表情',
+          icon: Icons.emoji_emotions_outlined,
+          children: _emojiGroups
+              .map(
+                (group) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (group.name.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(group.name,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
+                        ),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: group.items
+                            .where((item) => item.isImage)
+                            .map(
+                              (item) => InkWell(
+                                borderRadius: BorderRadius.circular(8),
+                                onTap: () => Navigator.pop(context, item.code),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(3),
+                                  child: CachedNetworkImage(
+                                    fadeOutDuration:
+                                        AppMotion.duration(context, 1000),
+                                    fadeInDuration:
+                                        AppMotion.duration(context, 500),
+                                    imageUrl: YomiruEmojiCatalog.normalizeUrl(
+                                        item.url),
+                                    width: 38,
+                                    height: 38,
+                                    memCacheWidth:
+                                        imageCacheDimension(context, 38),
+                                    fit: BoxFit.contain,
+                                    errorWidget: (_, __, ___) =>
+                                        Text(item.code),
                                   ),
-                                )
-                                .toList(),
-                          ),
-                        ],
+                                ),
+                              ),
+                            )
+                            .toList(),
                       ),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
+                    ],
+                  ),
+                ),
+              )
+              .toList(),
         ),
       ),
     );

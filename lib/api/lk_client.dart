@@ -171,14 +171,12 @@ class LKClient {
       if (obj is! Map<String, dynamic>) throw LKException(-1, '响应格式错误');
       final code = (obj['code'] as num?)?.toInt() ?? -1;
       if (code != 0) {
-        if (cached != null &&
-            !forceRefresh &&
-            allowCachedFallback &&
-            code >= 500) {
-          return cached.data;
-        }
-        final msg = _extractMessage(
-            obj['data'] ?? obj['message'] ?? obj['msg'] ?? obj['error'] ?? obj);
+        final msg = _extractMessage([
+          obj['message'],
+          obj['msg'],
+          obj['error'],
+          obj['data'],
+        ]);
         if (code == 8) await expireSessionIfCurrent(requestSecurityKey);
         throw LKException(code, msg.isNotEmpty ? msg : _codeHint(code));
       }

@@ -197,16 +197,16 @@ class _ReaderTextColorDialogState extends State<ReaderTextColorDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
 
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      backgroundColor: isDark ? const Color(0xFF23252B) : Colors.white,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      backgroundColor: scheme.surfaceContainer,
+      surfaceTintColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 400),
+        constraints: const BoxConstraints(maxWidth: 380),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -214,7 +214,7 @@ class _ReaderTextColorDialogState extends State<ReaderTextColorDialog> {
               // 1. 标题与重置按钮
               Row(
                 children: [
-                  const Icon(Icons.palette_outlined, size: 20),
+                  Icon(Icons.palette_outlined, size: 20, color: scheme.primary),
                   const SizedBox(width: 8),
                   const Text(
                     '文字颜色',
@@ -232,38 +232,46 @@ class _ReaderTextColorDialogState extends State<ReaderTextColorDialog> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
 
               // 2. 实时正文效果预览卡片
               _buildPreviewCard(),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
 
               // 3. 2D 饱和度/亮度调色板
               _buildSaturationValueBoard(),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
 
               // 4. 色相 Rainbow 滑杆
               _buildHueSlider(),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
 
               // 5. 十六进制输入框
               _buildHexInputField(scheme),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
 
               // 6. 快捷常用字色
               _buildQuickSwatches(),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
 
               // 7. 底部确定与取消按钮
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  TextButton(
+                  OutlinedButton(
                     onPressed: () => Navigator.of(context).pop(null),
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
                     child: const Text('取消'),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   FilledButton(
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                    ),
                     onPressed: () {
                       if (_isResetToDefault) {
                         Navigator.of(context)
@@ -343,15 +351,6 @@ class _ReaderTextColorDialogState extends State<ReaderTextColorDialog> {
               fontSize: 15,
               height: 1.5,
               fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            'The quick brown fox jumps over the lazy dog.',
-            style: TextStyle(
-              color: _currentColor.withValues(alpha: 0.85),
-              fontSize: 12,
-              height: 1.4,
             ),
           ),
         ],
@@ -485,6 +484,47 @@ class _ReaderTextColorDialogState extends State<ReaderTextColorDialog> {
 
   /// 快捷预设常用颜色列表
   Widget _buildQuickSwatches() {
+    Widget buildSwatch(Color color) {
+      final isSelected =
+          !_isResetToDefault && _currentColor.toARGB32() == color.toARGB32();
+      return GestureDetector(
+        onTap: () => _onColorFromPalette(color),
+        child: Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: isSelected
+                  ? Theme.of(context).colorScheme.primary
+                  : Colors.grey.withValues(alpha: 0.35),
+              width: isSelected ? 2.5 : 1,
+            ),
+            boxShadow: [
+              if (isSelected)
+                BoxShadow(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.35),
+                  blurRadius: 4,
+                ),
+            ],
+          ),
+          child: isSelected
+              ? Icon(
+                  Icons.check,
+                  size: 16,
+                  color: color.computeLuminance() > 0.5
+                      ? Colors.black
+                      : Colors.white,
+                )
+              : null,
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -493,49 +533,14 @@ class _ReaderTextColorDialogState extends State<ReaderTextColorDialog> {
           style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: kQuickReadingTextColors.map((color) {
-            final isSelected = !_isResetToDefault &&
-                _currentColor.toARGB32() == color.toARGB32();
-            return GestureDetector(
-              onTap: () => _onColorFromPalette(color),
-              child: Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: isSelected
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.grey.withValues(alpha: 0.35),
-                    width: isSelected ? 2.5 : 1,
-                  ),
-                  boxShadow: [
-                    if (isSelected)
-                      BoxShadow(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .primary
-                            .withValues(alpha: 0.35),
-                        blurRadius: 4,
-                      ),
-                  ],
-                ),
-                child: isSelected
-                    ? Icon(
-                        Icons.check,
-                        size: 16,
-                        color: color.computeLuminance() > 0.5
-                            ? Colors.black
-                            : Colors.white,
-                      )
-                    : null,
-              ),
-            );
-          }).toList(),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: kQuickReadingTextColors.take(7).map(buildSwatch).toList(),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: kQuickReadingTextColors.skip(7).map(buildSwatch).toList(),
         ),
       ],
     );

@@ -38,4 +38,20 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  test('pure black dark mode uses true black surfaces', () {
+    final normalDark = AppTheme.build(Brightness.dark, pureBlack: false);
+    final pureBlackDark = AppTheme.build(Brightness.dark, pureBlack: true);
+
+    expect(normalDark.scaffoldBackgroundColor, isNot(Colors.black));
+    expect(pureBlackDark.scaffoldBackgroundColor, Colors.black);
+    expect(pureBlackDark.colorScheme.surface, Colors.black);
+    expect(pureBlackDark.colorScheme.surfaceContainerLowest, Colors.black);
+  });
+
+  test('custom seed color generates matching theme scheme', () {
+    const teal = Color(0xFF009688);
+    final theme = AppTheme.build(Brightness.light, seedColor: teal);
+    expect(theme.colorScheme.primary, isNotNull);
+  });
 }

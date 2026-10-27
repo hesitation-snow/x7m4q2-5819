@@ -17,6 +17,7 @@ import 'package:yomiru/pages/medal_center_page.dart';
 import 'package:yomiru/pages/messages_page.dart';
 import 'package:yomiru/pages/welfare_page.dart';
 import 'package:yomiru/services/app_motion.dart';
+import 'package:yomiru/widgets/m3_menu_sheet.dart';
 
 // Regression coverage for the app polish pass. All HTTP is mocked.
 void main() {
@@ -64,7 +65,14 @@ void main() {
       (tester) async {
     await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
     await tester.pump();
-    await tester.ensureVisible(find.text('隐藏勇者书籍'));
+    await tester.scrollUntilVisible(
+      find.text('隐藏勇者书籍'),
+      120,
+      scrollable: find.descendant(
+        of: find.byType(SettingsPage),
+        matching: find.byType(Scrollable),
+      ).first,
+    );
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('封面模糊')).dy,
         lessThan(tester.getTopLeft(find.text('隐藏勇者书籍')).dy));
@@ -79,12 +87,19 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
       await tester.pump();
-      if (option == '封面模糊') {
-        await tester.drag(find.byType(ListView), const Offset(0, -350));
-        await tester.pumpAndSettle();
-      }
+      await tester.scrollUntilVisible(
+        find.text(option),
+        120,
+        scrollable: find.descendant(
+          of: find.byType(SettingsPage),
+          matching: find.byType(Scrollable),
+        ).first,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(option).hitTestable(), findsOneWidget);
       await tester.tap(find.text(option));
       await tester.pumpAndSettle();
+      expect(find.byType(M3MenuSheet), findsOneWidget);
       final error = tester.takeException();
       expect(error, isNull);
     });

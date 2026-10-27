@@ -4,6 +4,7 @@ import 'package:yomiru/reader/indicator_position.dart';
 import 'package:yomiru/reader/reader_typography.dart';
 import 'package:yomiru/widgets/reader_indicators.dart';
 import 'package:yomiru/widgets/reader_typography_sheet.dart';
+import 'package:yomiru/widgets/m3_controls.dart';
 
 void main() {
   for (final brightness in Brightness.values) {
@@ -47,9 +48,16 @@ void main() {
       }
 
       expect(tester.takeException(), isNull);
+      expect(find.byType(SegmentedButton<ReaderColumnMode>), findsNothing);
+      expect(
+          find.byWidgetPredicate((widget) =>
+              widget is SingleChildScrollView &&
+              widget.scrollDirection == Axis.horizontal),
+          findsNothing);
       await tester.tap(find.text('文字颜色'));
       expect(colorPicks, 1);
       await reveal('紧凑');
+      expect(find.byType(M3ChoiceChip), findsWidgets);
       await tester.tap(find.text('紧凑'));
       await tester.pumpAndSettle();
       expect(commits, 1);

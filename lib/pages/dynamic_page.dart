@@ -1,4 +1,5 @@
 import '../widgets/m3_menu_sheet.dart';
+import '../widgets/m3_controls.dart';
 import '../services/app_motion.dart';
 import 'dart:async';
 
@@ -72,13 +73,19 @@ class _DynamicPageState extends State<DynamicPage> {
   String _contentFilter = 'all';
   int _requestSerial = 0;
   int _unreadRequestSerial = 0;
+  final Map<int, bool> _favoriteOverrides = {};
+  final Set<int> _favoritePending = {};
   Map<int, List<LKMedal>> _globalMedals = {};
   Map<String, String> _emojiUrls = const {};
   int _unreadCount = 0;
   final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
   List<LKDynamicItem> _visibleItems = const [];
-  // 与主页保持同一伸缩高度,确保筛选胶囊完整显示并让内容紧贴顶栏。
-  static const double _topBarFlex = 100.0;
+  // Reserve the real chip touch target and scaled title height in the
+  // collapsing header, rather than clipping the controls at the old 100px.
+  double get _topBarFlex =>
+      116 +
+      (MediaQuery.textScalerOf(context).scale(20) - 20).clamp(0.0, 40.0) +
+      (MediaQuery.textScalerOf(context).scale(12) - 12).clamp(0.0, 40.0);
 
   String _dynamicKey(LKDynamicItem item) {
     if (item.dynamicId > 0) return 'id:${item.dynamicId}';
@@ -142,6 +149,8 @@ class _DynamicPageState extends State<DynamicPage> {
     setState(() {
       _feedTab = normalizedDynamicFeedTab(_feedTab,
           loggedIn: LKClient.shared.session.isLoggedIn);
+      _favoriteOverrides.clear();
+      _favoritePending.clear();
       _items = [];
       _visibleItems = const [];
       _cursor = '';
@@ -168,6 +177,7 @@ class _DynamicPageState extends State<DynamicPage> {
   }
 
   Future<void> _startLoad() async {
+    if (mounted) setState(() => _loading = true);
     final request = _requestSerial;
     final uid = LKClient.shared.session.uid;
     final feedTab = _feedTab;
@@ -187,6 +197,8 @@ class _DynamicPageState extends State<DynamicPage> {
         _cursor = '';
         _page = 1;
         _hasMore = true;
+        // Keep the footer from starting an append before refresh begins.
+        _loading = true;
         _error = null;
         _rebuildVisibleItems();
       });
@@ -251,6 +263,7 @@ class _DynamicPageState extends State<DynamicPage> {
       });
     }
     try {
+      final refreshKeys = <String>{};
       Future<LoadedPage<LKDynamicItem>> fetchPage(
           int number, String cursor) async {
         final result = await LKApi.dynamicFeedPage(
@@ -259,10 +272,14 @@ class _DynamicPageState extends State<DynamicPage> {
             cursor: cursor,
             page: number,
             pageSize: 20);
+        final newKeys = result.items.map(_dynamicKey).toSet();
+        final repeated =
+            !append && number > 1 && newKeys.difference(refreshKeys).isEmpty;
+        refreshKeys.addAll(newKeys);
         return LoadedPage(
             items: result.items,
             page: number,
-            hasMore: result.hasMore,
+            hasMore: result.hasMore && !repeated,
             cursor: result.cursor);
       }
 
@@ -285,6 +302,9 @@ class _DynamicPageState extends State<DynamicPage> {
       }
       YomiruAvatarCache.precache(
           context, result.items.map((item) => item.avatar));
+      final oldKeys = _items.map(_dynamicKey).toSet();
+      final addedItems =
+          result.items.any((item) => !oldKeys.contains(_dynamicKey(item)));
       setState(() {
         if (append) {
           _items = mergePagedItems(_items, result.items, keyOf: _dynamicKey);
@@ -293,10 +313,7 @@ class _DynamicPageState extends State<DynamicPage> {
         }
         _cursor = result.cursor;
         _page = result.page;
-        _hasMore = result.hasMore &&
-            !(append &&
-                result.items.isEmpty &&
-                result.cursor == previousCursor);
+        _hasMore = result.hasMore && !(append && !addedItems);
         _error = null;
         _errorFromAppend = false;
         if (medalUpdates.isNotEmpty) {
@@ -392,45 +409,11 @@ class _DynamicPageState extends State<DynamicPage> {
     required bool selected,
     required VoidCallback onTap,
   }) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Material(
-      color: selected
-          ? (isDark
-              ? scheme.primary.withValues(alpha: 0.22)
-              : scheme.primary.withValues(alpha: 0.12))
-          : (isDark
-              ? const Color(0xFF1E2025)
-              : scheme.surfaceContainerHighest.withValues(alpha: 0.5)),
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 14,
-                color: selected ? scheme.primary : scheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return M3ChoiceChip(
+      label: label,
+      icon: icon,
+      selected: selected,
+      onSelected: (_) => onTap(),
     );
   }
 
@@ -1020,160 +1003,70 @@ class _DynamicPageState extends State<DynamicPage> {
   void _actions(LKDynamicItem d) {
     if (d.dynamicId <= 0) return;
     final loggedIn = LKClient.shared.session.isLoggedIn;
+    final favorited = _favoriteOverrides[d.dynamicId] ?? d.favorited;
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
       backgroundColor: Colors.transparent,
+      showDragHandle: false,
       isScrollControlled: true,
-      builder: (sheetContext) {
-        final scheme = Theme.of(sheetContext).colorScheme;
-        return M3MenuSheet(
-          title: '动态操作',
-          icon: Icons.more_horiz_rounded,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Material(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                  onTap: () async {
-                    Navigator.pop(sheetContext);
-                    await Clipboard.setData(
-                        ClipboardData(text: dynamicWebsiteUrl(d.dynamicId)));
-                    if (mounted) showLkError(context, '已复制动态链接');
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 14),
-                    child: Row(
-                      children: [
-                        Icon(Icons.link_rounded,
-                            size: 20, color: scheme.onSurface),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Text(
-                            '复制动态链接',
-                            style: TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w500),
-                          ),
-                        ),
-                        Icon(Icons.chevron_right_rounded,
-                            size: 18, color: scheme.onSurfaceVariant),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+      builder: (sheetContext) => M3MenuSheet(
+        title: '动态操作',
+        icon: Icons.more_horiz_rounded,
+        children: [
+          M3OptionTile(
+            title: '复制动态链接',
+            icon: Icons.link_rounded,
+            onTap: () async {
+              Navigator.pop(sheetContext);
+              await Clipboard.setData(
+                  ClipboardData(text: dynamicWebsiteUrl(d.dynamicId)));
+              if (mounted) showLkError(context, '已复制动态链接');
+            },
+          ),
+          if (loggedIn) ...[
+            M3OptionTile(
+              title: d.liked ? '已点赞（点击取消）' : '点赞此动态',
+              icon: d.liked ? Icons.thumb_up_rounded : Icons.thumb_up_outlined,
+              selected: d.liked,
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                try {
+                  await LKApi.toggleDynamicLike(d.dynamicId, !d.liked);
+                  if (mounted) await _load();
+                } catch (_) {
+                  if (mounted) showLkError(context, '点赞操作失败，请重试');
+                }
+              },
             ),
-            if (loggedIn) ...[
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Material(
-                  color:
-                      d.liked ? scheme.secondaryContainer : Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: () async {
-                      Navigator.pop(sheetContext);
-                      await LKApi.toggleDynamicLike(d.dynamicId, !d.liked);
-                      _load();
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 14),
-                      child: Row(
-                        children: [
-                          Icon(
-                            d.liked
-                                ? Icons.thumb_up_rounded
-                                : Icons.thumb_up_outlined,
-                            size: 20,
-                            color: d.liked
-                                ? scheme.onSecondaryContainer
-                                : scheme.onSurface,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              d.liked ? '已点赞（点击取消）' : '点赞此动态',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight:
-                                    d.liked ? FontWeight.bold : FontWeight.w500,
-                                color: d.liked
-                                    ? scheme.onSecondaryContainer
-                                    : scheme.onSurface,
-                              ),
-                            ),
-                          ),
-                          if (d.liked)
-                            Icon(Icons.check_rounded,
-                                size: 20, color: scheme.onSecondaryContainer),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Material(
-                  color: d.favorited
-                      ? scheme.secondaryContainer
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: () async {
-                      Navigator.pop(sheetContext);
-                      await LKApi.toggleDynamicFavorite(
-                          d.dynamicId, !d.favorited);
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 14),
-                      child: Row(
-                        children: [
-                          Icon(
-                            d.favorited
-                                ? Icons.star_rounded
-                                : Icons.star_outline_rounded,
-                            size: 20,
-                            color: d.favorited
-                                ? Colors.amber.shade700
-                                : scheme.onSurface,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              d.favorited ? '已收藏（点击取消）' : '收藏此动态',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: d.favorited
-                                    ? FontWeight.bold
-                                    : FontWeight.w500,
-                                color: d.favorited
-                                    ? scheme.onSecondaryContainer
-                                    : scheme.onSurface,
-                              ),
-                            ),
-                          ),
-                          if (d.favorited)
-                            Icon(Icons.check_rounded,
-                                size: 20, color: scheme.onSecondaryContainer),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
+            M3OptionTile(
+              title: favorited ? '已收藏（点击取消）' : '收藏此动态',
+              icon: favorited ? Icons.star_rounded : Icons.star_outline_rounded,
+              selected: favorited,
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                if (!_favoritePending.add(d.dynamicId)) return;
+                final sessionRevision = LKClient.sessionRev.value;
+                try {
+                  await LKApi.toggleDynamicFavorite(d.dynamicId, !favorited);
+                  if (mounted && sessionRevision == LKClient.sessionRev.value) {
+                    setState(
+                        () => _favoriteOverrides[d.dynamicId] = !favorited);
+                  }
+                } catch (_) {
+                  if (mounted && sessionRevision == LKClient.sessionRev.value) {
+                    showLkError(context, '收藏操作失败，请重试');
+                  }
+                } finally {
+                  if (sessionRevision == LKClient.sessionRev.value) {
+                    _favoritePending.remove(d.dynamicId);
+                  }
+                }
+              },
+            ),
           ],
-        );
-      },
+        ],
+      ),
     );
   }
 }

@@ -69,7 +69,7 @@ void main() {
           home: const Scaffold(
               body: SingleChildScrollView(child: DynamicFeedSourceSwitch()))));
       expect(find.text('使用旧版动态数据源'), findsOneWidget);
-      expect(find.text('如果动态加载有问题时可以启用'), findsOneWidget);
+      expect(find.text('动态加载有问题时可以启用'), findsOneWidget);
       expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
           isFalse);
       await tester.ensureVisible(find.byType(Switch));

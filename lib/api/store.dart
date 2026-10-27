@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'lk_client.dart';
 import 'home_channels.dart';
+import 'medal_catalog.dart';
 import 'models.dart';
 import 'reader_cache.dart';
 import 'reading_session.dart';
@@ -31,11 +32,162 @@ enum DynamicFeedMode {
   final String description;
 }
 
+@immutable
+class GlassConfiguration {
+  const GlassConfiguration._(
+    this.blur,
+    this.tint,
+    this.refraction,
+    this.highlight,
+    this.barWidth,
+    this.barHeight,
+    this.floatingHeight,
+    this.keepVisibleOnScroll,
+  );
+
+  static const defaults = GlassConfiguration._(
+    3,
+    .09,
+    .25,
+    .74,
+    252,
+    59,
+    18,
+    false,
+  );
+
+  final double blur, tint, refraction, highlight;
+  final double barWidth, barHeight, floatingHeight;
+  final bool keepVisibleOnScroll;
+
+  static double _v(Object? v, double d, double max) =>
+      v is num && v.isFinite ? v.toDouble().clamp(0.0, max) : d;
+
+  factory GlassConfiguration({
+    Object? blur = 3,
+    Object? tint = .09,
+    Object? refraction = .25,
+    Object? highlight = .74,
+    Object? barWidth = 252,
+    Object? barHeight = 59,
+    Object? floatingHeight = 18,
+    Object? keepVisibleOnScroll = false,
+  }) =>
+      GlassConfiguration._(
+        _v(blur, defaults.blur, 40),
+        _v(tint, defaults.tint, 1),
+        _v(refraction, defaults.refraction, .25),
+        _v(highlight, defaults.highlight, 1),
+        _v(barWidth, defaults.barWidth, 360).clamp(220.0, 360.0).toDouble(),
+        _v(barHeight, defaults.barHeight, 72).clamp(40.0, 72.0).toDouble(),
+        _v(floatingHeight, defaults.floatingHeight, 48),
+        keepVisibleOnScroll is bool ? keepVisibleOnScroll : false,
+      );
+
+  GlassConfiguration copyWith({
+    double? blur,
+    double? tint,
+    double? refraction,
+    double? highlight,
+    double? barWidth,
+    double? barHeight,
+    double? floatingHeight,
+    bool? keepVisibleOnScroll,
+  }) =>
+      GlassConfiguration(
+        blur: blur ?? this.blur,
+        tint: tint ?? this.tint,
+        refraction: refraction ?? this.refraction,
+        highlight: highlight ?? this.highlight,
+        barWidth: barWidth ?? this.barWidth,
+        barHeight: barHeight ?? this.barHeight,
+        floatingHeight: floatingHeight ?? this.floatingHeight,
+        keepVisibleOnScroll: keepVisibleOnScroll ?? this.keepVisibleOnScroll,
+      );
+}
+
 /// 会话与主题持久化
 class LKStore {
   /// 主题模式(ValueNotifier 让 MaterialApp 即时切换)
   static final ValueNotifier<ThemeMode> themeMode =
       ValueNotifier(ThemeMode.system);
+
+  /// 深色模式纯黑 (AMOLED)
+  static final ValueNotifier<bool> pureBlackDark = ValueNotifier(false);
+
+  /// 全局主题种子色 (ARGB32)
+  static final ValueNotifier<int?> themeSeedColor = ValueNotifier(null);
+
+  /// 液态玻璃底栏独立开关（旧强度偏好忽略）
+  static final ValueNotifier<bool> liquidGlassBottomBarEnabled =
+      ValueNotifier(false);
+
+  /// 实验室功能开关：在任务中心显示每日开宝箱。
+  static final ValueNotifier<bool> dailyTreasureEnabled = ValueNotifier(false);
+
+  static Future<void> setDailyTreasureEnabled(bool enabled) async {
+    dailyTreasureEnabled.value = enabled;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('laboratory_daily_treasure_enabled', enabled);
+  }
+
+  /// 实验室调试选项：加载勋章商城所有服务端分页。
+  static final ValueNotifier<bool> allMedalsEnabled =
+      ValueNotifier(allMedalsBuild);
+
+  static Future<void> setAllMedalsEnabled(bool enabled) async {
+    allMedalsEnabled.value = enabled;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('laboratory_all_medals_enabled', enabled);
+  }
+
+  static final glassConfiguration = ValueNotifier(GlassConfiguration.defaults);
+  static Timer? _glassSaveTimer;
+  static void updateGlassConfiguration(GlassConfiguration value) {
+    glassConfiguration.value = value;
+    _glassSaveTimer?.cancel();
+    _glassSaveTimer = Timer(const Duration(milliseconds: 300), () {
+      unawaited(flushGlassConfiguration());
+    });
+  }
+
+  static Future<void> _glassSaveQueue = Future<void>.value();
+  static Future<void> flushGlassConfiguration() {
+    _glassSaveTimer?.cancel();
+    _glassSaveTimer = null;
+    final c = glassConfiguration.value;
+    return _glassSaveQueue = _glassSaveQueue.then((_) async {
+      final p = await SharedPreferences.getInstance();
+      await p.setDouble('glass_blur', c.blur);
+      await p.setDouble('glass_tint', c.tint);
+      await p.setDouble('glass_refraction', c.refraction);
+      await p.setDouble('glass_highlight', c.highlight);
+      await p.setDouble('glass_bar_width', c.barWidth);
+      await p.setDouble('glass_bar_height', c.barHeight);
+      await p.setDouble('glass_floating_height', c.floatingHeight);
+      await p.setBool('glass_keep_visible_on_scroll', c.keepVisibleOnScroll);
+    }).catchError((Object error) {
+      debugPrint('Glass preferences save failed: $error');
+    });
+  }
+
+  static void loadGlassConfiguration(SharedPreferences p) {
+    glassConfiguration.value = GlassConfiguration(
+      blur: p.get('glass_blur') ?? GlassConfiguration.defaults.blur,
+      tint: p.get('glass_tint') ?? GlassConfiguration.defaults.tint,
+      refraction:
+          p.get('glass_refraction') ?? GlassConfiguration.defaults.refraction,
+      highlight:
+          p.get('glass_highlight') ?? GlassConfiguration.defaults.highlight,
+      barWidth:
+          p.get('glass_bar_width') ?? GlassConfiguration.defaults.barWidth,
+      barHeight:
+          p.get('glass_bar_height') ?? GlassConfiguration.defaults.barHeight,
+      floatingHeight: p.get('glass_floating_height') ??
+          GlassConfiguration.defaults.floatingHeight,
+      keepVisibleOnScroll: p.get('glass_keep_visible_on_scroll') ?? false,
+    );
+  }
 
   /// 流量节省模式(ValueNotifier 让全局图片加载即时响应)
   static final ValueNotifier<bool> dataSaverMode = ValueNotifier(false);
@@ -116,6 +268,17 @@ class LKStore {
   }
 
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
+  static const _sessionInvalidatedKey = 'session_invalidated_v1';
+  static Future<void> _sessionWrites = Future<void>.value();
+  static int _sessionGeneration = 0;
+
+  // Keep failed writes from poisoning later operations, while reporting each
+  // failure to its own caller. Snapshots are captured before entering the queue.
+  static Future<void> _queueSessionWrite(Future<void> Function() action) {
+    final operation = _sessionWrites.then((_) => action());
+    _sessionWrites = operation.catchError((Object _) {});
+    return operation;
+  }
 
   /// Remove identifiers left by versions that reported automatic usage data.
   /// Run asynchronously after runApp so cleanup never delays startup.
@@ -133,7 +296,12 @@ class LKStore {
     }
   }
 
-  static Future<void> load() async {
+  static Future<void> load() {
+    final generation = _sessionGeneration;
+    return _queueSessionWrite(() => _load(generation));
+  }
+
+  static Future<void> _load(int generation) async {
     // 两个独立存储并行打开,缩短启动首屏前的等待时间。
     final preferencesFuture = SharedPreferences.getInstance();
     final secureKeyFuture = (() async {
@@ -145,7 +313,13 @@ class LKStore {
     })();
     final p = await preferencesFuture;
     var (securityKey, secureStorageReady) = await secureKeyFuture;
-    if (secureStorageReady) {
+    final invalidated = p.getBool(_sessionInvalidatedKey) ?? false;
+    if (invalidated) {
+      // A previous logout may have failed to delete the secure value. Never
+      // restore it, even when the secure store is available again.
+      securityKey = '';
+    }
+    if (secureStorageReady && !invalidated) {
       // 一次性迁移旧版本写入 SharedPreferences 的会话凭据。
       if (securityKey.isEmpty) {
         final legacyKey = p.getString('security_key') ?? '';
@@ -161,12 +335,23 @@ class LKStore {
     }
     // Keychain/Keystore 不可用时不回退读取明文偏好，避免重新暴露凭据。
     if (secureStorageReady) await p.remove('security_key');
-    LKClient.shared.session
-      ..securityKey = securityKey
-      ..uid = p.getInt('uid') ?? 0
-      ..nickname = p.getString('nickname') ?? ''
-      ..avatar = p.getString('avatar') ?? '';
+    if (generation == _sessionGeneration) {
+      LKClient.shared.session
+        ..securityKey = securityKey
+        ..uid = invalidated ? 0 : (p.getInt('uid') ?? 0)
+        ..nickname = invalidated ? '' : (p.getString('nickname') ?? '')
+        ..avatar = invalidated ? '' : (p.getString('avatar') ?? '');
+    }
     themeMode.value = _parseTheme(p.getString('theme_mode'));
+    pureBlackDark.value = p.getBool('pure_black_dark') ?? false;
+    themeSeedColor.value = p.getInt('theme_seed_color');
+    liquidGlassBottomBarEnabled.value =
+        p.getBool('liquid_glass_bottom_bar_enabled') ?? false;
+    dailyTreasureEnabled.value =
+        p.getBool('laboratory_daily_treasure_enabled') ?? false;
+    allMedalsEnabled.value =
+        p.getBool('laboratory_all_medals_enabled') ?? allMedalsBuild;
+    loadGlassConfiguration(p);
     dataSaverMode.value = p.getBool('data_saver_mode') ?? false;
     animationsEnabled.value = p.getBool('animations_enabled') ?? true;
     landscapeEnabled.value = p.getBool('landscape_enabled') ?? false;
@@ -203,25 +388,60 @@ class LKStore {
     unawaited(LKClient.shared.trimResponseCache());
   }
 
-  static Future<void> save() async {
-    final p = await SharedPreferences.getInstance();
+  static Future<void> save() {
     final s = LKClient.shared.session;
-    if (s.securityKey.isEmpty) {
-      await _secure.delete(key: 'security_key');
-    } else {
-      await _secure.write(key: 'security_key', value: s.securityKey);
-    }
-    // 清理旧版本可能留下的明文副本。
-    await p.remove('security_key');
-    await p.setInt('uid', s.uid);
-    await p.setString('nickname', s.nickname);
-    await p.setString('avatar', s.avatar);
+    final key = s.securityKey;
+    final uid = s.uid;
+    final nickname = s.nickname;
+    final avatar = s.avatar;
+    _sessionGeneration++;
+    return _queueSessionWrite(() async {
+      final p = await SharedPreferences.getInstance();
+      // Fail closed if a write is interrupted midway.
+      if (!await p.setBool(_sessionInvalidatedKey, true)) {
+        throw StateError('会话状态保存失败');
+      }
+      if (key.isEmpty) {
+        await _secure.delete(key: 'security_key');
+      } else {
+        await _secure.write(key: 'security_key', value: key);
+      }
+      await p.remove('security_key');
+      await p.setInt('uid', uid);
+      await p.setString('nickname', nickname);
+      await p.setString('avatar', avatar);
+      if (key.isNotEmpty && !await p.setBool(_sessionInvalidatedKey, false)) {
+        throw StateError('会话状态保存失败');
+      }
+    });
   }
 
   static Future<void> setThemeMode(ThemeMode mode) async {
     themeMode.value = mode;
     final p = await SharedPreferences.getInstance();
     await p.setString('theme_mode', mode.name);
+  }
+
+  static Future<void> setLiquidGlassBottomBarEnabled(bool enabled) async {
+    liquidGlassBottomBarEnabled.value = enabled;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('liquid_glass_bottom_bar_enabled', enabled);
+  }
+
+  static Future<void> setPureBlackDark(bool enabled) async {
+    pureBlackDark.value = enabled;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('pure_black_dark', enabled);
+  }
+
+  static Future<void> setThemeSeedColor(int? color) async {
+    themeSeedColor.value = color;
+    final p = await SharedPreferences.getInstance();
+    if (color == null) {
+      await p.remove('theme_seed_color');
+    } else {
+      await p.setInt('theme_seed_color', color);
+    }
   }
 
   static Future<void> setAnimationsEnabled(bool enabled) async {
@@ -299,37 +519,53 @@ class LKStore {
     await p.setBool('auto_check_update_enabled', enable);
   }
 
-  static Future<void> clear() async {
-    final oldUid = LKClient.shared.session.uid;
-    LKReadingSession.shared.reset();
-    // Invalidate reader content before any awaited account cleanup so an
-    // in-flight chapter response cannot repopulate the previous scope.
-    final readerCacheClear = ReaderContentCache.clear();
-    final p = await SharedPreferences.getInstance();
-    try {
-      await _secure.delete(key: 'security_key');
-    } catch (_) {
-      // 安全存储暂不可用时仍清理内存会话和其他本地账号资料。
+  static Future<void> clear({String? expectedSecurityKey, int? expectedUid}) {
+    final session = LKClient.shared.session;
+    if ((expectedSecurityKey != null &&
+            session.securityKey != expectedSecurityKey) ||
+        (expectedUid != null && session.uid != expectedUid)) {
+      return Future<void>.value();
     }
-    await p.remove('security_key');
-    await p.remove('uid');
-    await p.remove('nickname');
-    await p.remove('avatar');
-    if (oldUid > 0) {
-      await p.remove(_profileCacheKey(oldUid));
-      await p.remove(_medalCacheKey(oldUid));
-      await p.remove('welfare_home_cache_v1_$oldUid');
-      final accountPageCaches = p
-          .getKeys()
-          .where((key) =>
-              key.startsWith(_pageCachePrefix) && key.contains('_u${oldUid}_'))
-          .toList(growable: false);
-      await Future.wait(accountPageCaches.map(p.remove));
-    }
-    await LKClient.shared.clearResponseCache();
-    await readerCacheClear;
-    LKClient.shared.session.clear();
+    final oldUid = session.uid;
+    _sessionGeneration++;
+    session.clear();
     LKClient.sessionRev.value++;
+    LKReadingSession.shared.reset();
+    // Invalidate in-flight responses immediately, before a new login starts.
+    final readerCacheClear = ReaderContentCache.clear();
+    final responseCacheClear = LKClient.shared.clearResponseCache();
+    return _queueSessionWrite(() async {
+      final p = await SharedPreferences.getInstance();
+      // Record logout before attempting deletion; the marker survives a
+      // Keychain/Keystore failure and prevents resurrection on next launch.
+      if (!await p.setBool(_sessionInvalidatedKey, true)) {
+        throw StateError('退出状态保存失败');
+      }
+      final cacheUid = oldUid > 0 ? oldUid : (p.getInt('uid') ?? 0);
+      try {
+        await _secure.delete(key: 'security_key');
+      } catch (_) {
+        // The durable invalidation marker still prevents restoring this key.
+      }
+      await p.remove('security_key');
+      await p.remove('uid');
+      await p.remove('nickname');
+      await p.remove('avatar');
+      if (cacheUid > 0) {
+        await p.remove(_profileCacheKey(cacheUid));
+        await p.remove(_medalCacheKey(cacheUid));
+        await p.remove('welfare_home_cache_v1_$cacheUid');
+        final accountPageCaches = p
+            .getKeys()
+            .where((key) =>
+                key.startsWith(_pageCachePrefix) &&
+                key.contains('_u${cacheUid}_'))
+            .toList(growable: false);
+        await Future.wait(accountPageCaches.map(p.remove));
+      }
+      await responseCacheClear;
+      await readerCacheClear;
+    });
   }
 
   /// 清除可重新从网络取得的资料缓存，保留账号、主题、书架与阅读进度。
@@ -612,8 +848,13 @@ class LKStore {
               })
           .toList(),
     };
-    await (await SharedPreferences.getInstance())
-        .setString(_profileCacheKey(uid), jsonEncode(data));
+    final generation = _sessionGeneration;
+    await _queueSessionWrite(() async {
+      if (generation != _sessionGeneration) return;
+      final prefs = await SharedPreferences.getInstance();
+      if (generation != _sessionGeneration) return;
+      await prefs.setString(_profileCacheKey(uid), jsonEncode(data));
+    });
   }
 
   /// 读取当前账号上次成功获取的勋章列表；null 表示尚未缓存。
@@ -645,11 +886,24 @@ class LKStore {
               'equipped': medal.equipped,
             })
         .toList();
-    final prefs = await SharedPreferences.getInstance();
-    if (isCurrent != null && !isCurrent()) return;
-    await prefs.setString(_medalCacheKey(uid), jsonEncode(data));
-    if (isCurrent != null && !isCurrent()) return;
-    await cacheGlobalMedals({uid: medals});
+    final generation = _sessionGeneration;
+    await _queueSessionWrite(() async {
+      if (generation != _sessionGeneration ||
+          (isCurrent != null && !isCurrent())) {
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      if (generation != _sessionGeneration ||
+          (isCurrent != null && !isCurrent())) {
+        return;
+      }
+      await prefs.setString(_medalCacheKey(uid), jsonEncode(data));
+      if (generation != _sessionGeneration ||
+          (isCurrent != null && !isCurrent())) {
+        return;
+      }
+      await cacheGlobalMedals({uid: medals});
+    });
   }
 
   /// 读取所有动态/公开资料共用的用户勋章缓存，避免每个页面重复请求。

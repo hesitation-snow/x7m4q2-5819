@@ -5,8 +5,9 @@ import 'package:flutter/material.dart';
 /// Displays current time in the reader independently of chapter layout;
 /// suspends updates in the background.
 class ReaderDeviceStatus extends StatefulWidget {
-  const ReaderDeviceStatus({super.key, required this.color});
+  const ReaderDeviceStatus({super.key, required this.color, this.fontSize});
   final Color color;
+  final double? fontSize;
 
   @override
   State<ReaderDeviceStatus> createState() => _ReaderDeviceStatusState();
@@ -57,10 +58,12 @@ class _ReaderDeviceStatusState extends State<ReaderDeviceStatus>
   Widget build(BuildContext context) {
     final time =
         '${_time.hour.toString().padLeft(2, '0')}:${_time.minute.toString().padLeft(2, '0')}';
+    final effectiveFontSize =
+        widget.fontSize ?? DefaultTextStyle.of(context).style.fontSize ?? 11;
     return IgnorePointer(
       child: Text(
         time,
-        style: TextStyle(fontSize: 11, color: widget.color),
+        style: TextStyle(fontSize: effectiveFontSize, color: widget.color),
       ),
     );
   }

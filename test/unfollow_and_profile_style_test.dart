@@ -27,9 +27,9 @@ void main() {
 
       // Verify dialog is shown
       expect(find.text('取消关注'), findsOneWidget);
-      expect(find.text('确定不再关注 “测试用户” 吗？'), findsOneWidget);
+      expect(find.text('确定不再关注 测试用户 吗？'), findsOneWidget);
       expect(find.text('取消'), findsOneWidget);
-      expect(find.text('确定取关'), findsOneWidget);
+      expect(find.text('确定'), findsOneWidget);
 
       // Tap Cancel
       await tester.tap(find.text('取消'));
@@ -61,7 +61,7 @@ void main() {
       expect(find.text('确定不再关注 该用户 吗？'), findsOneWidget);
 
       // Tap Confirm
-      await tester.tap(find.text('确定取关'));
+      await tester.tap(find.text('确定'));
       await tester.pumpAndSettle();
 
       expect(find.text('取消关注'), findsNothing);

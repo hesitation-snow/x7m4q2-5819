@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../api/lk_api.dart';
 import '../api/models.dart';
 import '../widgets/common.dart';
+import '../widgets/m3_menu_sheet.dart';
 import 'catalog_paging.dart';
 
 /// 阅读器目录弹层:卷就地展开章节,点章节跳转;打开时自动定位当前卷/章
@@ -15,13 +16,17 @@ class ReaderCatalogSheet extends StatefulWidget {
   final int currentChapterId;
   final int currentChapterNo;
   final void Function(int chapterId, String title, int volumeId) onPick;
+
+  /// Allow embedding the catalog with caller-provided sheet chrome.
+  final Widget? header;
   const ReaderCatalogSheet(
       {super.key,
       required this.bookId,
       required this.volumeId,
       required this.currentChapterId,
       required this.currentChapterNo,
-      required this.onPick});
+      required this.onPick,
+      this.header});
 
   @override
   State<ReaderCatalogSheet> createState() => _ReaderCatalogSheetState();
@@ -345,257 +350,259 @@ class _ReaderCatalogSheetState extends State<ReaderCatalogSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
     final displayVolumes = _displayVolumes;
     final hasVolumeFooter =
         _volumePageLoading || _volumesHasMore || _error != null;
-    return Column(children: [
-      Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(children: [
-          const Text('目录',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          const Spacer(),
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('关闭')),
-        ]),
-      ),
-      Expanded(
-        child: displayVolumes.isEmpty && _volumePageLoading
-            ? const LkLoadingIndicator(minHeight: 120, size: 24)
-            : displayVolumes.isEmpty && _error != null
-                ? Center(
-                    child: TextButton.icon(
-                      onPressed: _volumePageLoading
-                          ? null
-                          : () => _loadVolumes(append: _volumesPage > 0),
-                      icon: const Icon(Icons.refresh_rounded, size: 18),
-                      label: Text(_error!),
-                    ),
-                  )
-                : displayVolumes.isEmpty
-                    ? const Center(child: Text('暂无目录'))
-                    : ListView.builder(
-                        controller: _sc,
-                        padding: EdgeInsets.fromLTRB(12, 0, 12,
-                            12 + MediaQuery.of(context).padding.bottom),
-                        itemCount:
-                            displayVolumes.length + (hasVolumeFooter ? 1 : 0),
-                        itemBuilder: (_, i) {
-                          if (i >= displayVolumes.length) {
-                            if (_error != null) {
-                              return Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 12),
-                                child: Center(
-                                  child: TextButton.icon(
-                                    onPressed: _volumePageLoading
-                                        ? null
-                                        : () => _loadVolumes(
-                                            append: _volumesPage > 0),
-                                    icon: const Icon(Icons.refresh_rounded,
-                                        size: 18),
-                                    label: Text(_error!),
+    return Material(
+      color: scheme.surfaceContainer,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(children: [
+        widget.header ??
+            M3SheetHeader(
+              title: '目录',
+              icon: Icons.list_alt_rounded,
+              onClose: () => Navigator.pop(context),
+            ),
+        Expanded(
+          child: displayVolumes.isEmpty && _volumePageLoading
+              ? const LkLoadingIndicator(minHeight: 120, size: 24)
+              : displayVolumes.isEmpty && _error != null
+                  ? Center(
+                      child: TextButton.icon(
+                        onPressed: _volumePageLoading
+                            ? null
+                            : () => _loadVolumes(append: _volumesPage > 0),
+                        icon: const Icon(Icons.refresh_rounded, size: 18),
+                        label: Text(_error!),
+                      ),
+                    )
+                  : displayVolumes.isEmpty
+                      ? const Center(child: Text('暂无目录'))
+                      : ListView.builder(
+                          controller: _sc,
+                          padding: EdgeInsets.fromLTRB(12, 0, 12,
+                              12 + MediaQuery.of(context).padding.bottom),
+                          itemCount:
+                              displayVolumes.length + (hasVolumeFooter ? 1 : 0),
+                          itemBuilder: (_, i) {
+                            if (i >= displayVolumes.length) {
+                              if (_error != null) {
+                                return Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 12),
+                                  child: Center(
+                                    child: TextButton.icon(
+                                      onPressed: _volumePageLoading
+                                          ? null
+                                          : () => _loadVolumes(
+                                              append: _volumesPage > 0),
+                                      icon: const Icon(Icons.refresh_rounded,
+                                          size: 18),
+                                      label: Text(_error!),
+                                    ),
                                   ),
+                                );
+                              }
+                              if (!_volumePageLoading && _volumesHasMore) {
+                                WidgetsBinding.instance
+                                    .addPostFrameCallback((_) {
+                                  if (mounted) {
+                                    unawaited(_loadVolumes(append: true));
+                                  }
+                                });
+                              }
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 10),
+                                child: MotionLinearProgressIndicator(
+                                  minHeight: 2,
                                 ),
                               );
                             }
-                            if (!_volumePageLoading && _volumesHasMore) {
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted) {
-                                  unawaited(_loadVolumes(append: true));
-                                }
-                              });
-                            }
-                            return const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 10),
-                              child: MotionLinearProgressIndicator(
-                                minHeight: 2,
-                              ),
-                            );
-                          }
-                          final v = displayVolumes[i];
-                          final vid = v.volumeId;
-                          final expanded = _expanded == vid;
-                          final chs = _chapters[vid];
-                          final chapterError = _chapterErrors[vid];
-                          final isCur = vid == widget.volumeId;
-                          final chapterCount = _chapterCountFor(v);
-                          final openingSingle =
-                              _openingSingleVolumes.contains(vid);
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Material(
-                              key: _volKeys.putIfAbsent(vid, GlobalKey.new),
-                              color: isDark
-                                  ? const Color(0xFF2A2C33)
-                                  : Colors.grey.shade100,
-                              borderRadius: BorderRadius.circular(12),
-                              clipBehavior: Clip.antiAlias,
-                              child: Column(children: [
-                                InkWell(
-                                  onTap:
-                                      openingSingle ? null : () => _toggle(v),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 10),
-                                    child: Row(children: [
-                                      Icon(
-                                          chapterCount == 1
-                                              ? Icons.play_arrow_rounded
-                                              : expanded
-                                                  ? Icons
-                                                      .keyboard_arrow_down_rounded
-                                                  : Icons.chevron_right_rounded,
-                                          size: 20,
-                                          color: Colors.grey.shade500),
-                                      const SizedBox(width: 4),
-                                      Expanded(
-                                        child: Text(v.title,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                                fontSize: 13.5,
-                                                fontWeight: FontWeight.w600,
-                                                color: isCur
-                                                    ? scheme.primary
-                                                    : null)),
-                                      ),
-                                      if (chapterCount > 0)
-                                        Padding(
-                                          padding:
-                                              const EdgeInsets.only(left: 6),
-                                          child: Text('$chapterCount 章',
-                                              style: TextStyle(
-                                                  fontSize: 10.5,
-                                                  color: Colors.grey.shade500)),
-                                        ),
-                                      if (isCur)
-                                        Container(
-                                          margin:
-                                              const EdgeInsets.only(left: 6),
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 6, vertical: 1.5),
-                                          decoration: BoxDecoration(
-                                            color: scheme.primary
-                                                .withValues(alpha: 0.12),
-                                            borderRadius:
-                                                BorderRadius.circular(6),
-                                          ),
-                                          child: Text('当前',
-                                              style: TextStyle(
-                                                  fontSize: 10,
-                                                  color: scheme.primary)),
-                                        ),
-                                    ]),
-                                  ),
-                                ),
-                                if (expanded &&
-                                    chs == null &&
-                                    chapterError == null &&
-                                    _loadingVolumes.contains(vid))
-                                  const Padding(
-                                    padding: EdgeInsets.only(bottom: 12),
-                                    child: MotionLinearProgressIndicator(
-                                      minHeight: 2,
-                                    ),
-                                  ),
-                                if (expanded &&
-                                    chs == null &&
-                                    chapterError != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: TextButton.icon(
-                                      onPressed: () => _loadChapters(vid,
-                                          page: _failedChapterPages[vid]),
-                                      icon: const Icon(Icons.refresh_rounded,
-                                          size: 18),
-                                      label: Text(chapterError),
-                                    ),
-                                  ),
-                                if (expanded && chs != null) ...[
-                                  if (_hasPreviousPage(vid))
-                                    TextButton.icon(
-                                      onPressed: _loadingVolumes.contains(vid)
-                                          ? null
-                                          : () => _loadPreviousPage(vid),
-                                      icon: const Icon(
-                                          Icons.expand_less_rounded,
-                                          size: 18),
-                                      label: const Text('加载更早章节'),
-                                    ),
-                                  ...chs.map((c) => InkWell(
-                                        onTap: () => widget.onPick(
-                                            c.chapterId, c.title, vid),
-                                        child: Container(
-                                          key: c.chapterId ==
-                                                  widget.currentChapterId
-                                              ? _curChapterKey
-                                              : null,
-                                          width: double.infinity,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 12, vertical: 10),
-                                          color: c.chapterId ==
-                                                  widget.currentChapterId
-                                              ? scheme.primary
-                                                  .withValues(alpha: 0.12)
-                                              : Colors.transparent,
-                                          child: Text(c.title,
+                            final v = displayVolumes[i];
+                            final vid = v.volumeId;
+                            final expanded = _expanded == vid;
+                            final chs = _chapters[vid];
+                            final chapterError = _chapterErrors[vid];
+                            final isCur = vid == widget.volumeId;
+                            final chapterCount = _chapterCountFor(v);
+                            final openingSingle =
+                                _openingSingleVolumes.contains(vid);
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Material(
+                                key: _volKeys.putIfAbsent(vid, GlobalKey.new),
+                                color: scheme.surfaceContainerLow,
+                                borderRadius: BorderRadius.circular(12),
+                                clipBehavior: Clip.antiAlias,
+                                child: Column(children: [
+                                  InkWell(
+                                    onTap:
+                                        openingSingle ? null : () => _toggle(v),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 10),
+                                      child: Row(children: [
+                                        Icon(
+                                            chapterCount == 1
+                                                ? Icons.play_arrow_rounded
+                                                : expanded
+                                                    ? Icons
+                                                        .keyboard_arrow_down_rounded
+                                                    : Icons
+                                                        .chevron_right_rounded,
+                                            size: 20,
+                                            color: scheme.onSurfaceVariant),
+                                        const SizedBox(width: 4),
+                                        Expanded(
+                                          child: Text(v.title,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: TextStyle(
-                                                  fontSize: 13,
-                                                  color: c.chapterId ==
-                                                          widget
-                                                              .currentChapterId
+                                                  fontSize: 13.5,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: isCur
                                                       ? scheme.primary
                                                       : null)),
                                         ),
-                                      )),
-                                  if (chapterError != null)
-                                    TextButton.icon(
-                                      onPressed: _loadingVolumes.contains(vid)
-                                          ? null
-                                          : () => _loadChapters(vid,
-                                              page: _failedChapterPages[vid]),
-                                      icon: const Icon(Icons.refresh_rounded,
-                                          size: 18),
-                                      label: const Text('加载失败，点击重试'),
+                                        if (chapterCount > 0)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(left: 6),
+                                            child: Text('$chapterCount 章',
+                                                style: TextStyle(
+                                                    fontSize: 10.5,
+                                                    color: scheme
+                                                        .onSurfaceVariant)),
+                                          ),
+                                        if (isCur)
+                                          Container(
+                                            margin:
+                                                const EdgeInsets.only(left: 6),
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 6, vertical: 1.5),
+                                            decoration: BoxDecoration(
+                                              color: scheme.primary
+                                                  .withValues(alpha: 0.12),
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                            ),
+                                            child: Text('当前',
+                                                style: TextStyle(
+                                                    fontSize: 10,
+                                                    color: scheme.primary)),
+                                          ),
+                                      ]),
                                     ),
-                                  if (_loadingVolumes.contains(vid))
+                                  ),
+                                  if (expanded &&
+                                      chs == null &&
+                                      chapterError == null &&
+                                      _loadingVolumes.contains(vid))
                                     const Padding(
-                                      padding:
-                                          EdgeInsets.symmetric(vertical: 10),
+                                      padding: EdgeInsets.only(bottom: 12),
                                       child: MotionLinearProgressIndicator(
-                                          minHeight: 2),
+                                        minHeight: 2,
+                                      ),
                                     ),
-                                  if (!_loadingVolumes.contains(vid) &&
-                                      _hasNextPage(vid))
-                                    TextButton.icon(
-                                      onPressed: () => _loadNextPage(vid),
-                                      icon: const Icon(
-                                          Icons.expand_more_rounded,
-                                          size: 18),
-                                      label: const Text('加载后续章节'),
-                                    ),
-                                  if (_totalFor(vid) > 0)
+                                  if (expanded &&
+                                      chs == null &&
+                                      chapterError != null)
                                     Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 10),
-                                      child: Text(
-                                          '已加载 ${chs.length} / ${_totalFor(vid)}',
-                                          style: TextStyle(
-                                              fontSize: 10.5,
-                                              color: Colors.grey.shade500)),
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: TextButton.icon(
+                                        onPressed: () => _loadChapters(vid,
+                                            page: _failedChapterPages[vid]),
+                                        icon: const Icon(Icons.refresh_rounded,
+                                            size: 18),
+                                        label: Text(chapterError),
+                                      ),
                                     ),
-                                ],
-                              ]),
-                            ),
-                          );
-                        },
-                      ),
-      ),
-    ]);
+                                  if (expanded && chs != null) ...[
+                                    if (_hasPreviousPage(vid))
+                                      TextButton.icon(
+                                        onPressed: _loadingVolumes.contains(vid)
+                                            ? null
+                                            : () => _loadPreviousPage(vid),
+                                        icon: const Icon(
+                                            Icons.expand_less_rounded,
+                                            size: 18),
+                                        label: const Text('加载更早章节'),
+                                      ),
+                                    ...chs.map((c) => InkWell(
+                                          onTap: () => widget.onPick(
+                                              c.chapterId, c.title, vid),
+                                          child: Container(
+                                            key: c.chapterId ==
+                                                    widget.currentChapterId
+                                                ? _curChapterKey
+                                                : null,
+                                            width: double.infinity,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 12, vertical: 10),
+                                            color: c.chapterId ==
+                                                    widget.currentChapterId
+                                                ? scheme.primary
+                                                    .withValues(alpha: 0.12)
+                                                : Colors.transparent,
+                                            child: Text(c.title,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                    fontSize: 13,
+                                                    color: c.chapterId ==
+                                                            widget
+                                                                .currentChapterId
+                                                        ? scheme.primary
+                                                        : null)),
+                                          ),
+                                        )),
+                                    if (chapterError != null)
+                                      TextButton.icon(
+                                        onPressed: _loadingVolumes.contains(vid)
+                                            ? null
+                                            : () => _loadChapters(vid,
+                                                page: _failedChapterPages[vid]),
+                                        icon: const Icon(Icons.refresh_rounded,
+                                            size: 18),
+                                        label: const Text('加载失败，点击重试'),
+                                      ),
+                                    if (_loadingVolumes.contains(vid))
+                                      const Padding(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 10),
+                                        child: MotionLinearProgressIndicator(
+                                            minHeight: 2),
+                                      ),
+                                    if (!_loadingVolumes.contains(vid) &&
+                                        _hasNextPage(vid))
+                                      TextButton.icon(
+                                        onPressed: () => _loadNextPage(vid),
+                                        icon: const Icon(
+                                            Icons.expand_more_rounded,
+                                            size: 18),
+                                        label: const Text('加载后续章节'),
+                                      ),
+                                    if (_totalFor(vid) > 0)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 10),
+                                        child: Text(
+                                            '已加载 ${chs.length} / ${_totalFor(vid)}',
+                                            style: TextStyle(
+                                                fontSize: 10.5,
+                                                color:
+                                                    scheme.onSurfaceVariant)),
+                                      ),
+                                  ],
+                                ]),
+                              ),
+                            );
+                          },
+                        ),
+        ),
+      ]),
+    );
   }
 }

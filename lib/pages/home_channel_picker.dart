@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/home_channels.dart';
+import '../widgets/m3_menu_sheet.dart';
 
 class HomeChannelPickerResult {
   const HomeChannelPickerResult({required this.selectedCode, this.order});
@@ -59,7 +60,7 @@ class _HomeChannelPickerState extends State<HomeChannelPicker> {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        padding: const EdgeInsets.only(bottom: 16),
         child: _editing
             ? SizedBox(
                 height: maxHeight.clamp(0.0, 550.0),
@@ -79,7 +80,7 @@ class _HomeChannelPickerState extends State<HomeChannelPicker> {
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
                       child: Text(
                         '拖动调整顺序，前 3 个显示在首页',
                         style: theme.textTheme.bodySmall?.copyWith(
@@ -89,6 +90,7 @@ class _HomeChannelPickerState extends State<HomeChannelPicker> {
                     ),
                     Expanded(
                       child: ReorderableListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         buildDefaultDragHandles: false,
                         itemCount: _order.length,
                         onReorderItem: _reorder,
@@ -155,91 +157,104 @@ class _HomeChannelPickerState extends State<HomeChannelPicker> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _order.length,
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 10,
-                          mainAxisSpacing: 10,
-                          mainAxisExtent: 68,
-                        ),
-                        itemBuilder: (context, index) {
-                          final code = _order[index];
-                          final channel = homeChannelByCode(code);
-                          final selected = code == widget.selectedCode;
-                          return Material(
-                            color: selected
-                                ? scheme.primaryContainer
-                                    .withValues(alpha: 0.55)
-                                : scheme.surfaceContainerLow,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                              side: BorderSide(
-                                color: selected
-                                    ? scheme.primary.withValues(alpha: 0.45)
-                                    : scheme.outlineVariant
-                                        .withValues(alpha: 0.22),
-                              ),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: InkWell(
-                              onTap: () => Navigator.of(context).pop(
-                                HomeChannelPickerResult(selectedCode: code),
-                              ),
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 10),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      _iconFor(code),
-                                      size: 20,
-                                      color: selected
-                                          ? scheme.primary
-                                          : scheme.onSurfaceVariant,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            channel.label,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: theme.textTheme.bodyMedium
-                                                ?.copyWith(
-                                              fontWeight: selected
-                                                  ? FontWeight.w600
-                                                  : FontWeight.w500,
-                                              color: selected
-                                                  ? scheme.primary
-                                                  : scheme.onSurface,
-                                            ),
-                                          ),
-                                          if (index < homePrimaryChannelCount)
-                                            Text(
-                                              '首页 ${index + 1}',
-                                              style: theme.textTheme.labelSmall
-                                                  ?.copyWith(
-                                                color: scheme.onSurfaceVariant,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _order.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 10,
+                            mainAxisExtent: 68 +
+                                (MediaQuery.textScalerOf(context).scale(14) -
+                                            14)
+                                        .clamp(0.0, 42.0) *
+                                    1.5 +
+                                (MediaQuery.textScalerOf(context).scale(11) -
+                                            11)
+                                        .clamp(0.0, 33.0) *
+                                    1.5,
+                          ),
+                          itemBuilder: (context, index) {
+                            final code = _order[index];
+                            final channel = homeChannelByCode(code);
+                            final selected = code == widget.selectedCode;
+                            return Material(
+                              color: selected
+                                  ? scheme.primaryContainer
+                                      .withValues(alpha: 0.55)
+                                  : scheme.surfaceContainerLow,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                side: BorderSide(
+                                  color: selected
+                                      ? scheme.primary.withValues(alpha: 0.45)
+                                      : scheme.outlineVariant
+                                          .withValues(alpha: 0.22),
                                 ),
                               ),
-                            ),
-                          );
-                        },
+                              clipBehavior: Clip.antiAlias,
+                              child: InkWell(
+                                onTap: () => Navigator.of(context).pop(
+                                  HomeChannelPickerResult(selectedCode: code),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        _iconFor(code),
+                                        size: 20,
+                                        color: selected
+                                            ? scheme.primary
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              channel.label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: theme.textTheme.bodyMedium
+                                                  ?.copyWith(
+                                                fontWeight: selected
+                                                    ? FontWeight.w600
+                                                    : FontWeight.w500,
+                                                color: selected
+                                                    ? scheme.primary
+                                                    : scheme.onSurface,
+                                              ),
+                                            ),
+                                            if (index < homePrimaryChannelCount)
+                                              Text(
+                                                '首页 ${index + 1}',
+                                                style: theme
+                                                    .textTheme.labelSmall
+                                                    ?.copyWith(
+                                                  color:
+                                                      scheme.onSurfaceVariant,
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ],
                   ),
@@ -250,18 +265,10 @@ class _HomeChannelPickerState extends State<HomeChannelPicker> {
   }
 
   Widget _header({required String title, required Widget action}) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-          ),
-        ),
-        action,
-      ],
+    return M3SheetHeader(
+      title: title,
+      icon: Icons.category_outlined,
+      action: action,
     );
   }
 }

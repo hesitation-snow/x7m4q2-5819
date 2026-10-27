@@ -49,7 +49,7 @@ class _ShelfPageState extends State<ShelfPage> {
   bool _updatingLocalShelf = false;
   final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
   final _toolbarKey = GlobalKey();
-  double get _topBarFlex => _toolbarKey.currentContext?.size?.height ?? 112;
+  double get _topBarFlex => _toolbarKey.currentContext?.size?.height ?? 80;
 
   int _lastGridColumnCount = LKStore.gridColumnCount.value;
   int _anchorBookIndex = 0;
@@ -522,6 +522,21 @@ class _ShelfPageState extends State<ShelfPage> {
         ),
       );
 
+  Widget _shelfTitle({bool compact = false}) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 8, vertical: 4),
+      child: Text(
+        '书架',
+        style: TextStyle(
+          color: scheme.onSurface,
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
   Widget _shelfToolbar(int count) {
     final theme = Theme.of(context);
     final sortLabel = switch (_sort) {
@@ -529,49 +544,50 @@ class _ShelfPageState extends State<ShelfPage> {
       _ShelfSort.recentlyUpdated => '最近更新',
       _ShelfSort.title => '按书名',
     };
+    final summary = Text(
+      '$count 部作品 · $sortLabel',
+      style: theme.textTheme.labelMedium
+          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
     return Material(
       key: _toolbarKey,
       color: theme.colorScheme.surface,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(children: [
-              Expanded(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+            child: Row(
+              children: [
+                if (widget.embedded) _shelfTitle(),
+                Expanded(
                   child: Align(
-                alignment: Alignment.centerLeft,
-                child: _shelfSourceButton(),
-              )),
-              _shelfFilterButton(),
-              _viewModeButton(),
-            ]),
-            const SizedBox(height: 4),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(children: [
-                for (final filter in _ShelfFilter.values) ...[
-                  ChoiceChip(
-                    label: Text(switch (filter) {
-                      _ShelfFilter.all => '全部作品',
-                      _ShelfFilter.unread => '有更新',
-                      _ShelfFilter.serializing => '连载中',
-                      _ShelfFilter.completed => '已完结',
-                    }),
-                    selected: _filter == filter,
-                    onSelected: (_) => setState(() => _filter = filter),
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      key: const ValueKey('shelf-toolbar-actions'),
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _shelfSourceButton(),
+                          _shelfFilterButton(),
+                          _viewModeButton(),
+                        ],
+                      ),
+                    ),
                   ),
-                  const SizedBox(width: 8),
-                ],
-              ]),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text('$count 部作品 · $sortLabel',
-                style: theme.textTheme.labelMedium
-                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          ],
-        ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+            child: Align(alignment: Alignment.centerLeft, child: summary),
+          ),
+        ],
       ),
     );
   }
@@ -732,77 +748,15 @@ class _ShelfPageState extends State<ShelfPage> {
   }
 
   Widget _shelfBookRow(LKBook book) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Card.filled(
+    return KeyedSubtree(
       key: ValueKey('shelf-book-${book.bookId}'),
-      margin: const EdgeInsets.only(bottom: 12),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
+      child: BookCard(
+        book: book,
         onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (_) => BookDetailPage(bookId: book.bookId))),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            CoverImage(
-                url: book.coverUrl,
-                width: 64,
-                height: 92,
-                radius: 8,
-                isBrave: book.isBrave),
-            const SizedBox(width: 16),
-            Expanded(
-                child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(book.title,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleMedium),
-                const SizedBox(height: 6),
-                Text(book.authorName.isEmpty ? '佚名' : book.authorName,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: scheme.onSurfaceVariant)),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(bookStatusLabel(book),
-                        style: theme.textTheme.labelMedium
-                            ?.copyWith(color: scheme.onSurfaceVariant)),
-                    if (book.isBrave)
-                      Text('勇者可读',
-                          style: theme.textTheme.labelMedium
-                              ?.copyWith(color: scheme.tertiary)),
-                    if (book.unreadChapterCount > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                            color: scheme.primaryContainer,
-                            borderRadius: BorderRadius.circular(8)),
-                        child: Text('${book.unreadChapterCount} 章更新',
-                            style: theme.textTheme.labelMedium
-                                ?.copyWith(color: scheme.onPrimaryContainer)),
-                      ),
-                  ],
-                ),
-                if (book.updatedAt.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                      '更新于 ${book.updatedAt.length > 16 ? book.updatedAt.substring(0, 16) : book.updatedAt}',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: scheme.onSurfaceVariant)),
-                ],
-              ],
-            )),
-          ]),
+          context,
+          MaterialPageRoute(
+            builder: (_) => BookDetailPage(bookId: book.bookId),
+          ),
         ),
       ),
     );

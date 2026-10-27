@@ -1162,61 +1162,7 @@ class _MessagesPageState extends State<_MessagesPageBody>
       color: scheme.surfaceContainerLow,
       margin: const EdgeInsets.symmetric(vertical: 4),
       clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        leading: CircleAvatar(
-          backgroundColor: scheme.surfaceContainerHighest,
-          backgroundImage:
-              YomiruAvatarCache.providerOrNull(conversation.peerAvatar),
-          child:
-              YomiruAvatarCache.providerOrNull(conversation.peerAvatar) == null
-                  ? Icon(Icons.person_outline, color: scheme.onSurfaceVariant)
-                  : null,
-        ),
-        title: Text(
-          conversation.peerName.isEmpty
-              ? '用户 ${conversation.peerUid}'
-              : conversation.peerName,
-          style: Theme.of(context).textTheme.titleSmall,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Text(
-            conversation.lastMessage.isEmpty
-                ? '暂无消息内容'
-                : conversation.lastMessage,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium
-                ?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-        ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            if (conversation.updatedAt.isNotEmpty)
-              Text(
-                _formatTime(conversation.updatedAt),
-                style: Theme.of(context)
-                    .textTheme
-                    .labelSmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-            if (conversation.unread > 0) ...[
-              const SizedBox(height: 4),
-              Badge(
-                label: Text(
-                  conversation.unread > 99 ? '99+' : '${conversation.unread}',
-                ),
-              ),
-            ],
-          ],
-        ),
+      child: InkWell(
         onTap: () async {
           if (conversation.unread > 0) {
             setState(() {
@@ -1249,6 +1195,84 @@ class _MessagesPageState extends State<_MessagesPageBody>
           if (!mounted || !_session.isCurrent) return;
           await Future.wait<void>([_loadDm(), _loadSummary()]);
         },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: scheme.surfaceContainerHighest,
+                backgroundImage:
+                    YomiruAvatarCache.providerOrNull(conversation.peerAvatar),
+                child: YomiruAvatarCache.providerOrNull(
+                            conversation.peerAvatar) ==
+                        null
+                    ? Icon(Icons.person_outline, color: scheme.onSurfaceVariant)
+                    : null,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                  flex: 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        conversation.peerName.isEmpty
+                            ? '用户 ${conversation.peerUid}'
+                            : conversation.peerName,
+                        style: Theme.of(context).textTheme.titleSmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          conversation.lastMessage.isEmpty
+                              ? '暂无消息内容'
+                              : conversation.lastMessage,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ),
+                    ],
+                  )),
+              const SizedBox(width: 8),
+              Flexible(
+                  flex: 2,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (conversation.updatedAt.isNotEmpty)
+                        Text(
+                          _formatTime(conversation.updatedAt),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      if (conversation.unread > 0) ...[
+                        const SizedBox(height: 4),
+                        Badge(
+                          label: Text(
+                            conversation.unread > 99
+                                ? '99+'
+                                : '${conversation.unread}',
+                          ),
+                        ),
+                      ],
+                    ],
+                  )),
+            ],
+          ),
+        ),
       ),
     );
   }

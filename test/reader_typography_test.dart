@@ -193,7 +193,7 @@ void main() {
       expect(current.bold, isTrue);
 
       expect(find.text('更多排版设置'), findsNothing);
-      await tester.ensureVisible(find.text('段落与边距'));
+      await tester.scrollUntilVisible(find.text('段落与边距'), 200);
       await tester.pumpAndSettle();
 
       expect(find.text('词间距'), findsOneWidget);
@@ -259,7 +259,7 @@ void main() {
         ),
       ));
 
-      await tester.ensureVisible(find.text('段落与边距'));
+      await tester.scrollUntilVisible(find.text('段落与边距'), 200);
       await tester.pumpAndSettle();
 
       final switchTiles = tester

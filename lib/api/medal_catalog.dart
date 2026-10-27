@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-/// Opt-in local build; normal builds retain the official first-page view.
+/// Compile-time default for the laboratory toggle; runtime preference overrides it.
 const allMedalsBuild = bool.fromEnvironment('YOMIRU_ALL_MEDALS');
 
 typedef MedalPageLoader = Future<Map<String, dynamic>> Function(int page);

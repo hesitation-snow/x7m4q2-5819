@@ -34,5 +34,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  shaders:
+    - shaders/liquid_glass.frag
   config:
     enable-swift-package-manager: false

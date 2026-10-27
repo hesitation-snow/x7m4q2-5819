@@ -5,9 +5,11 @@ import 'package:http/testing.dart';
 import 'package:yomiru/api/lk_api.dart';
 import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/medal_catalog.dart';
+import 'package:yomiru/api/store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => LKStore.allMedalsEnabled.value = allMedalsBuild);
   tearDown(() => LKApi.client = LKClient.shared);
 
   http.Response response(Map<String, dynamic> data) =>
@@ -38,6 +40,36 @@ void main() {
     final result = await LKApi.medalCenter();
     expect(pages, allMedalsBuild ? [0, 2] : [0]);
     expect((result['exchange_medals'] as List).length, allMedalsBuild ? 3 : 2);
+  });
+
+  test('laboratory switch selects first-page or full pagination at runtime',
+      () async {
+    final requests = <String>[];
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      final body = jsonDecode(request.body) as Map;
+      final page = body['page'] as int;
+      requests.add('$page:${body['pageSize']}');
+      return response({
+        'page_info': {'cur': page == 0 ? 1 : 2, 'count': 3, 'size': 2},
+        'exchange_medals': page == 0
+            ? [
+                {'goods_id': 1},
+                {'goods_id': 2}
+              ]
+            : [
+                {'goods_id': 3}
+              ],
+      });
+    }));
+
+    LKStore.allMedalsEnabled.value = false;
+    await LKApi.medalCenter();
+    expect(requests, ['0:20']);
+
+    requests.clear();
+    LKStore.allMedalsEnabled.value = true;
+    await LKApi.medalCenter();
+    expect(requests, ['0:50', '2:50']);
   });
 
   test('exchange endpoint and goods ID remain unchanged', () async {

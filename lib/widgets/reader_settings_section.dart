@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'm3_controls.dart';
 
 Color readerSettingsCardColor(ColorScheme scheme) => scheme.surfaceContainerLow;
 
@@ -11,39 +12,11 @@ class ReaderSettingsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 20),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 16, bottom: 8),
-          child: Semantics(
-            header: true,
-            child: Text(title,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600, color: scheme.primary)),
-          ),
-        ),
-        Material(
-          color: readerSettingsCardColor(scheme),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22),
-              side: BorderSide(
-                  color: scheme.outlineVariant.withValues(alpha: 0.2))),
-          clipBehavior: Clip.antiAlias,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: ListTileTheme(
-              data: const ListTileThemeData(
-                  tileColor: Colors.transparent,
-                  contentPadding: EdgeInsets.zero,
-                  shape: RoundedRectangleBorder()),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: children),
-            ),
-          ),
-        ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        AppSectionTitle(title),
+        AppSettingsGroup(dividers: false, children: children),
       ]),
     );
   }
@@ -65,61 +38,77 @@ class ReaderThemePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: [
-        for (var i = 0; i <= presets.length; i++)
-          Builder(builder: (context) {
-            final system = i == presets.length;
-            final value = system ? null : i;
-            final label = system ? '跟随系统' : presets[i].$3;
-            final active = selected == value;
-            return Semantics(
-              button: true,
-              selected: active,
-              label: label,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: () => onSelected(value),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  child: Column(children: [
-                    Container(
-                      width: 54,
-                      height: 54,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: system ? scheme.surface : presets[i].$1,
-                        border: Border.all(
-                            color: active
-                                ? scheme.primary
-                                : scheme.outline.withValues(alpha: 0.3),
-                            width: active ? 2.5 : 1),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minWidth: (constraints.maxWidth - 8).clamp(0.0, 2000.0),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                for (var i = 0; i <= presets.length; i++)
+                  Builder(builder: (context) {
+                    final system = i == presets.length;
+                    final value = system ? null : i;
+                    final label = system ? '跟随系统' : presets[i].$3;
+                    final active = selected == value;
+                    return Semantics(
+                      button: true,
+                      selected: active,
+                      label: label,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => onSelected(value),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 6),
+                          child: Column(children: [
+                            Container(
+                              width: 46,
+                              height: 46,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: system ? scheme.surface : presets[i].$1,
+                                border: Border.all(
+                                    color: active
+                                        ? scheme.primary
+                                        : scheme.outline.withValues(alpha: 0.3),
+                                    width: active ? 2.5 : 1),
+                              ),
+                              child: system
+                                  ? Icon(Icons.brightness_auto_outlined,
+                                      color: scheme.onSurfaceVariant, size: 22)
+                                  : Icon(
+                                      active
+                                          ? Icons.check_rounded
+                                          : Icons.text_fields,
+                                      color: presets[i].$2,
+                                      size: 22),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(label,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: active
+                                        ? scheme.primary
+                                        : scheme.onSurfaceVariant,
+                                    fontWeight: active
+                                        ? FontWeight.w600
+                                        : FontWeight.normal)),
+                          ]),
+                        ),
                       ),
-                      child: system
-                          ? Icon(Icons.brightness_auto_outlined,
-                              color: scheme.onSurfaceVariant, size: 24)
-                          : Icon(
-                              active ? Icons.check_rounded : Icons.text_fields,
-                              color: presets[i].$2,
-                              size: 24),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(label,
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: active
-                                ? scheme.primary
-                                : scheme.onSurfaceVariant,
-                            fontWeight:
-                                active ? FontWeight.w600 : FontWeight.normal)),
-                  ]),
-                ),
-              ),
-            );
-          }),
-      ]),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

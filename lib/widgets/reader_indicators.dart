@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../reader/indicator_position.dart';
+import 'm3_controls.dart';
 
 /// Paint-only overlay: never changes body constraints or pagination.
 class ReaderIndicators extends StatelessWidget {
@@ -104,25 +105,11 @@ class IndicatorPositionSettings extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: scheme.primary.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        alignment: Alignment.center,
-        child: Icon(Icons.open_with_rounded, size: 20, color: scheme.primary),
-      ),
-      title: const Text('调整指示器位置',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-      subtitle: Text(
-        '顶部 ${value.top.round()}dp · 底部 ${value.bottom.round()}dp · 边距 ${value.side.round()}dp',
-        style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-      ),
+      leading: const AppSettingIcon(Icons.open_with_rounded),
+      title: const Text('调整指示器位置'),
+      subtitle: const Text('在阅读画面中拖动调整位置与字号'),
       trailing: const Icon(Icons.chevron_right_rounded),
       onTap: onEnterEditMode,
     );
@@ -157,7 +144,7 @@ class IndicatorEditOverlay extends StatefulWidget {
 }
 
 class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
-  // 当前微调选择的目标：0 = 顶部, 1 = 底部, 2 = 边距
+  // 当前微调选择的目标：0 = 顶部, 1 = 底部
   int _selectedTarget = 0;
 
   void _stepDistance(int delta) {
@@ -165,13 +152,16 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
     if (_selectedTarget == 0) {
       final next = (current.top + delta).clamp(0.0, 96.0);
       widget.onChanged(current.copyWith(top: next));
-    } else if (_selectedTarget == 1) {
+    } else {
       final next = (current.bottom + delta).clamp(0.0, 96.0);
       widget.onChanged(current.copyWith(bottom: next));
-    } else {
-      final next = (current.side + delta).clamp(0.0, 96.0);
-      widget.onChanged(current.copyWith(side: next));
     }
+  }
+
+  void _stepSide(int delta) {
+    final current = widget.position;
+    final next = (current.side + delta).clamp(0.0, 96.0);
+    widget.onChanged(current.copyWith(side: next));
   }
 
   void _stepFontSize(int delta) {
@@ -326,11 +316,17 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
             ),
           ),
 
-          // 5. 悬浮微调与控制面板（居中悬浮，绝不遮挡顶部标题与底部状态栏）
+          // 5. 居中微调面板；大字体下内部滚动，不撑开正文布局。
           Center(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _buildControlCard(context, scheme, position),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 560,
+                  maxHeight: (media.size.height - safe.vertical) * .65,
+                ),
+                child: _buildControlCard(context, scheme, position),
+              ),
             ),
           ),
         ],
@@ -391,12 +387,16 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
                   size: 11,
                   color: isSelected ? scheme.primary : scheme.outline),
               const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 9,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  color: isSelected ? scheme.primary : scheme.onSurfaceVariant,
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight:
+                        isSelected ? FontWeight.bold : FontWeight.normal,
+                    color:
+                        isSelected ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -411,192 +411,150 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
   Widget _buildControlCard(
       BuildContext context, ColorScheme scheme, IndicatorPosition pos) {
     return Card(
-      elevation: 8,
-      color: scheme.surfaceContainerHigh,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 第一行：目标项选择 Segment
-            SegmentedButton<int>(
-              segments: [
-                ButtonSegment(
-                  value: 0,
-                  label: Text('顶部 (${pos.top.round()}dp)',
-                      style: const TextStyle(fontSize: 11)),
-                ),
-                ButtonSegment(
-                  value: 1,
-                  label: Text('底部 (${pos.bottom.round()}dp)',
-                      style: const TextStyle(fontSize: 11)),
-                ),
-                ButtonSegment(
-                  value: 2,
-                  label: Text('边距 (${pos.side.round()}dp)',
-                      style: const TextStyle(fontSize: 11)),
-                ),
-              ],
-              selected: {_selectedTarget},
-              onSelectionChanged: (set) =>
-                  setState(() => _selectedTarget = set.first),
-              style: const ButtonStyle(
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
-            const SizedBox(height: 14),
-
-            // 第二行：距离微调群
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  _selectedTarget == 0
-                      ? '顶部距离：'
-                      : _selectedTarget == 1
-                          ? '底部距离：'
-                          : '左右边距：',
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  _selectedTarget == 0
-                      ? '${pos.top.round()} dp'
-                      : _selectedTarget == 1
-                          ? '${pos.bottom.round()} dp'
-                          : '${pos.side.round()} dp',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: scheme.primary),
-                ),
-                const SizedBox(width: 8),
-                _stepButton('-5', () => _stepDistance(-5)),
-                const SizedBox(width: 4),
-                _stepButton('-1', () => _stepDistance(-1)),
-                const SizedBox(width: 4),
-                _stepButton('+1', () => _stepDistance(1)),
-                const SizedBox(width: 4),
-                _stepButton('+5', () => _stepDistance(5)),
-              ],
-            ),
-
-            // 第三行：根据当前目标（顶部或底部）展示专属字号微调
-            if (_selectedTarget == 0 || _selectedTarget == 1) ...[
-              const SizedBox(height: 10),
+      elevation: 4,
+      color: scheme.surfaceContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    _selectedTarget == 0 ? '顶部字号：' : '底部字号：',
-                    style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    _selectedTarget == 0
-                        ? '${pos.topFontSize.round()} sp'
-                        : '${pos.bottomFontSize.round()} sp',
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: scheme.primary),
-                  ),
-                  const SizedBox(width: 8),
+                  for (final (index, target)
+                      in [(0, '顶部'), (1, '底部')].indexed) ...[
+                    if (index > 0) const SizedBox(width: 8),
+                    Expanded(
+                      child: M3ChoiceChip(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        label: target.$2,
+                        selected: _selectedTarget == target.$1,
+                        onSelected: (_) =>
+                            setState(() => _selectedTarget = target.$1),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _selectedTarget == 0
+                    ? '顶部距离：${pos.top.round()} dp'
+                    : '底部距离：${pos.bottom.round()} dp',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 4,
+                children: [
+                  _stepButton('-5', () => _stepDistance(-5)),
+                  _stepButton('-1', () => _stepDistance(-1)),
+                  _stepButton('+1', () => _stepDistance(1)),
+                  _stepButton('+5', () => _stepDistance(5)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _selectedTarget == 0
+                    ? '顶部字号：${pos.topFontSize.round()} sp'
+                    : '底部字号：${pos.bottomFontSize.round()} sp',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 4,
+                children: [
                   _stepButton('-1', () => _stepFontSize(-1)),
-                  const SizedBox(width: 4),
                   _stepButton('+1', () => _stepFontSize(1)),
                 ],
               ),
-            ],
-
-            if (_selectedTarget == 0) ...[
-              const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              if (_selectedTarget == 0) ...[
+                const SizedBox(height: 8),
+                Text('标题对齐',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelLarge),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    for (final (index, align) in [
+                      ('居左', -1.0, pos.titleAlignment <= -0.5),
+                      ('居中', 0.0, pos.titleAlignment.abs() < 0.5),
+                      ('居右', 1.0, pos.titleAlignment >= 0.5),
+                    ].indexed) ...[
+                      if (index > 0) const SizedBox(width: 8),
+                      Expanded(
+                        child: M3ChoiceChip(
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          label: align.$1,
+                          selected: align.$3,
+                          onSelected: (_) => _setAlignment(align.$2),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ] else ...[
+                const SizedBox(height: 8),
+                Text(
+                  '左右边距：${pos.side.round()} dp',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 4,
+                  children: [
+                    _stepButton('-5', () => _stepSide(-5)),
+                    _stepButton('-1', () => _stepSide(-1)),
+                    _stepButton('+1', () => _stepSide(1)),
+                    _stepButton('+5', () => _stepSide(5)),
+                  ],
+                ),
+              ],
+              const Divider(height: 24),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 4,
                 children: [
-                  const Text('标题对齐：', style: TextStyle(fontSize: 12)),
-                  _alignChip('居左', -1.0, pos.titleAlignment <= -0.5),
-                  const SizedBox(width: 6),
-                  _alignChip('居中', 0.0, pos.titleAlignment.abs() < 0.5),
-                  const SizedBox(width: 6),
-                  _alignChip('居右', 1.0, pos.titleAlignment >= 0.5),
+                  TextButton.icon(
+                    onPressed: widget.onReset,
+                    icon: const Icon(Icons.restart_alt, size: 18),
+                    label: const Text('默认'),
+                  ),
+                  TextButton(
+                    onPressed: widget.onCancel,
+                    child: const Text('取消'),
+                  ),
+                  FilledButton(
+                    onPressed: widget.onSave,
+                    child: const Text('保存'),
+                  ),
                 ],
               ),
             ],
-
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 10),
-
-            // 操作按钮行（默认、取消、保存）
-            Row(
-              children: [
-                TextButton.icon(
-                  onPressed: widget.onReset,
-                  icon: const Icon(Icons.restart_alt, size: 16),
-                  label: const Text('默认', style: TextStyle(fontSize: 12)),
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                  ),
-                ),
-                const Spacer(),
-                OutlinedButton(
-                  onPressed: widget.onCancel,
-                  style: OutlinedButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    minimumSize: const Size(60, 36),
-                  ),
-                  child: const Text('取消'),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: widget.onSave,
-                  style: FilledButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 18),
-                    minimumSize: const Size(68, 36),
-                  ),
-                  child: const Text('保存'),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
   Widget _stepButton(String text, VoidCallback onPressed) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onPressed,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-          child: Text(text,
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: scheme.onSurface)),
-        ),
+    return FilledButton.tonal(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(40, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        shape: const StadiumBorder(),
+        textStyle: Theme.of(context).textTheme.labelMedium,
       ),
-    );
-  }
-
-  Widget _alignChip(String label, double align, bool isSelected) {
-    return ChoiceChip(
-      label: Text(label, style: const TextStyle(fontSize: 11)),
-      selected: isSelected,
-      visualDensity: VisualDensity.compact,
-      onSelected: (_) => _setAlignment(align),
-      padding: EdgeInsets.zero,
+      child: Text(text),
     );
   }
 }

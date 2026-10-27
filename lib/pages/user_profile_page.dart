@@ -392,17 +392,17 @@ class _UserProfilePageState extends State<UserProfilePage>
   Widget build(BuildContext context) {
     if (_home == null && _error == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('用户主页')),
+        appBar: AppBar(title: const Text('个人主页')),
         body: const Center(child: LkLoadingIndicator()),
       );
     }
     if (_home == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('用户主页')),
+        appBar: AppBar(title: const Text('个人主页')),
         body: Center(
           child: FilledButton.tonal(
             onPressed: _loadInitial,
-            child: Text(_error ?? '用户主页加载失败，请重试'),
+            child: Text(_error ?? '个人主页加载失败，请重试'),
           ),
         ),
       );
@@ -410,7 +410,7 @@ class _UserProfilePageState extends State<UserProfilePage>
     final profile = _home!.profile;
     return Scaffold(
       appBar: AppBar(
-        title: Text(profile.nickname.isEmpty ? '用户主页' : profile.nickname),
+        title: const Text('个人主页'),
       ),
       body: MotionRefreshIndicator(
         onRefresh: _refresh,

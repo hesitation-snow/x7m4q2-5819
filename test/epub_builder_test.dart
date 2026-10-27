@@ -307,14 +307,14 @@ void main() {
 
       expect(
         opfContent.contains(
-          '<meta name="generator" content="Yomiru EPUB; publisher_uid_b64=MTIzNDU2; exporter_uid_b64=NjU0MzIx" />',
+          '<meta name="generator" content="Yomiru EPUB; publisher_=MTIzNDU2; exporter_=NjU0MzIx" />',
         ),
         isTrue,
       );
 
       // 2. 验证两组 UID 可正确解码还原为十进制整数
       final match = RegExp(
-        r'content="Yomiru EPUB;\s*publisher_uid_b64=([^;]+);\s*exporter_uid_b64=([^"]+)"',
+        r'content="Yomiru EPUB;\s*publisher_=([^;]+);\s*exporter_=([^"]+)"',
       ).firstMatch(opfContent);
       expect(match, isNotNull);
       expect(decodeUidFromBase64(match!.group(1)!), equals(123456));
@@ -370,7 +370,7 @@ void main() {
       // 验证格式完全符合规范
       expect(
         opf.contains(
-          '<meta name="generator" content="Yomiru EPUB; publisher_uid_b64=MTIzNDU2; exporter_uid_b64=NjU0MzIx" />',
+          '<meta name="generator" content="Yomiru EPUB; publisher_=MTIzNDU2; exporter_=NjU0MzIx" />',
         ),
         isTrue,
       );

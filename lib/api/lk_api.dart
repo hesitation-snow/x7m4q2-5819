@@ -62,8 +62,14 @@ class LKApi {
       await client.post('/api/bff/logout-v1', client.authed());
     }
     if (client.session.uid != uid || client.session.securityKey != key) return;
-    client.session.clear();
-    LKClient.sessionRev.value++;
+    if (identical(client, LKClient.shared)) {
+      // clear synchronously captures the old session before its first await.
+      await LKStore.clear(expectedSecurityKey: key, expectedUid: uid);
+    } else {
+      // Injected clients own a separate in-memory session, not the store's.
+      client.session.clear();
+      LKClient.sessionRev.value++;
+    }
   }
 
   // ==================== 首页 / 发现 ====================
@@ -1081,6 +1087,7 @@ class LKApi {
     final requestClient = client;
     final uid = requestClient.session.uid;
     final key = requestClient.session.securityKey;
+    final loadAllPages = LKStore.allMedalsEnabled.value;
     Future<Map<String, dynamic>> page(int number) {
       if (requestClient.session.uid != uid ||
           requestClient.session.securityKey != key) {
@@ -1089,10 +1096,10 @@ class LKApi {
       return requestClient.post(
           '/api/bff/my-medal-center-v1',
           requestClient
-              .authed({'page': number, 'pageSize': allMedalsBuild ? 50 : 20}));
+              .authed({'page': number, 'pageSize': loadAllPages ? 50 : 20}));
     }
 
-    return allMedalsBuild ? loadAllMedalPages(page) : page(0);
+    return loadAllPages ? loadAllMedalPages(page) : page(0);
   }
 
   static Future<void> exchangeMedal(int medalId, {int? goodsId}) async {

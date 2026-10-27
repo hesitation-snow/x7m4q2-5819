@@ -37,7 +37,7 @@ void main() {
     expect(settings.showIndicators, false);
   });
 
-  testWidgets('position controls trigger edit mode and display summary',
+  testWidgets('position entry opens edit mode without exposing numeric offsets',
       (tester) async {
     var value = const IndicatorPosition();
     var editModeCalled = false;
@@ -50,7 +50,8 @@ void main() {
                         onEnterEditMode: () => editModeCalled = true,
                         onChanged: (v) => setState(() => value = v)))))));
     expect(find.text('调整指示器位置'), findsOneWidget);
-    expect(find.text('顶部 6dp · 底部 8dp · 边距 16dp'), findsOneWidget);
+    expect(find.text('在阅读画面中拖动调整位置与字号'), findsOneWidget);
+    expect(find.textContaining(RegExp(r'顶部.*dp|底部.*dp|边距.*dp')), findsNothing);
     await tester.tap(find.text('调整指示器位置'));
     expect(editModeCalled, isTrue);
   });
@@ -105,6 +106,26 @@ void main() {
     await tester.tap(find.text('-1').last);
     await tester.pumpAndSettle();
     expect(value.topFontSize, 11);
+
+    // Switch to 底部 target
+    await tester.tap(find.text('底部'));
+    await tester.pumpAndSettle();
+    expect(find.text('底部距离：8 dp'), findsOneWidget);
+    expect(find.text('底部字号：11 sp'), findsOneWidget);
+    expect(find.text('左右边距：16 dp'), findsOneWidget);
+
+    // Tune bottom font size
+    expect(value.bottomFontSize, 11);
+    final fontPlus = find.text('+1').at(1);
+    await tester.tap(fontPlus);
+    await tester.pumpAndSettle();
+    expect(value.bottomFontSize, 12);
+
+    // Tune side margin under 底部
+    final sidePlus = find.text('+5').last;
+    await tester.tap(sidePlus);
+    await tester.pumpAndSettle();
+    expect(value.side, 21);
 
     // Test actions
     await tester.tap(find.text('保存'));

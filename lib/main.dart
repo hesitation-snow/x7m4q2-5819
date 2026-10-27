@@ -48,13 +48,23 @@ void main() async {
 class LKApp extends StatelessWidget {
   const LKApp({super.key});
 
-  ThemeData _buildTheme(Brightness brightness) => AppTheme.build(brightness);
+  ThemeData _buildTheme(Brightness brightness) {
+    final seedVal = LKStore.themeSeedColor.value;
+    final seedColor = seedVal != null ? Color(seedVal) : null;
+    return AppTheme.build(
+      brightness,
+      seedColor: seedColor,
+      pureBlack: LKStore.pureBlackDark.value,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: Listenable.merge([
         LKStore.themeMode,
+        LKStore.pureBlackDark,
+        LKStore.themeSeedColor,
         LKStore.dataSaverMode,
         LKStore.animationsEnabled
       ]),

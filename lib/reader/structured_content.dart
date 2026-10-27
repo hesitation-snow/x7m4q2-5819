@@ -1835,12 +1835,40 @@ class StructuredContentParser {
     }
   }
 
-  /// 仅转换结构化正文中的文本与注音，绝对不修改任何标签、属性、URL 与 CSS
+  /// 仅转换结构化正文中的文本与注音，绝对不修改任何标签、属性、URL 与 CSS。
+  /// 批量打包为单次平台通道调用，杜绝成千上万次单独 MethodChannel IPC 阻塞主线程造成 120Hz 掉帧与漫长等待。
   static Future<List<StructuredBlock>> convertBlocks(
     List<StructuredBlock> blocks,
     int mode,
   ) async {
     if (mode != 1 && mode != 2) return blocks;
+
+    final stringsToConvert = <String>[];
+    for (final block in blocks) {
+      if (block.isImage || block.isDivider || block.runs.isEmpty) continue;
+      for (final run in block.runs) {
+        stringsToConvert.add(run.text);
+        if (run.rubyText != null && run.rubyText!.isNotEmpty) {
+          stringsToConvert.add(run.rubyText!);
+          if (run.rubyBaseText != null) {
+            stringsToConvert.add(run.rubyBaseText!);
+          }
+        }
+      }
+    }
+
+    if (stringsToConvert.isEmpty) return blocks;
+
+    // 用不可见且绝不会被 OpenCC 字典改变的专用分隔符打包一次性转换
+    const delimiter = '\uE000';
+    final combined = stringsToConvert.join(delimiter);
+    final convertedCombined = mode == 1
+        ? await ChineseConverter.convert(combined, S2T())
+        : await ChineseConverter.convert(combined, T2S());
+    final convertedList = convertedCombined.split(delimiter);
+
+    final useBatch = convertedList.length == stringsToConvert.length;
+    var cursor = 0;
 
     final result = <StructuredBlock>[];
     for (final block in blocks) {
@@ -1851,20 +1879,34 @@ class StructuredContentParser {
 
       final newRuns = <StructuredInlineRun>[];
       for (final run in block.runs) {
-        final convText = mode == 1
-            ? await ChineseConverter.convert(run.text, S2T())
-            : await ChineseConverter.convert(run.text, T2S());
+        final String convText;
+        if (useBatch) {
+          convText = convertedList[cursor++];
+        } else {
+          convText = mode == 1
+              ? await ChineseConverter.convert(run.text, S2T())
+              : await ChineseConverter.convert(run.text, T2S());
+        }
+
         String? convRuby;
         String? convRubyBase;
         if (run.rubyText != null && run.rubyText!.isNotEmpty) {
-          convRuby = mode == 1
-              ? await ChineseConverter.convert(run.rubyText!, S2T())
-              : await ChineseConverter.convert(run.rubyText!, T2S());
+          if (useBatch) {
+            convRuby = convertedList[cursor++];
+          } else {
+            convRuby = mode == 1
+                ? await ChineseConverter.convert(run.rubyText!, S2T())
+                : await ChineseConverter.convert(run.rubyText!, T2S());
+          }
           final rubyBase = run.rubyBaseText;
           if (rubyBase != null) {
-            convRubyBase = mode == 1
-                ? await ChineseConverter.convert(rubyBase, S2T())
-                : await ChineseConverter.convert(rubyBase, T2S());
+            if (useBatch) {
+              convRubyBase = convertedList[cursor++];
+            } else {
+              convRubyBase = mode == 1
+                  ? await ChineseConverter.convert(rubyBase, S2T())
+                  : await ChineseConverter.convert(rubyBase, T2S());
+            }
           }
         }
         newRuns.add(run.copyWith(

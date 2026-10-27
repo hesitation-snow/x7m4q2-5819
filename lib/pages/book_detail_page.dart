@@ -1,7 +1,8 @@
-import '../services/app_motion.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
+import '../services/app_motion.dart';
 
 import '../api/lk_api.dart';
 import '../api/follow_relation.dart';
@@ -117,10 +118,14 @@ Widget _braveAccessBadge(BuildContext context) {
   final scheme = Theme.of(context).colorScheme;
   return Container(
     margin: const EdgeInsets.only(right: 8),
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
     decoration: BoxDecoration(
-      color: scheme.tertiaryContainer,
-      borderRadius: BorderRadius.circular(5),
+      color: scheme.tertiaryContainer.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(
+        color: scheme.tertiary.withValues(alpha: 0.45),
+        width: 0.8,
+      ),
     ),
     child: Text('勇者可读',
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -157,7 +162,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
   bool _volumesHasMore = true;
   final _scroll = ScrollController();
   bool _fabVisible = true;
+  bool _readingActionEntranceScheduled = false;
+  bool _readingActionEntrancePlayed = false;
   double _lastOffset = 0;
+  double _fabScrollDistance = 0;
 
   /// 目录中已就地展开的卷;展开后章节列表直接显示在卷卡片下方。
   final Set<int> _expandedVolumeIds = <int>{};
@@ -206,11 +214,29 @@ class _BookDetailPageState extends State<BookDetailPage> {
     LKClient.sessionRev.addListener(_onPublisherSessionChanged);
     LKClient.followChanged.addListener(_onFollowChanged);
     _scroll.addListener(() {
-      final o = _scroll.offset;
-      final down = o > _lastOffset + 2;
+      final position = _scroll.position;
+      final o = _scroll.offset
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      final delta = o - _lastOffset;
       _lastOffset = o;
-      final v = o < 80 || !down;
-      if (v != _fabVisible && mounted) setState(() => _fabVisible = v);
+      if (o < 80) {
+        _fabScrollDistance = 0;
+        if (!_fabVisible && mounted) setState(() => _fabVisible = true);
+        return;
+      }
+      if (delta == 0) return;
+      if ((_fabScrollDistance > 0 && delta < 0) ||
+          (_fabScrollDistance < 0 && delta > 0)) {
+        _fabScrollDistance = 0;
+      }
+      _fabScrollDistance += delta;
+      final hide = _fabVisible && _fabScrollDistance >= 12;
+      final show = !_fabVisible && _fabScrollDistance <= -24;
+      if ((hide || show) && mounted) {
+        _fabScrollDistance = 0;
+        setState(() => _fabVisible = show);
+      }
     });
     _load();
   }
@@ -636,8 +662,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
     final request = _publisherRelation.beginRefresh(force: forceRefresh);
     if (request == null) return;
     try {
-      // poster_user.followed 只属于书籍响应；用户主页的 relation.followed
-      // 是针对当前登录账号重新计算的关系状态。
+      // poster_user.followed 只属于书籍响应；主页 relation.followed 会按当前账号刷新。
       final page = await LKApi.publicUserHome(book.publisherUid, 1,
           pageSize: 1, forceRefresh: true);
       if (!mounted ||
@@ -651,7 +676,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
           () => _publisherRelation.complete(request, page.profile.followed));
     } catch (_) {
       _publisherRelation.fail(request);
-      // 关系查询失败时保留 publisher 接口中的初始状态，不阻塞详情页。
+      // 关系查询失败时保留书籍接口中的初始状态，不阻塞详情页。
     }
   }
 
@@ -661,52 +686,114 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   Widget _publisherRow(LKBook book) {
     final scheme = Theme.of(context).colorScheme;
-    final name =
-        book.publisherName.trim().isEmpty ? '未知用户' : book.publisherName.trim();
     final canOpenProfile = book.publisherUid > 0;
     final canFollow = canOpenProfile &&
         (!LKClient.shared.session.isLoggedIn ||
             LKClient.shared.session.uid != book.publisherUid);
-    return InkWell(
-      onTap: canOpenProfile ? () => _openPublisherProfile(book) : null,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 14,
-              backgroundColor: scheme.primary.withValues(alpha: 0.12),
-              backgroundImage:
-                  YomiruAvatarCache.providerOrNull(book.publisherAvatar),
-              child:
-                  YomiruAvatarCache.providerOrNull(book.publisherAvatar) == null
-                      ? Icon(Icons.person_outline_rounded,
-                          size: 17, color: scheme.primary)
-                      : null,
-            ),
-            const SizedBox(width: 7),
-            Flexible(
-              child: Text(name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600)),
-            ),
-            if (canFollow)
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: OutlinedButton(
+    final avatar = YomiruAvatarCache.providerOrNull(book.publisherAvatar);
+    final name =
+        book.publisherName.trim().isEmpty ? '未知用户' : book.publisherName.trim();
+    final updatedAt = book.updatedAt.trim();
+    final updateLabel = updatedAt.isEmpty
+        ? '未知'
+        : updatedAt.length > 16
+            ? updatedAt.substring(0, 16)
+            : updatedAt;
+    return Material(
+      color: scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        key: const ValueKey('book-publisher-row'),
+        onTap: canOpenProfile ? () => _openPublisherProfile(book) : null,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: scheme.outlineVariant.withValues(alpha: 0.8),
+                      width: 1),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: CircleAvatar(
+                    radius: 17,
+                    backgroundColor: scheme.primary.withValues(alpha: 0.12),
+                    backgroundImage: avatar,
+                    child: avatar == null
+                        ? Icon(Icons.person_outline_rounded,
+                            size: 20, color: scheme.primary)
+                        : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: scheme.onSurface,
+                            fontSize: 14,
+                            height: 1.2,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        Icon(Icons.schedule_rounded,
+                            size: 13,
+                            color: scheme.onSurfaceVariant
+                                .withValues(alpha: 0.75)),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            updateLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              height: 1.2,
+                              color: scheme.onSurfaceVariant
+                                  .withValues(alpha: 0.75),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (canFollow) ...[
+                const SizedBox(width: 12),
+                TextButton(
                   onPressed:
                       _publisherFollowBusy ? null : _togglePublisherFollow,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _publisherFollowed
+                        ? scheme.onSurfaceVariant
+                        : scheme.primary,
+                    backgroundColor: _publisherFollowed
+                        ? scheme.surfaceContainerHighest.withValues(alpha: 0.45)
+                        : scheme.primary.withValues(alpha: 0.09),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    minimumSize: const Size(60, 32),
+                    visualDensity: VisualDensity.compact,
                     shape: const StadiumBorder(),
+                    textStyle: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w500),
                   ),
                   child: Text(_publisherFollowed ? '已关注' : '关注'),
                 ),
-              ),
-          ],
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -765,15 +852,20 @@ class _BookDetailPageState extends State<BookDetailPage> {
                   fontSize: 18, fontWeight: FontWeight.bold, height: 1.3)),
         ),
         if (book.authorName.trim().isNotEmpty) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text('作者: ${book.authorName}',
               style: theme.textTheme.bodyMedium
                   ?.copyWith(color: scheme.onSurfaceVariant)),
         ],
-        const SizedBox(height: 12),
+        const SizedBox(height: 6),
+        Text(
+            '${book.volumeCount} 卷 · ${book.chapterCount} 章 · ${book.wordCount >= 10000 ? '${(book.wordCount / 10000).toStringAsFixed(1)} 万字' : '${book.wordCount} 字'}',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant)),
+        const SizedBox(height: 10),
         Wrap(
           spacing: 8,
-          runSpacing: 8,
+          runSpacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             _miniBadge(scheme, book.isCompleted ? '完结' : '连载'),
@@ -782,11 +874,6 @@ class _BookDetailPageState extends State<BookDetailPage> {
             if (book.isBrave) _braveAccessBadge(context),
           ],
         ),
-        const SizedBox(height: 10),
-        Text(
-            '${book.volumeCount} 卷 · ${book.chapterCount} 章 · ${book.wordCount >= 10000 ? '${(book.wordCount / 10000).toStringAsFixed(1)} 万字' : '${book.wordCount} 字'}',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant)),
       ],
     );
     return Column(
@@ -813,20 +900,31 @@ class _BookDetailPageState extends State<BookDetailPage> {
         if (book.publisherUid > 0 ||
             book.publisherName.trim().isNotEmpty ||
             book.publisherAvatar.trim().isNotEmpty) ...[
-          const SizedBox(height: 20),
-          Divider(color: scheme.outlineVariant),
-          const SizedBox(height: 4),
+          const SizedBox(key: ValueKey('publisher-row-gap'), height: 12),
           _publisherRow(book),
         ],
       ],
     );
   }
 
+  void _scheduleReadingActionEntrance() {
+    if (_readingActionEntranceScheduled || _readingActionEntrancePlayed) return;
+    _readingActionEntranceScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _book == null) return;
+      setState(() => _readingActionEntrancePlayed = true);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = _book;
+    if (b != null) _scheduleReadingActionEntrance();
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
+      // The surrounding visibility/entrance widgets hide the extended-FAB type
+      // from Scaffold's default animator, which otherwise applies a turn.
+      floatingActionButtonAnimator: FloatingActionButtonAnimator.noAnimation,
       appBar: b == null ? AppBar(title: const Text('书籍详情')) : null,
       body: _error != null && b == null
           ? Center(
@@ -849,11 +947,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         backgroundColor: scheme.surface,
                         foregroundColor: scheme.onSurface,
                         expandedHeight: 8,
-                        title: GestureDetector(
-                          onTap: () => _showFullBookTitle(b.title),
-                          child: Text(b.title,
-                              maxLines: 1, overflow: TextOverflow.ellipsis),
-                        ),
+                        title: const Text('书籍详情'),
                         actions: [
                           ValueListenableBuilder<bool>(
                             valueListenable: LKStore.epubDownloadEnabled,
@@ -979,46 +1073,42 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                           height: 1.65,
                                           color: scheme.onSurfaceVariant)),
                               const SizedBox(height: 18),
-                              Wrap(
-                                  spacing: 12,
-                                  runSpacing: 4,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    Text('目录',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium),
-                                    Text('${b.volumeCount} 卷',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.copyWith(
-                                                color:
-                                                    scheme.onSurfaceVariant)),
-                                    if (_usesPagedCatalog ||
-                                        _canExpandAllVolumes)
-                                      TextButton.icon(
-                                        onPressed: _usesPagedCatalog
-                                            ? (_volumes.isEmpty
-                                                ? null
-                                                : () => _openCatalog())
-                                            : (_loadingAllVolumes
-                                                ? null
-                                                : _toggleAllVolumes),
-                                        icon: Icon(_usesPagedCatalog
-                                            ? Icons.format_list_bulleted_rounded
+                              Row(children: [
+                                Text('目录',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium),
+                                const SizedBox(width: 8),
+                                Text('${b.volumeCount} 卷',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                            color: scheme.onSurfaceVariant)),
+                                const Spacer(),
+                                if (_usesPagedCatalog || _canExpandAllVolumes)
+                                  TextButton.icon(
+                                    onPressed: _usesPagedCatalog
+                                        ? (_volumes.isEmpty
+                                            ? null
+                                            : () => _openCatalog())
+                                        : (_loadingAllVolumes
+                                            ? null
+                                            : _toggleAllVolumes),
+                                    icon: Icon(_usesPagedCatalog
+                                        ? Icons.format_list_bulleted_rounded
+                                        : _allVolumesExpanded
+                                            ? Icons.unfold_less_rounded
+                                            : Icons.unfold_more_rounded),
+                                    label: Text(_usesPagedCatalog
+                                        ? '展开目录'
+                                        : _loadingAllVolumes
+                                            ? '加载中'
                                             : _allVolumesExpanded
-                                                ? Icons.unfold_less_rounded
-                                                : Icons.unfold_more_rounded),
-                                        label: Text(_usesPagedCatalog
-                                            ? '展开目录'
-                                            : _loadingAllVolumes
-                                                ? '加载中'
-                                                : _allVolumesExpanded
-                                                    ? '收起全部'
-                                                    : '展开全部'),
-                                      ),
-                                  ]),
+                                                ? '收起全部'
+                                                : '展开全部'),
+                                  ),
+                              ]),
                               const SizedBox(height: 8),
                               if (_volumesLoading && _volumes.isEmpty)
                                 const LkLoadingIndicator(
@@ -1091,20 +1181,30 @@ class _BookDetailPageState extends State<BookDetailPage> {
                 ),
       floatingActionButton: b == null
           ? null
-          : AnimatedSlide(
-              duration: AppMotion.duration(context, 200),
-              offset: _fabVisible ? Offset.zero : const Offset(0, 2),
-              child: AnimatedOpacity(
-                duration: AppMotion.duration(context, 200),
-                opacity: _fabVisible ? 1 : 0,
-                child: FloatingActionButton.extended(
-                  key: const ValueKey('primary-reading-action'),
-                  onPressed: _fabVisible ? _openReading : null,
-                  icon: const Icon(Icons.menu_book_rounded),
-                  label: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 220),
-                    child: Text(_fabLabel,
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
+          : IgnorePointer(
+              key: const ValueKey('reading-action-visibility'),
+              ignoring: !_fabVisible,
+              child: AnimatedSlide(
+                duration: AppMotion.duration(context, 240),
+                curve: Curves.easeOutCubic,
+                offset: !_fabVisible
+                    ? const Offset(0, 2)
+                    : _readingActionEntrancePlayed
+                        ? Offset.zero
+                        : const Offset(0, 0.65),
+                child: AnimatedOpacity(
+                  duration: AppMotion.duration(context, 240),
+                  curve: Curves.easeOutCubic,
+                  opacity: _fabVisible && _readingActionEntrancePlayed ? 1 : 0,
+                  child: FloatingActionButton.extended(
+                    key: const ValueKey('primary-reading-action'),
+                    onPressed: _openReading,
+                    icon: const Icon(Icons.menu_book_rounded),
+                    label: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 220),
+                      child: Text(_fabLabel,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
                   ),
                 ),
               ),
@@ -1114,10 +1214,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   Widget _miniBadge(ColorScheme scheme, String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: scheme.secondaryContainer,
+        color: scheme.secondaryContainer.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: scheme.outline.withValues(alpha: 0.35),
+          width: 0.8,
+        ),
       ),
       child: Text(label,
           style: Theme.of(context).textTheme.labelMedium?.copyWith(
