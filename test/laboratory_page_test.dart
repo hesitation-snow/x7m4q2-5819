@@ -95,7 +95,6 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(const MaterialApp(home: LiquidGlassLabPage()));
     expect(find.byType(LiquidGlassBottomBar), findsOneWidget);
-    expect(find.text('首页未启用；下方仅为实时预览'), findsOneWidget);
     var slider = tester.widget<Slider>(find.byKey(const ValueKey('背景模糊')));
     expect(slider.divisions, isNull);
     slider.onChanged!(8);
@@ -199,7 +198,6 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: LaboratoryPage()));
 
     expect(find.text('功能实验'), findsOneWidget);
-    expect(find.text('界面实验'), findsOneWidget);
     final treasureSwitch =
         find.byKey(const ValueKey('laboratory-daily-treasure-switch'));
     expect(tester.widget<SwitchListTile>(treasureSwitch).value, isFalse);
@@ -224,15 +222,8 @@ void main() {
 
     expect(find.byKey(const ValueKey('laboratory-liquid-glass-switch')),
         findsNothing);
-
-    final detailsEntry =
-        find.byKey(const ValueKey('laboratory-liquid-glass-details-entry'));
-    await tester.ensureVisible(detailsEntry);
-    await tester.tap(detailsEntry);
-    await tester.pumpAndSettle();
-    expect(find.text('液态玻璃'), findsOneWidget);
-    expect(find.byType(LiquidGlassBottomBar), findsOneWidget);
-    expect(find.byKey(const ValueKey('glass-controls')), findsOneWidget);
+    expect(find.byKey(const ValueKey('laboratory-liquid-glass-details-entry')),
+        findsNothing);
   });
 
   testWidgets('tablet preview and reset use device preset and save snapshot',
@@ -251,6 +242,8 @@ void main() {
     await tester.pump();
     await tester.scrollUntilVisible(find.text('重置玻璃默认参数'), 300,
         scrollable: find.byType(Scrollable).first);
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -250));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('重置玻璃默认参数'));
     await tester.pumpAndSettle();
     expect(tester.getSize(find.byKey(const ValueKey('liquid-glass-surface'))),

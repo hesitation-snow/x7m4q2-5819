@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'laboratory_page.dart';
+import 'network_diagnostic_page.dart';
 
 import '../widgets/m3_menu_sheet.dart';
 import '../widgets/m3_controls.dart';
@@ -308,27 +309,30 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _aboutDisclaimerItem(
       BuildContext context, int index, String title, String content) {
     final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '$index. $title',
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: scheme.onSurface,
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$index. $title',
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurface,
+            ),
           ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          content,
-          style: TextStyle(
-            fontSize: 11.5,
-            color: scheme.onSurfaceVariant,
-            height: 1.4,
+          const SizedBox(height: 2),
+          Text(
+            content,
+            style: TextStyle(
+              fontSize: 11.5,
+              color: scheme.onSurfaceVariant,
+              height: 1.45,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -406,13 +410,22 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             ValueListenableBuilder<bool>(
               valueListenable: LKStore.liquidGlassBottomBarEnabled,
-              builder: (context, enabled, _) => SwitchListTile(
-                key: const ValueKey('settings-liquid-glass-switch'),
-                secondary: _settingsIcon(context, Icons.blur_on_rounded),
-                title: const Text('液态玻璃底栏'),
-                subtitle: const Text('切换首页底栏样式'),
-                value: enabled,
-                onChanged: LKStore.setLiquidGlassBottomBarEnabled,
+              builder: (context, enabled, _) => ListTile(
+                key: const ValueKey('settings-liquid-glass-tile'),
+                leading: _settingsIcon(context, Icons.blur_on_rounded),
+                title: const Text('液态玻璃底栏 (测试)'),
+                subtitle: const Text('点击调整详细设置与实时预览'),
+                trailing: Switch(
+                  key: const ValueKey('settings-liquid-glass-switch'),
+                  value: enabled,
+                  onChanged: LKStore.setLiquidGlassBottomBarEnabled,
+                ),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => const LiquidGlassLabPage(),
+                  ),
+                ),
               ),
             ),
             ValueListenableBuilder<bool>(
@@ -561,6 +574,16 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             ListTile(
+              leading: _settingsIcon(context, Icons.network_check_rounded),
+              title: const Text('网络连接诊断'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const NetworkDiagnosticPage()),
+              ),
+            ),
+            ListTile(
               leading: _settingsIcon(context, Icons.feedback_outlined),
               title: const Text('反馈问题'),
               trailing: const Icon(Icons.chevron_right_rounded),
@@ -616,6 +639,8 @@ class _SettingsPageState extends State<SettingsPage> {
               child: ExpansionTile(
                 shape: const Border(),
                 collapsedShape: const Border(),
+                expandedAlignment: Alignment.centerLeft,
+                expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
                 tilePadding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 childrenPadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
@@ -626,7 +651,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     context,
                     1,
                     '非官方声明',
-                    'Yomiru 是一款非官方的的轻之国度（LK）第三方客户端，与轻之国度（LK / 魔王轻文学社区）平台及其运营方无任何关联。',
+                    'Yomiru 是一款非官方的轻之国度（LK）第三方客户端，与轻之国度（LK / 魔王轻文学社区）平台及其运营方无任何关联。',
                   ),
                   const SizedBox(height: 10),
                   _aboutDisclaimerItem(

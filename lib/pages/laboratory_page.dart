@@ -54,24 +54,6 @@ class LaboratoryPage extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 24),
-          Text('界面实验', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: ListTile(
-              key: const ValueKey('laboratory-liquid-glass-details-entry'),
-              leading: Icon(Icons.tune_rounded, color: scheme.primary),
-              title: const Text('预览与详细设置'),
-              subtitle: const Text('实时预览并调整模糊、折射与尺寸'),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const LiquidGlassLabPage(),
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -188,14 +170,6 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
                 padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                 child: Text('调整会自动保存为自定义参数；重置会保存当前设备的默认参数。'),
               ),
-              ValueListenableBuilder<bool>(
-                  valueListenable: LKStore.liquidGlassBottomBarEnabled,
-                  builder: (context, enabled, _) => SwitchListTile(
-                      title: const Text('液态玻璃底栏 (测试)'),
-                      subtitle:
-                          Text(enabled ? '首页已启用；下方预览始终开启' : '首页未启用；下方仅为实时预览'),
-                      value: enabled,
-                      onChanged: LKStore.setLiquidGlassBottomBarEnabled)),
               SwitchListTile(
                 key: const ValueKey('glass-keep-visible-on-scroll'),
                 title: const Text('滚动时保持底栏显示'),
@@ -204,11 +178,6 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
                 onChanged: (value) => LKStore.updateGlassConfiguration(
                     c.copyWith(keepVisibleOnScroll: value)),
               ),
-              Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Text(supported
-                      ? '当前引擎支持真实折射；加载失败、离屏层等情况回退普通模糊。尚未经设备视觉验收。'
-                      : '当前引擎：普通 blur（无真实折射）。折射强度仅在支持 shader 的引擎生效。')),
               // No opacity/saveLayer around the backdrop: retain the root-pass contract.
               control('背景模糊', c.blur, 40,
                   (v) => LKStore.updateGlassConfiguration(c.copyWith(blur: v))),
@@ -261,7 +230,7 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
                                 MediaQuery.sizeOf(context)));
                         unawaited(LKStore.flushGlassConfiguration());
                       })),
-              const SafeArea(top: false, child: SizedBox(height: 12)),
+              const SafeArea(top: false, child: SizedBox(height: 100)),
             ]);
           }),
     );

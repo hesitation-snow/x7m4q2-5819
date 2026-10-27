@@ -70,19 +70,14 @@ void main() {
         tester.state<ScrollableState>(scrollable).position;
     expect(position().maxScrollExtent, greaterThan(500));
 
-    Future<void> drag(double step) async {
-      final viewport = tester.getRect(scrollable);
-      final gesture = await tester.startGesture(viewport.center);
-      for (var i = 0; i < 12; i++) {
-        await gesture.moveBy(Offset(0, step));
-        await tester.pump(const Duration(milliseconds: 16));
-      }
-      await gesture.up();
+    Future<void> drag(double offset) async {
+      await tester.drag(scrollable, Offset(0, offset));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
     }
 
-    Future<void> dragUp() => drag(-25);
-    Future<void> dragDown() => drag(25);
+    Future<void> dragUp() => drag(-300);
+    Future<void> dragDown() => drag(300);
 
     await dragUp();
     expect(position().pixels, greaterThan(100));
@@ -90,23 +85,14 @@ void main() {
     final beforeGlass = position().pixels;
     // Keep HomePage mounted below the real laboratory routes while switching
     // settings, as happens when the user returns from the settings screen.
+    LKStore.liquidGlassBottomBarEnabled.value = true;
     final navigator = tester.state<NavigatorState>(find.byType(Navigator));
-    navigator
-        .push(MaterialPageRoute<void>(builder: (_) => const LaboratoryPage()));
+    navigator.push(
+        MaterialPageRoute<void>(builder: (_) => const LiquidGlassLabPage()));
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pump();
-    await tester.tap(
-        find.byKey(const ValueKey('laboratory-liquid-glass-details-entry')));
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pump();
-    final glassSwitch = find.ancestor(
-        of: find.text('液态玻璃底栏 (测试)'), matching: find.byType(SwitchListTile));
-    await tester.ensureVisible(glassSwitch);
-    await tester.tap(glassSwitch);
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pump();
-    final keepSwitch = find.ancestor(
-        of: find.text('滚动时保持底栏显示'), matching: find.byType(SwitchListTile));
+    final keepSwitch =
+        find.byKey(const ValueKey('glass-keep-visible-on-scroll'));
     await tester.ensureVisible(keepSwitch);
     await tester.tap(keepSwitch);
     await tester.pump(const Duration(milliseconds: 350));
@@ -114,11 +100,7 @@ void main() {
     expect(LKStore.liquidGlassBottomBarEnabled.value, isTrue);
     expect(LKStore.glassConfiguration.value.keepVisibleOnScroll, isTrue);
     navigator.pop();
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pump();
-    navigator.pop();
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(tester.state(find.byType(DynamicPage)), same(initialPageState));
     expect(position().pixels, closeTo(beforeGlass, 1));
     var beforeDown = position().pixels;

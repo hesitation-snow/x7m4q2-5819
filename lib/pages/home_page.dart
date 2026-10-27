@@ -22,6 +22,7 @@ import '../widgets/m3_controls.dart';
 import 'book_detail_page.dart';
 import 'brave_quiz_page.dart';
 import 'channel_page.dart';
+import 'network_diagnostic_page.dart';
 import 'settings_page.dart';
 import 'dynamic_page.dart';
 import 'follow_list_page.dart';
@@ -1158,9 +1159,26 @@ class _FeedTabState extends State<FeedTab>
               style: const TextStyle(color: Colors.grey, fontSize: 13),
             ),
             const SizedBox(height: 16),
-            FilledButton.tonal(
-              onPressed: onRetry,
-              child: const Text('重试'),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                FilledButton.tonal(
+                  onPressed: onRetry,
+                  child: const Text('重试'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const NetworkDiagnosticPage(),
+                    ),
+                  ),
+                  icon: const Icon(Icons.network_check_rounded, size: 16),
+                  label: const Text('网络诊断'),
+                ),
+              ],
             ),
           ],
         ),

@@ -46,7 +46,7 @@ void main() {
   }
 
   Future<void> showSettings(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(430, 1600);
+    tester.view.physicalSize = const Size(430, 2200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -157,6 +157,12 @@ void main() {
     expect(find.textContaining('官方协议准则'), findsOneWidget);
     expect(find.textContaining('声明认可'), findsOneWidget);
 
+    final item1X = tester.getTopLeft(find.text('1. 非官方声明')).dx;
+    final item2X = tester.getTopLeft(find.text('2. 非商业用途')).dx;
+    final item6X = tester.getTopLeft(find.text('6. 官方协议准则')).dx;
+    expect(item1X, item2X);
+    expect(item1X, item6X);
+
     await tester.tap(find.text('免责声明'));
     await tester.pumpAndSettle();
     expect(find.textContaining('非官方声明'), findsNothing);
@@ -241,19 +247,21 @@ void main() {
     gesture = await tester.startGesture(tester.getCenter(aboutTile));
     await tester.pump(const Duration(seconds: 1));
     await gesture.up();
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.byKey(const ValueKey('laboratory-liquid-glass-details-entry')),
-        findsOneWidget);
+        findsNothing);
     expect(find.byKey(const ValueKey('laboratory-liquid-glass-switch')),
         findsNothing);
     await tester.pageBack();
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
     final glassSwitch =
         find.byKey(const ValueKey('settings-liquid-glass-switch'));
     await tester.ensureVisible(glassSwitch);
     expect(glassSwitch, findsOneWidget);
-    expect(tester.widget<SwitchListTile>(glassSwitch).value, isFalse);
+    expect(tester.widget<Switch>(glassSwitch).value, isFalse);
 
     await tester.tap(glassSwitch);
     await tester.pumpAndSettle();
@@ -268,6 +276,20 @@ void main() {
     await tester.tap(glassSwitch);
     await tester.pumpAndSettle();
     expect(LKStore.liquidGlassBottomBarEnabled.value, isFalse);
+
+    final glassTile = find.byKey(const ValueKey('settings-liquid-glass-tile'));
+    await tester.ensureVisible(glassTile);
+    await tester.tap(find.text('液态玻璃底栏 (测试)'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('液态玻璃'), findsOneWidget);
+    expect(find.byKey(const ValueKey('glass-controls')), findsOneWidget);
+    expect(find.byKey(const ValueKey('glass-keep-visible-on-scroll')),
+        findsOneWidget);
+    expect(find.text('首页已启用；下方预览始终开启'), findsNothing);
+    await tester.pageBack();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
   });
   testWidgets('moving beyond touch slop cancels hidden entry', (tester) async {
     LKClient.shared.session
