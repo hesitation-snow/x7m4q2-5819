@@ -18,8 +18,8 @@ void main() {
     PackageInfo.setMockInitialValues(
       appName: 'Yomiru',
       packageName: 'moe.yutro.yomiru',
-      version: '1.5.1',
-      buildNumber: '2013',
+      version: '1.6.0',
+      buildNumber: '2014',
       buildSignature: '',
     );
   });
@@ -67,14 +67,14 @@ void main() {
           DiagnosticTarget.lkWeb: lkWeb,
           DiagnosticTarget.lkApi: lkApi,
         },
-        appVersion: '1.5.1+2013',
+        appVersion: '1.6.0+2014',
         platformDescription: 'iOS',
       );
 
       expect(summary.allPassed, isTrue);
       expect(summary.title, contains('网络连接良好'));
       expect(summary.fullReport, contains('Yomiru 网络诊断报告'));
-      expect(summary.fullReport, contains('1.5.1+2013'));
+      expect(summary.fullReport, contains('1.6.0+2014'));
       // Never contains sensitive local IP in report
       expect(summary.fullReport, isNot(contains('1.2.3.4')));
     });
@@ -122,7 +122,7 @@ void main() {
           DiagnosticTarget.lkWeb: lkWeb,
           DiagnosticTarget.lkApi: lkApi,
         },
-        appVersion: '1.5.1+2013',
+        appVersion: '1.6.0+2014',
         platformDescription: 'iOS',
       );
 
@@ -158,7 +158,7 @@ void main() {
           DiagnosticTarget.lkWeb: await service.testLkWeb(),
           DiagnosticTarget.lkApi: await service.testLkApi(),
         },
-        appVersion: '1.5.1+2013',
+        appVersion: '1.6.0+2014',
         platformDescription: 'iOS',
       );
 
@@ -242,7 +242,7 @@ void main() {
       expect(find.text('开始网络诊断'), findsOneWidget);
       expect(find.text('国内网络连通性 (Baidu)'), findsOneWidget);
       expect(find.text('LK 数据接口 (API)'), findsOneWidget);
-      expect(find.text('LK域名解析 (DNS)'), findsOneWidget);
+      expect(find.text('LK 域名解析 (DNS)'), findsOneWidget);
 
       // Start testing
       await tester.tap(find.text('开始网络诊断'));

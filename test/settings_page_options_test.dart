@@ -19,8 +19,8 @@ void main() {
     PackageInfo.setMockInitialValues(
       appName: 'Yomiru',
       packageName: 'moe.yutro.yomiru',
-      version: '1.5.1',
-      buildNumber: '2013',
+      version: '1.6.0',
+      buildNumber: '2014',
       buildSignature: '',
     );
     SharedPreferences.setMockInitialValues({});

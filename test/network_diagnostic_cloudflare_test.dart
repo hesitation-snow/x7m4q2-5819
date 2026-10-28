@@ -29,13 +29,13 @@ DiagnosticSummary _summary(DiagnosticResultItem item, {bool? includeRayId}) {
   if (includeRayId == null) {
     return NetworkDiagnosticService.evaluateSummary(
       results: results,
-      appVersion: '1.5.1+2013',
+      appVersion: '1.6.0+2014',
       platformDescription: 'test',
     );
   }
   return NetworkDiagnosticService.evaluateSummary(
     results: results,
-    appVersion: '1.5.1+2013',
+    appVersion: '1.6.0+2014',
     platformDescription: 'test',
     includeRayId: includeRayId,
   );
@@ -239,7 +239,7 @@ void main() {
         };
         final summary = NetworkDiagnosticService.evaluateSummary(
           results: results,
-          appVersion: '1.5.1+2013',
+          appVersion: '1.6.0+2014',
           platformDescription: 'test',
         );
         expect(summary.allPassed, isFalse);

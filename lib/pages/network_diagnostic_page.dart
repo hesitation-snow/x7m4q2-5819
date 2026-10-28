@@ -30,7 +30,7 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
   bool _hasRun = false;
   bool _includeRayId = false;
   DiagnosticSummary? _summary;
-  String _appVersion = '1.5.1';
+  String _appVersion = '1.6.0';
 
   @override
   void initState() {
