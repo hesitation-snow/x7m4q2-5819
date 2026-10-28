@@ -28,6 +28,7 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
 
   bool _testing = false;
   bool _hasRun = false;
+  bool _includeRayId = false;
   DiagnosticSummary? _summary;
   String _appVersion = '1.5.1';
 
@@ -53,10 +54,10 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
     setState(() {
       _testing = true;
       _hasRun = true;
+      _includeRayId = false;
       _summary = null;
-      for (final target in _results.keys) {
-        _results[target] =
-            _results[target]!.copyWith(status: DiagnosticStatus.running);
+      for (final item in NetworkDiagnosticService.initialItems()) {
+        _results[item.target] = item.copyWith(status: DiagnosticStatus.running);
       }
     });
 
@@ -94,13 +95,18 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
   }
 
   Future<void> _copyReport() async {
-    final report = _summary?.fullReport;
-    if (report == null || report.isEmpty) return;
+    if (_summary == null) return;
+    final report = NetworkDiagnosticService.evaluateSummary(
+      results: _results,
+      appVersion: _appVersion,
+      platformDescription: defaultTargetPlatform.name,
+      includeRayId: _includeRayId,
+    ).fullReport;
     try {
       await Clipboard.setData(ClipboardData(text: report));
-    } catch (_) {}
-    if (mounted) {
-      showFloatingPrompt(context, '已复制诊断报告到剪贴板');
+      if (mounted) showFloatingPrompt(context, '已复制诊断报告到剪贴板');
+    } catch (_) {
+      if (mounted) showFloatingPrompt(context, '复制失败，请重试');
     }
   }
 
@@ -214,6 +220,15 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
               ),
             ),
           ],
+          if (item.cfCacheStatus != null) ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(left: 34),
+              child: Text('Cloudflare 缓存状态：${item.cfCacheStatus}',
+                  style:
+                      TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+            ),
+          ],
         ],
       ),
     );
@@ -260,7 +275,7 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        '本诊断将依次测试轻之国度服务器、国内网络与国际网络的可达性，用于对照分析连接瓶颈。',
+                        '测试将连接 LK、百度和 Google，对比网络路径；不会发送 LK 登录凭证。第三方站点可看到设备的出口 IP，结果仅在本机展示。',
                         style: TextStyle(
                           fontSize: 12.5,
                           color: scheme.onSurfaceVariant,
@@ -370,6 +385,21 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                           height: 1.45,
                         ),
                       ),
+                      if (_results.values
+                          .any((item) => item.cfRay != null)) ...[
+                        const SizedBox(height: 12),
+                        CheckboxListTile(
+                          key: const ValueKey('diagnostic-include-ray-id'),
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          title: const Text('复制报告时包含 Cloudflare 请求标识'),
+                          subtitle:
+                              const Text('可供站点维护者排查；默认不包含。标识可能关联请求和边缘节点。'),
+                          value: _includeRayId,
+                          onChanged: (value) =>
+                              setState(() => _includeRayId = value ?? false),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       Align(
                         alignment: Alignment.centerRight,

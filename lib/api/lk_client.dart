@@ -93,6 +93,9 @@ class LKClient {
     if (Platform.isIOS) 'Connection': 'close',
   };
 
+  /// 返回独立的公开只读请求头副本，不包含会话凭据。
+  static Map<String, String> publicReadOnlyHeaders() => Map.of(_headers);
+
   /// 自动附加 security_key(登录态接口用)
   Map<String, dynamic> authed([Map<String, dynamic> extra = const {}]) {
     final b = Map<String, dynamic>.from(extra);

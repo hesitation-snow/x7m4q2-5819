@@ -68,6 +68,15 @@ class LiquidGlassLabPage extends StatefulWidget {
 
 class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
   int selected = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) LKStore.ensureGlassDimensions(MediaQuery.sizeOf(context));
+    });
+  }
+
   @override
   void dispose() {
     unawaited(LKStore.flushGlassConfiguration());
@@ -84,12 +93,18 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
 
   Widget control(
           String title, double value, double max, ValueChanged<double> change,
-          {double min = 0, bool enabled = true}) =>
+          {double min = 0, bool enabled = true, String? hint}) =>
       Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('$title：${number(title, value)}',
-              style: Theme.of(context).textTheme.titleMedium),
+              style: Theme.of(context).textTheme.titleSmall),
+          if (hint != null) ...[
+            const SizedBox(height: 4),
+            Text(hint,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          ],
           Slider(
               key: ValueKey(title),
               value: value,
@@ -104,11 +119,37 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
         ]),
       );
 
+  Widget section(BuildContext context, String title, IconData icon,
+      List<Widget> children) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card.filled(
+      margin: EdgeInsets.zero,
+      color: scheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Row(children: [
+              Icon(icon, color: scheme.primary, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: Text(title,
+                      style: Theme.of(context).textTheme.titleMedium)),
+            ]),
+          ),
+          ...children,
+        ]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final supported = ui.ImageFilter.isShaderFilterSupported;
     return Scaffold(
-      appBar: AppBar(title: const Text('液态玻璃')),
+      appBar: AppBar(title: const Text('悬浮底栏')),
       bottomNavigationBar: SizedBox(
           height: (MediaQuery.sizeOf(context).height * .25).clamp(110.0, 220.0),
           child: Stack(children: [
@@ -135,6 +176,25 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
                                     borderRadius: BorderRadius.circular(12))),
                             title: Text('演示内容 ${i + 1}'),
                             subtitle: const Text('滚动文字与色块，观察玻璃背景变化'))))),
+            Positioned(
+              top: 8,
+              left: 16,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    child: Text('实时预览',
+                        style: Theme.of(context).textTheme.labelMedium),
+                  ),
+                ),
+              ),
+            ),
             Positioned(
                 left: 8,
                 right: 8,
@@ -165,73 +225,99 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
           valueListenable: LKStore.glassConfiguration,
           builder: (context, _, __) {
             final c = LKStore.glassConfigurationFor(MediaQuery.sizeOf(context));
-            return ListView(key: const ValueKey('glass-controls'), children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                child: Text('调整会自动保存为自定义参数；重置会保存当前设备的默认参数。'),
-              ),
-              SwitchListTile(
-                key: const ValueKey('glass-keep-visible-on-scroll'),
-                title: const Text('滚动时保持底栏显示'),
-                subtitle: const Text('关闭后，首页/书架/动态滚动时底栏会随内容收起'),
-                value: c.keepVisibleOnScroll,
-                onChanged: (value) => LKStore.updateGlassConfiguration(
-                    c.copyWith(keepVisibleOnScroll: value)),
-              ),
-              // No opacity/saveLayer around the backdrop: retain the root-pass contract.
-              control('背景模糊', c.blur, 40,
-                  (v) => LKStore.updateGlassConfiguration(c.copyWith(blur: v))),
-              control('底色遮罩', c.tint, 1,
-                  (v) => LKStore.updateGlassConfiguration(c.copyWith(tint: v))),
-              control(
-                  '折射强度',
-                  c.refraction,
-                  .25,
-                  (v) => LKStore.updateGlassConfiguration(
-                      c.copyWith(refraction: v)),
-                  enabled: supported),
-              control(
-                  '高光强度',
-                  c.highlight,
-                  1,
-                  (v) => LKStore.updateGlassConfiguration(
-                      c.copyWith(highlight: v))),
-              control(
-                '底栏宽度',
-                c.barWidth,
-                360,
-                (v) =>
-                    LKStore.updateGlassConfiguration(c.copyWith(barWidth: v)),
-                min: 220,
-              ),
-              control(
-                '底栏高度',
-                c.barHeight,
-                72,
-                (v) =>
-                    LKStore.updateGlassConfiguration(c.copyWith(barHeight: v)),
-                min: 40,
-              ),
-              control(
-                '悬浮高度',
-                c.floatingHeight,
-                48,
-                (v) => LKStore.updateGlassConfiguration(
-                    c.copyWith(floatingHeight: v)),
-              ),
-              Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: OutlinedButton.icon(
-                      icon: const Icon(Icons.restore),
-                      label: const Text('重置玻璃默认参数'),
-                      onPressed: () {
-                        LKStore.updateGlassConfiguration(
-                            GlassConfiguration.defaultsFor(
-                                MediaQuery.sizeOf(context)));
-                        unawaited(LKStore.flushGlassConfiguration());
-                      })),
-              const SafeArea(top: false, child: SizedBox(height: 100)),
-            ]);
+            GlassConfiguration current() =>
+                LKStore.glassConfigurationFor(MediaQuery.sizeOf(context));
+            final scheme = Theme.of(context).colorScheme;
+            return ListView(
+              key: const ValueKey('glass-controls'),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 16),
+                  child: Text(
+                    '调整悬浮底栏的玻璃效果会自动保存为自定义参数；重置会保存当前设备的默认参数。',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+                section(context, '显示行为', Icons.swipe_vertical_rounded, [
+                  SwitchListTile(
+                    key: const ValueKey('glass-keep-visible-on-scroll'),
+                    title: const Text('滚动时保持底栏显示'),
+                    subtitle: const Text('关闭后，首页、书架和动态滚动时底栏会随内容收起'),
+                    value: c.keepVisibleOnScroll,
+                    onChanged: (value) => LKStore.updateGlassConfiguration(
+                        current().copyWith(keepVisibleOnScroll: value)),
+                  ),
+                ]),
+                const SizedBox(height: 12),
+                section(context, '玻璃效果', Icons.blur_on_rounded, [
+                  control(
+                      '背景模糊',
+                      c.blur,
+                      40,
+                      (v) => LKStore.updateGlassConfiguration(
+                          current().copyWith(blur: v))),
+                  control(
+                      '底色遮罩',
+                      c.tint,
+                      1,
+                      (v) => LKStore.updateGlassConfiguration(
+                          current().copyWith(tint: v))),
+                  control(
+                      '折射强度',
+                      c.refraction,
+                      .25,
+                      (v) => LKStore.updateGlassConfiguration(
+                          current().copyWith(refraction: v)),
+                      enabled: supported,
+                      hint: supported ? null : '当前渲染引擎不支持折射，将使用普通模糊效果。'),
+                  control(
+                      '高光强度',
+                      c.highlight,
+                      1,
+                      (v) => LKStore.updateGlassConfiguration(
+                          current().copyWith(highlight: v))),
+                ]),
+                const SizedBox(height: 12),
+                section(context, '尺寸与位置', Icons.tune_rounded, [
+                  control(
+                      '底栏宽度',
+                      c.barWidth,
+                      360,
+                      (v) => LKStore.updateGlassConfiguration(
+                          current().copyWith(barWidth: v)),
+                      min: c.barWidth < 220 ? c.barWidth : 220),
+                  control(
+                      '底栏高度',
+                      c.barHeight,
+                      72,
+                      (v) => LKStore.updateGlassConfiguration(
+                          current().copyWith(barHeight: v)),
+                      min: 40),
+                  control(
+                      '悬浮高度',
+                      c.floatingHeight,
+                      48,
+                      (v) => LKStore.updateGlassConfiguration(
+                          current().copyWith(floatingHeight: v))),
+                ]),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.restore),
+                  label: const Text('重置悬浮底栏默认参数'),
+                  onPressed: () {
+                    LKStore.updateGlassConfiguration(
+                        GlassConfiguration.defaultsFor(
+                            MediaQuery.sizeOf(context)));
+                    unawaited(LKStore.flushGlassConfiguration());
+                  },
+                ),
+                const SizedBox(height: 24),
+              ],
+            );
           }),
     );
   }

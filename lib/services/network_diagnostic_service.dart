@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 
+import '../api/lk_client.dart';
+
 enum DiagnosticTarget {
   dns,
   baidu,
@@ -27,6 +29,8 @@ class DiagnosticResultItem {
   final int? latencyMs;
   final String? errorMessage;
   final String? detail;
+  final String? cfRay;
+  final String? cfCacheStatus;
 
   const DiagnosticResultItem({
     required this.target,
@@ -37,6 +41,8 @@ class DiagnosticResultItem {
     this.latencyMs,
     this.errorMessage,
     this.detail,
+    this.cfRay,
+    this.cfCacheStatus,
   });
 
   DiagnosticResultItem copyWith({
@@ -45,6 +51,8 @@ class DiagnosticResultItem {
     int? latencyMs,
     String? errorMessage,
     String? detail,
+    String? cfRay,
+    String? cfCacheStatus,
   }) {
     return DiagnosticResultItem(
       target: target,
@@ -55,6 +63,8 @@ class DiagnosticResultItem {
       latencyMs: latencyMs ?? this.latencyMs,
       errorMessage: errorMessage ?? this.errorMessage,
       detail: detail ?? this.detail,
+      cfRay: cfRay ?? this.cfRay,
+      cfCacheStatus: cfCacheStatus ?? this.cfCacheStatus,
     );
   }
 }
@@ -94,7 +104,7 @@ class NetworkDiagnosticService {
   static List<DiagnosticResultItem> initialItems() => const [
         DiagnosticResultItem(
           target: DiagnosticTarget.dns,
-          label: 'LK域名解析 (DNS)',
+          label: 'LK 域名解析 (DNS)',
           urlOrHost: 'www.lightnovel.fun',
         ),
         DiagnosticResultItem(
@@ -109,12 +119,12 @@ class NetworkDiagnosticService {
         ),
         DiagnosticResultItem(
           target: DiagnosticTarget.lkWeb,
-          label: 'LK官网网页 (Web)',
+          label: 'LK 官网网页 (Web)',
           urlOrHost: 'https://www.lightnovel.fun/',
         ),
         DiagnosticResultItem(
           target: DiagnosticTarget.lkApi,
-          label: 'LK数据接口 (API)',
+          label: 'LK 数据接口 (API)',
           urlOrHost:
               'https://www.lightnovel.fun/api/pc-proxy/api/bff/home-promo-v1',
         ),
@@ -122,7 +132,7 @@ class NetworkDiagnosticService {
 
   Future<DiagnosticResultItem> testDns() async {
     const target = DiagnosticTarget.dns;
-    const label = 'LK域名解析 (DNS)';
+    const label = 'LK 域名解析 (DNS)';
     const host = 'www.lightnovel.fun';
     final sw = Stopwatch()..start();
     try {
@@ -206,8 +216,7 @@ class NetworkDiagnosticService {
     try {
       final res = await _client.get(Uri.parse(url)).timeout(defaultTimeout);
       sw.stop();
-      if (res.statusCode == 204 ||
-          (res.statusCode >= 200 && res.statusCode < 400)) {
+      if (res.statusCode == 204) {
         return DiagnosticResultItem(
           target: target,
           label: label,
@@ -225,7 +234,7 @@ class NetworkDiagnosticService {
           status: DiagnosticStatus.failed,
           statusCode: res.statusCode,
           latencyMs: sw.elapsedMilliseconds,
-          errorMessage: '响应状态码异常 (HTTP ${res.statusCode})',
+          errorMessage: '未确认国际网络连通性 (HTTP ${res.statusCode})',
         );
       }
     } catch (e) {
@@ -240,35 +249,71 @@ class NetworkDiagnosticService {
     }
   }
 
+  static bool _matchesExactly(String pattern, String value) {
+    final match = RegExp(pattern).matchAsPrefix(value);
+    return match != null && match.end == value.length;
+  }
+
+  // 仅接受 Cloudflare Ray ID 的规范形式和已知缓存状态。
+  static String? _safeRay(String? value) {
+    if (value == null ||
+        !_matchesExactly(r'[0-9a-fA-F]{16,32}-[A-Za-z]{3}', value)) {
+      return null;
+    }
+    return value;
+  }
+
+  static String? _safeCacheStatus(String? value) {
+    const allowed = {
+      'HIT',
+      'MISS',
+      'DYNAMIC',
+      'BYPASS',
+      'EXPIRED',
+      'STALE',
+      'UPDATING',
+      'REVALIDATED',
+      'NONE',
+    };
+    return value != null && allowed.contains(value) ? value : null;
+  }
+
+  static String? _header(http.Response response, String name) {
+    for (final entry in response.headers.entries) {
+      if (entry.key.toLowerCase() == name) return entry.value;
+    }
+    return null;
+  }
+
+  static bool _isChallenge(http.Response response) =>
+      _header(response, 'cf-mitigated')?.trim().toLowerCase() == 'challenge';
+
   Future<DiagnosticResultItem> testLkWeb() async {
     const target = DiagnosticTarget.lkWeb;
-    const label = 'LK官网网页 (Web)';
+    const label = 'LK 官网网页 (Web)';
     const url = 'https://www.lightnovel.fun/';
     final sw = Stopwatch()..start();
     try {
       final res = await _client.get(Uri.parse(url)).timeout(defaultTimeout);
       sw.stop();
-      if (res.statusCode >= 200 && res.statusCode < 400) {
-        return DiagnosticResultItem(
-          target: target,
-          label: label,
-          urlOrHost: url,
-          status: DiagnosticStatus.success,
-          statusCode: res.statusCode,
-          latencyMs: sw.elapsedMilliseconds,
-          detail: 'HTTP ${res.statusCode}',
-        );
-      } else {
-        return DiagnosticResultItem(
-          target: target,
-          label: label,
-          urlOrHost: url,
-          status: DiagnosticStatus.failed,
-          statusCode: res.statusCode,
-          latencyMs: sw.elapsedMilliseconds,
-          errorMessage: '网页返回状态码异常 (HTTP ${res.statusCode})',
-        );
-      }
+      final challenge = _isChallenge(res);
+      final ok = !challenge && res.statusCode >= 200 && res.statusCode < 400;
+      return DiagnosticResultItem(
+        target: target,
+        label: label,
+        urlOrHost: url,
+        status: ok ? DiagnosticStatus.success : DiagnosticStatus.failed,
+        statusCode: res.statusCode,
+        latencyMs: sw.elapsedMilliseconds,
+        detail: ok ? 'HTTP ${res.statusCode}' : null,
+        errorMessage: challenge
+            ? 'Cloudflare 验证挑战 (HTTP ${res.statusCode})'
+            : ok
+                ? null
+                : '网页返回状态码异常 (HTTP ${res.statusCode})',
+        cfRay: _safeRay(_header(res, 'cf-ray')),
+        cfCacheStatus: _safeCacheStatus(_header(res, 'cf-cache-status')),
+      );
     } catch (e) {
       sw.stop();
       return DiagnosticResultItem(
@@ -283,70 +328,61 @@ class NetworkDiagnosticService {
 
   Future<DiagnosticResultItem> testLkApi() async {
     const target = DiagnosticTarget.lkApi;
-    const label = 'LK数据接口 (API)';
+    const label = 'LK 数据接口 (API)';
     const url = 'https://www.lightnovel.fun/api/pc-proxy/api/bff/home-promo-v1';
     final sw = Stopwatch()..start();
     try {
       final res = await _client
           .post(
             Uri.parse(url),
-            headers: {'Content-Type': 'application/json; charset=utf-8'},
+            headers: LKClient.publicReadOnlyHeaders(),
             body: jsonEncode({'page': 1, 'pageSize': 8}),
           )
           .timeout(defaultTimeout);
       sw.stop();
-      if (res.statusCode == 200) {
-        try {
-          final decoded = jsonDecode(res.body);
-          if (decoded is Map && decoded['code'] == 0) {
-            return DiagnosticResultItem(
-              target: target,
-              label: label,
-              urlOrHost: url,
-              status: DiagnosticStatus.success,
-              statusCode: 200,
-              latencyMs: sw.elapsedMilliseconds,
-              detail: 'API 正常 (code: 0)',
-            );
-          } else {
-            final code = decoded is Map ? decoded['code'] : 'format error';
-            final msg = decoded is Map
-                ? (decoded['message'] ?? decoded['msg'] ?? '')
-                : '';
-            final msgStr = msg.toString().trim();
-            return DiagnosticResultItem(
-              target: target,
-              label: label,
-              urlOrHost: url,
-              status: DiagnosticStatus.failed,
-              statusCode: 200,
-              latencyMs: sw.elapsedMilliseconds,
-              errorMessage:
-                  '业务错误返回 (code: $code${msgStr.isNotEmpty ? ' $msgStr' : ''})',
-            );
-          }
-        } catch (_) {
-          return DiagnosticResultItem(
-            target: target,
-            label: label,
-            urlOrHost: url,
-            status: DiagnosticStatus.failed,
-            statusCode: 200,
-            latencyMs: sw.elapsedMilliseconds,
-            errorMessage: '响应非合法 JSON 格式',
-          );
-        }
+      String? error;
+      String? detail;
+      if (_isChallenge(res)) {
+        error = 'Cloudflare 验证挑战 (HTTP ${res.statusCode})';
+      } else if (res.statusCode != 200) {
+        error = '接口返回错误 HTTP ${res.statusCode}';
       } else {
-        return DiagnosticResultItem(
-          target: target,
-          label: label,
-          urlOrHost: url,
-          status: DiagnosticStatus.failed,
-          statusCode: res.statusCode,
-          latencyMs: sw.elapsedMilliseconds,
-          errorMessage: '接口返回错误 HTTP ${res.statusCode}',
-        );
+        Object? decoded;
+        var parsed = false;
+        try {
+          decoded = jsonDecode(utf8.decode(res.bodyBytes));
+          parsed = true;
+        } catch (_) {
+          // 响应正文不可用于错误信息。
+        }
+        if (!parsed) {
+          error = '响应非合法 JSON 格式';
+        } else if (decoded is! Map) {
+          error = 'API 响应格式错误';
+        } else {
+          final code = _safeBusinessCode(decoded['code']);
+          if (code == '0') {
+            detail = 'API 正常 (code: 0)';
+          } else if (code != null) {
+            error = '业务错误返回 (code: $code)';
+          } else {
+            error = 'API 业务码无效';
+          }
+        }
       }
+      return DiagnosticResultItem(
+        target: target,
+        label: label,
+        urlOrHost: url,
+        status:
+            error == null ? DiagnosticStatus.success : DiagnosticStatus.failed,
+        statusCode: res.statusCode,
+        latencyMs: sw.elapsedMilliseconds,
+        errorMessage: error,
+        detail: detail,
+        cfRay: _safeRay(_header(res, 'cf-ray')),
+        cfCacheStatus: _safeCacheStatus(_header(res, 'cf-cache-status')),
+      );
     } catch (e) {
       sw.stop();
       return DiagnosticResultItem(
@@ -359,15 +395,20 @@ class NetworkDiagnosticService {
     }
   }
 
-  static String _formatError(Object error) {
-    if (error is TimeoutException) {
-      return '连接或等待超时 (Timeout)';
+  static String? _safeBusinessCode(Object? value) {
+    // 限定整数及十进制数字字符串；避免将任意服务端内容带入报告。
+    if (value is int && value >= 0 && value <= 999999999) {
+      return value.toString();
     }
-    final str = error.toString();
-    if (error is HandshakeException ||
-        str.contains('Certificate') ||
-        str.contains('Handshake') ||
-        str.contains('CERTIFICATE_VERIFY_FAILED')) {
+    if (value is String && _matchesExactly(r'(0|[1-9][0-9]{0,8})', value)) {
+      return value;
+    }
+    return null;
+  }
+
+  static String _formatError(Object error) {
+    if (error is TimeoutException) return '连接或等待超时 (Timeout)';
+    if (error is HandshakeException || error is TlsException) {
       return 'SSL/TLS 证书校验或握手失败';
     }
     if (error is SocketException) {
@@ -386,15 +427,49 @@ class NetworkDiagnosticService {
       if (msg.contains('connection reset') || msg.contains('broken pipe')) {
         return '连接被重置 (Connection reset by peer)';
       }
-      return '网络套接字错误 (${error.message})';
+      return '网络套接字错误';
     }
-    return str.replaceAll('Exception: ', '').trim();
+    return '连接或请求失败';
+  }
+
+  static String? _safeReportMessage(String? value) {
+    if (value == null) return null;
+    const fixed = {
+      '未能解析到有效 IP 地址记录',
+      '连接或等待超时 (Timeout)',
+      'SSL/TLS 证书校验或握手失败',
+      'DNS 域名解析失败 (Host lookup failed)',
+      '服务器拒绝连接 (Connection refused)',
+      '网络不可达 (Network unreachable)',
+      '连接被重置 (Connection reset by peer)',
+      '网络套接字错误',
+      '连接或请求失败',
+      '响应非合法 JSON 格式',
+      'API 响应格式错误',
+      'API 业务码无效',
+      'API 正常 (code: 0)',
+    };
+    if (fixed.contains(value)) return value;
+    const patterns = [
+      r'^解析成功 \(返回 [0-9]{1,9} 个地址记录\)$',
+      r'^HTTP [1-5][0-9]{2}$',
+      r'^响应状态码异常 \(HTTP [1-5][0-9]{2}\)$',
+      r'^未确认国际网络连通性 \(HTTP [1-5][0-9]{2}\)$',
+      r'^网页返回状态码异常 \(HTTP [1-5][0-9]{2}\)$',
+      r'^Cloudflare 验证挑战 \(HTTP [1-5][0-9]{2}\)$',
+      r'^接口返回错误 HTTP [1-5][0-9]{2}$',
+      r'^业务错误返回 \(code: (0|[1-9][0-9]{0,8})\)$',
+    ];
+    return patterns.any((pattern) => _matchesExactly(pattern, value))
+        ? value
+        : null;
   }
 
   static DiagnosticSummary evaluateSummary({
     required Map<DiagnosticTarget, DiagnosticResultItem> results,
     required String appVersion,
     required String platformDescription,
+    bool includeRayId = false,
   }) {
     final dns = results[DiagnosticTarget.dns];
     final baidu = results[DiagnosticTarget.baidu];
@@ -414,38 +489,40 @@ class NetworkDiagnosticService {
     String title;
     String suggestion;
 
-    if (isLkApiOk && isLkWebOk) {
-      if (isGoogleOk) {
-        title = '网络连接良好，LK服务畅通';
-        suggestion = '国内网络、国际网络与LK网站及 API 接口均可正常访问。';
-      } else {
-        title = 'LK服务连接正常';
-        suggestion = '国内网络与LK服务均正常。当前未连接国际网络（若未开启海外代理属正常现象）。';
-      }
+    final allCompleted = DiagnosticTarget.values.every((target) {
+      final status = results[target]?.status;
+      return status == DiagnosticStatus.success ||
+          status == DiagnosticStatus.failed;
+    });
+
+    if (allPassed) {
+      title = '网络连接良好，LK服务畅通';
+      suggestion = '本次各检测目标均返回预期结果。';
+    } else if (!allCompleted) {
+      title = '网络诊断尚未完成';
+      suggestion = '部分目标尚未完成检测，请参考已完成项目的结果。';
+    } else if (isLkApiOk && isLkWebOk) {
+      title = 'LK 服务连接正常';
+      suggestion = 'LK 网页与 API 本次检测通过；其他目标请查看各自结果。'
+          'Google 未返回预期结果时，国际网络连通性尚未确认。';
     } else if (isLkWebOk && !isLkApiOk) {
       title = '官网网页正常，但 API 接口连接失败';
-      suggestion = 'LK网页可以正常打开，但 App 数据接口（API）连接失败。这通常由以下原因造成：\n'
-          '1. VPN / 代理分流规则未包含 API 域名网关（pc-proxy）；\n'
-          '2. 节点或网络服务商拦截了接口数据包；\n'
-          '3. 接口服务器临时出现波动或针对当前 IP 限制。\n'
-          '建议排查：尝试完全断开并关闭 VPN 后重新测试；若必须使用 VPN，请将代理模式切换为「全局/全部代理」或尝试更换手机热点。';
+      suggestion = '网页与 API 使用同一域名，pc-proxy 是接口路径而非独立域名。'
+          '本次 API 检测未通过，原因尚未确定；可检查 VPN / 代理分流规则，'
+          '切换网络或稍后重试，并参考具体检测结果。';
+    } else if (isBaiduOk && !isLkWebOk && !isLkApiOk && !isDnsOk) {
+      title = 'Baidu 检测通过，LK 域名解析未通过';
+      suggestion = '请检查 DNS 设置或切换网络后重试；具体原因尚未确定。';
     } else if (isBaiduOk && !isLkWebOk && !isLkApiOk) {
-      if (!isDnsOk) {
-        title = '国内网络正常，但LK域名解析失败';
-        suggestion =
-            '国内基础网络正常，但无法解析LK服务器域名（DNS 失败）。建议检查当前 Wi-Fi 的 DNS 设置（尝试手动修改为公共 DNS，如 223.5.5.5 或 119.29.29.29），或切换为手机热点重试。';
-      } else {
-        title = '国内网络正常，但无法连接LK';
-        suggestion =
-            '国内基础网络连接正常，但无法连通LK服务器。可能LK服务器正在维护，或当前网络节点到LK机房路由受阻。建议稍后重试，或尝试切换网络线路。';
-      }
+      title = 'Baidu 检测通过，LK 检测未通过';
+      suggestion = '可稍后重试或切换网络，并参考各项错误信息；具体原因尚未确定。';
     } else if (!isBaiduOk && !isGoogleOk && !isLkWebOk && !isLkApiOk) {
-      title = '设备未连接互联网或网络完全受阻';
-      suggestion =
-          '所有目标站点均无法连接。请检查设备是否已开启飞行模式、Wi-Fi / 移动数据是否已连接，以及系统是否禁止了 Yomiru 的无线局域网与蜂窝数据访问权限。';
+      title = '多个网络目标未通过检测';
+      suggestion = '本次检测未确认这些目标的连通性。请检查网络连接及应用联网权限，'
+          '或切换网络后重试。';
     } else {
-      title = '部分网络节点连接异常';
-      suggestion = '部分目标站点连接失败，请根据下方详细诊断条目排查具体网络环节。';
+      title = '部分网络目标未通过检测';
+      suggestion = '请根据下方各项检测结果排查，或切换网络后重试。';
     }
 
     final now = DateTime.now();
@@ -456,15 +533,51 @@ class NetworkDiagnosticService {
     final report = StringBuffer();
     report.writeln('Yomiru 网络诊断报告');
     report.writeln('- 测试时间：$timeStr');
-    report.writeln('- 应用版本：$appVersion');
-    report.writeln('- 设备平台：$platformDescription');
+    final versionAllowed = _matchesExactly(
+        r'[0-9]{1,6}(?:\.[0-9]{1,6}){0,3}(?:\+[0-9]{1,10})?', appVersion);
+    final resemblesIpv4 =
+        _matchesExactly(r'[0-9]{1,3}(?:\.[0-9]{1,3}){3}', appVersion);
+    final safeVersion = versionAllowed && !resemblesIpv4 ? appVersion : '未知';
+    const platforms = {
+      'android',
+      'iOS',
+      'ios',
+      'macOS',
+      'macos',
+      'windows',
+      'linux',
+      'fuchsia'
+    };
+    final safePlatform =
+        platforms.contains(platformDescription) ? platformDescription : '未知';
+    report.writeln('- 应用版本：$safeVersion');
+    report.writeln('- 设备平台：$safePlatform');
     report.writeln();
     report.writeln('测试详情：');
-    for (final item in results.values) {
-      final statusStr = item.status == DiagnosticStatus.success
-          ? '成功 (${item.detail ?? 'HTTP ${item.statusCode}'}, ${item.latencyMs}ms)'
-          : '失败 (${item.errorMessage ?? '错误'})';
-      report.writeln('• ${item.label}：$statusStr');
+    final labels = {for (final item in initialItems()) item.target: item.label};
+    for (final entry in results.entries) {
+      final item = entry.value;
+      final statusStr = switch (item.status) {
+        DiagnosticStatus.success => '成功',
+        DiagnosticStatus.failed => '失败',
+        DiagnosticStatus.running => '检测中',
+        DiagnosticStatus.idle => '未检测',
+      };
+      final message = _safeReportMessage(item.status == DiagnosticStatus.success
+          ? item.detail
+          : item.errorMessage);
+      final parts = <String>[statusStr];
+      if (message != null) parts.add(message);
+      if (item.latencyMs != null &&
+          item.latencyMs! >= 0 &&
+          item.latencyMs! <= 86400000) {
+        parts.add('${item.latencyMs}ms');
+      }
+      final cache = _safeCacheStatus(item.cfCacheStatus);
+      if (cache != null) parts.add('cf-cache-status: $cache');
+      final ray = _safeRay(item.cfRay);
+      if (includeRayId && ray != null) parts.add('cf-ray: $ray');
+      report.writeln('• ${labels[entry.key]}：${parts.join('，')}');
     }
     report.writeln();
     report.writeln('诊断结论：【$title】');

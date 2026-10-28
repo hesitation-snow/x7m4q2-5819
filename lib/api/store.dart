@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -47,18 +48,18 @@ class GlassConfiguration {
 
   static const defaults = GlassConfiguration._(
     3,
-    .5,
+    .7,
     .25,
     .74,
     252,
-    59,
+    60,
     18,
     false,
   );
 
   static const tabletDefaults = GlassConfiguration._(
     3,
-    .5,
+    .7,
     .25,
     .74,
     360,
@@ -67,8 +68,15 @@ class GlassConfiguration {
     false,
   );
 
-  static GlassConfiguration defaultsFor(Size size) =>
-      size.shortestSide >= 600 ? tabletDefaults : defaults;
+  static GlassConfiguration defaultsFor(Size size) {
+    final base = size.shortestSide >= 600 ? tabletDefaults : defaults;
+    final preferredWidth =
+        size.shortestSide >= 600 ? 360.0 : math.min(size.width * .78, 320.0);
+    return base.copyWith(
+      barWidth: math.min(preferredWidth, math.max(0.0, size.width - 32)),
+      barHeight: 60,
+    );
+  }
 
   final double blur, tint, refraction, highlight;
   final double barWidth, barHeight, floatingHeight;
@@ -79,11 +87,11 @@ class GlassConfiguration {
 
   factory GlassConfiguration({
     Object? blur = 3,
-    Object? tint = .5,
+    Object? tint = .7,
     Object? refraction = .25,
     Object? highlight = .74,
     Object? barWidth = 252,
-    Object? barHeight = 59,
+    Object? barHeight = 60,
     Object? floatingHeight = 18,
     Object? keepVisibleOnScroll = false,
   }) =>
@@ -92,7 +100,7 @@ class GlassConfiguration {
         _v(tint, defaults.tint, 1),
         _v(refraction, defaults.refraction, .25),
         _v(highlight, defaults.highlight, 1),
-        _v(barWidth, defaults.barWidth, 360).clamp(220.0, 360.0).toDouble(),
+        _v(barWidth, defaults.barWidth, 360),
         _v(barHeight, defaults.barHeight, 72).clamp(40.0, 72.0).toDouble(),
         _v(floatingHeight, defaults.floatingHeight, 48),
         keepVisibleOnScroll is bool ? keepVisibleOnScroll : false,
@@ -195,6 +203,38 @@ class LKStore {
               ? c.keepVisibleOnScroll
               : d.keepVisibleOnScroll,
     );
+  }
+
+  /// Fill each missing dimension once, after a real viewport is available.
+  /// Queue these writes before notifying listeners so a subsequent user edit or
+  /// reset is always persisted after the generated values.
+  static Future<void> ensureGlassDimensions(Size size) {
+    if (!size.width.isFinite ||
+        !size.height.isFinite ||
+        size.width <= 0 ||
+        size.height <= 0) {
+      return _glassSaveQueue;
+    }
+    final missingWidth = !_savedGlassKeys.contains('glass_bar_width');
+    final missingHeight = !_savedGlassKeys.contains('glass_bar_height');
+    if (!missingWidth && !missingHeight) return _glassSaveQueue;
+    final defaults = GlassConfiguration.defaultsFor(size);
+    final current = glassConfiguration.value;
+    final next = current.copyWith(
+      barWidth: missingWidth ? defaults.barWidth : current.barWidth,
+      barHeight: missingHeight ? defaults.barHeight : current.barHeight,
+    );
+    if (missingWidth) _savedGlassKeys.add('glass_bar_width');
+    if (missingHeight) _savedGlassKeys.add('glass_bar_height');
+    final write = _glassSaveQueue = _glassSaveQueue.then((_) async {
+      final p = await SharedPreferences.getInstance();
+      if (missingWidth) await p.setDouble('glass_bar_width', next.barWidth);
+      if (missingHeight) await p.setDouble('glass_bar_height', next.barHeight);
+    }).catchError((Object error) {
+      debugPrint('Glass dimensions save failed: $error');
+    });
+    glassConfiguration.value = next;
+    return write;
   }
 
   static Timer? _glassSaveTimer;
@@ -1114,7 +1154,7 @@ class ReaderPrefs {
       bgPreset: prefs.getInt('r_bg') ?? -1,
       bgFollowSystem: prefs.getBool('r_bg_sys') ?? false,
       keepScreenOn: prefs.getBool('r_keep_on') ?? false,
-      hideStatusBar: prefs.getBool('r_hide_bar') ?? false,
+      hideStatusBar: prefs.getBool('r_hide_bar') ?? true,
       tapTurnPage: prefs.getBool('r_tap_turn') ?? false,
       volumeTurnPage: prefs.getBool('r_vol_turn') ?? false,
       showIndicators: prefs.getBool('r_ind') ?? true,
@@ -1200,7 +1240,7 @@ class ReaderPrefs {
       (await _p()).setBool('r_keep_on', v);
 
   static Future<bool> hideStatusBar() async =>
-      (await _p()).getBool('r_hide_bar') ?? false;
+      (await _p()).getBool('r_hide_bar') ?? true;
   static Future<void> setHideStatusBar(bool v) async =>
       (await _p()).setBool('r_hide_bar', v);
 

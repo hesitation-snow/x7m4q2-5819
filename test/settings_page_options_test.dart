@@ -279,10 +279,12 @@ void main() {
 
     final glassTile = find.byKey(const ValueKey('settings-liquid-glass-tile'));
     await tester.ensureVisible(glassTile);
-    await tester.tap(find.text('液态玻璃底栏 (测试)'));
+    expect(find.text('调整悬浮底栏的玻璃效果并实时预览'), findsOneWidget);
+    await tester.tap(find.text('悬浮底栏'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('液态玻璃'), findsOneWidget);
+    expect(find.text('悬浮底栏'), findsOneWidget);
+    expect(find.text('调整悬浮底栏的玻璃效果会自动保存为自定义参数；重置会保存当前设备的默认参数。'), findsOneWidget);
     expect(find.byKey(const ValueKey('glass-controls')), findsOneWidget);
     expect(find.byKey(const ValueKey('glass-keep-visible-on-scroll')),
         findsOneWidget);

@@ -1209,67 +1209,78 @@ class _MessagesPageState extends State<_MessagesPageBody>
                     ? Icon(Icons.person_outline, color: scheme.onSurfaceVariant)
                     : null,
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 14),
               Expanded(
-                  flex: 3,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        conversation.peerName.isEmpty
-                            ? '用户 ${conversation.peerUid}'
-                            : conversation.peerName,
-                        style: Theme.of(context).textTheme.titleSmall,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          conversation.lastMessage.isEmpty
-                              ? '暂无消息内容'
-                              : conversation.lastMessage,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(color: scheme.onSurfaceVariant),
-                        ),
-                      ),
-                    ],
-                  )),
-              const SizedBox(width: 8),
-              Flexible(
-                  flex: 2,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      if (conversation.updatedAt.isNotEmpty)
-                        Text(
-                          _formatTime(conversation.updatedAt),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelSmall
-                              ?.copyWith(color: scheme.onSurfaceVariant),
-                        ),
-                      if (conversation.unread > 0) ...[
-                        const SizedBox(height: 4),
-                        Badge(
-                          label: Text(
-                            conversation.unread > 99
-                                ? '99+'
-                                : '${conversation.unread}',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    LayoutBuilder(builder: (context, constraints) {
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              conversation.peerName.isEmpty
+                                  ? '用户 ${conversation.peerUid}'
+                                  : conversation.peerName,
+                              style: Theme.of(context).textTheme.titleSmall,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (conversation.updatedAt.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                  maxWidth: constraints.maxWidth * .5),
+                              child: Text(
+                                _formatTime(conversation.updatedAt),
+                                textScaler: MediaQuery.textScalerOf(context)
+                                    .clamp(maxScaleFactor: 1.4),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.end,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(color: scheme.onSurfaceVariant),
+                              ),
+                            ),
+                          ],
+                        ],
+                      );
+                    }),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            conversation.lastMessage.isEmpty
+                                ? '暂无消息内容'
+                                : conversation.lastMessage,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: scheme.onSurfaceVariant),
                           ),
                         ),
+                        if (conversation.unread > 0) ...[
+                          const SizedBox(width: 8),
+                          Badge(
+                            label: Text(
+                              conversation.unread > 99
+                                  ? '99+'
+                                  : '${conversation.unread}',
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
-                  )),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),

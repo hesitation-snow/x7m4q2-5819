@@ -2198,6 +2198,9 @@ class LKDynamicItem {
   final int commentCount;
   final int favoriteCount;
   final bool liked;
+
+  /// Whether interaction_state explicitly contained a viewer like value.
+  final bool hasLikedState;
   final bool favorited;
   final bool read;
   final String time;
@@ -2238,6 +2241,7 @@ class LKDynamicItem {
     this.commentCount = 0,
     this.favoriteCount = 0,
     this.liked = false,
+    this.hasLikedState = false,
     this.favorited = false,
     this.read = false,
     this.time = '',
@@ -2314,6 +2318,8 @@ class LKDynamicItem {
       favoriteCount: _jsonInt(
           stats['favorite_count'] ?? stats['favorites'] ?? j['favorite_count']),
       liked: _jsonFlag(ist['liked']),
+      hasLikedState: const [true, false, 1, 0, '1', '0', 'true', 'false']
+          .contains(ist['liked']),
       favorited: _jsonFlag(ist['favorited']),
       read: _jsonFlag(ist['read'] ?? j['read'] ?? j['is_read']),
       time: (j['feed_time'] ??

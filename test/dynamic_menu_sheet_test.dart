@@ -42,7 +42,14 @@ void main() {
                   ],
                   'has_more': false
                 }
-              : <String, dynamic>{};
+              : request.url.path.endsWith('get-detail-v1')
+                  ? {
+                      'dynamic': {
+                        'dynamic_id': 17,
+                        'interaction_state': {'liked': true}
+                      }
+                    }
+                  : <String, dynamic>{};
           return http.Response(jsonEncode({'code': 0, 'data': data}), 200,
               headers: {'content-type': 'application/json; charset=utf-8'});
         }));

@@ -17,13 +17,23 @@ void main() {
   test('device presets and partial legacy preferences do not overwrite data',
       () async {
     final prefs = await SharedPreferences.getInstance();
-    for (final size in [const Size(390, 844), const Size(844, 390)]) {
-      final c = LKStore.glassConfigurationFor(size);
-      expect([c.tint, c.barWidth, c.barHeight], [.5, 252, 59]);
-    }
+    final phonePortrait = LKStore.glassConfigurationFor(const Size(390, 844));
+    expect(phonePortrait.tint, .7);
+    expect(phonePortrait.barWidth, closeTo(304.2, .01));
+    expect(phonePortrait.barHeight, 60);
+    final phoneLandscape = LKStore.glassConfigurationFor(const Size(844, 390));
+    expect([
+      phoneLandscape.tint,
+      phoneLandscape.barWidth,
+      phoneLandscape.barHeight
+    ], [
+      .7,
+      320,
+      60
+    ]);
     for (final size in [const Size(768, 1024), const Size(1024, 768)]) {
       final c = LKStore.glassConfigurationFor(size);
-      expect([c.tint, c.barWidth, c.barHeight], [.5, 360, 60]);
+      expect([c.tint, c.barWidth, c.barHeight], [.7, 360, 60]);
     }
     await LKStore.flushGlassConfiguration();
     expect(prefs.getKeys(), isEmpty);
@@ -33,7 +43,7 @@ void main() {
     final tablet = LKStore.glassConfigurationFor(const Size(1024, 768));
     expect([tablet.tint, tablet.barWidth, tablet.barHeight], [.09, 277, 60]);
     final phone = LKStore.glassConfigurationFor(const Size(844, 390));
-    expect([phone.tint, phone.barWidth, phone.barHeight], [.09, 277, 59]);
+    expect([phone.tint, phone.barWidth, phone.barHeight], [.09, 277, 60]);
     await LKStore.flushGlassConfiguration();
     expect(prefs.containsKey('glass_bar_height'), isFalse);
   });
@@ -108,13 +118,13 @@ void main() {
               .toString(),
           contains('8.0'));
     }
-    await tester.scrollUntilVisible(find.text('重置玻璃默认参数'), 300,
+    await tester.scrollUntilVisible(find.text('重置悬浮底栏默认参数'), 300,
         scrollable: find.byType(Scrollable).first);
     expect(
         tester.widget<Slider>(find.byKey(const ValueKey('折射强度'))).onChanged !=
             null,
         ui.ImageFilter.isShaderFilterSupported);
-    await tester.tap(find.text('重置玻璃默认参数'));
+    await tester.tap(find.text('重置悬浮底栏默认参数'));
     await tester.pump();
     expect(LKStore.glassConfiguration.value.blur, 3);
     LKStore.updateGlassConfiguration(GlassConfiguration(blur: 13));
@@ -130,8 +140,8 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(const MaterialApp(home: LiquidGlassLabPage()));
 
-    expect(find.textContaining('底栏宽度：252 dp'), findsOneWidget);
-    expect(find.textContaining('底栏高度：59 dp'), findsOneWidget);
+    expect(find.textContaining('底栏宽度：320 dp'), findsOneWidget);
+    expect(find.textContaining('底栏高度：60 dp'), findsOneWidget);
     expect(find.textContaining('悬浮高度：18 dp'), findsOneWidget);
     expect(tester.widget<Slider>(find.byKey(const ValueKey('底栏宽度'))).min, 220);
 
@@ -235,16 +245,16 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: LiquidGlassLabPage()));
     expect(tester.getSize(find.byKey(const ValueKey('liquid-glass-surface'))),
         const Size(360, 60));
-    expect(tester.widget<Slider>(find.byKey(const ValueKey('底色遮罩'))).value, .5);
+    expect(tester.widget<Slider>(find.byKey(const ValueKey('底色遮罩'))).value, .7);
     expect(
         tester.widget<Slider>(find.byKey(const ValueKey('底栏宽度'))).value, 360);
     tester.widget<Slider>(find.byKey(const ValueKey('底栏宽度'))).onChanged!(280);
     await tester.pump();
-    await tester.scrollUntilVisible(find.text('重置玻璃默认参数'), 300,
+    await tester.scrollUntilVisible(find.text('重置悬浮底栏默认参数'), 300,
         scrollable: find.byType(Scrollable).first);
     await tester.drag(find.byType(Scrollable).first, const Offset(0, -250));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('重置玻璃默认参数'));
+    await tester.tap(find.text('重置悬浮底栏默认参数'));
     await tester.pumpAndSettle();
     expect(tester.getSize(find.byKey(const ValueKey('liquid-glass-surface'))),
         const Size(360, 60));

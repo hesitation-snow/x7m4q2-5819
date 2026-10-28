@@ -50,6 +50,13 @@ void main() {
     await tester.tap(find.byTooltip('更多操作'));
     await tester.pumpAndSettle();
     expect(find.text('分享书籍'), findsOneWidget);
+    final shareItem = find.ancestor(
+        of: find.text('分享书籍'), matching: find.byType(PopupMenuItem<String>));
+    final exportItem = find.ancestor(
+        of: find.text('书籍导出'), matching: find.byType(PopupMenuItem<String>));
+    expect(tester.getSize(shareItem).width, lessThanOrEqualTo(200));
+    expect(tester.getSize(shareItem).height, greaterThanOrEqualTo(48));
+    expect(tester.getSize(exportItem).height, greaterThanOrEqualTo(48));
     const channel = MethodChannel('dev.fluttercommunity.plus/share');
     final calls = <MethodCall>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -70,6 +77,48 @@ void main() {
     await tester.tap(find.text('书籍导出'));
     await tester.pumpAndSettle();
     expect(find.byType(EpubMakerPage), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('book actions menu remains usable on a narrow large-text screen',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    LKStore.dataSaverMode.value = true;
+    LKStore.epubDownloadEnabled.value = true;
+    LKClient.shared.session
+      ..securityKey = 'test-session'
+      ..uid = 42;
+    addTearDown(() {
+      LKStore.dataSaverMode.value = false;
+      LKStore.epubDownloadEnabled.value = false;
+      LKClient.shared.session.clear();
+    });
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      final book = {'book_id': 42, 'title': '操作测试', 'summary': ''};
+      final data = request.url.path.endsWith('/reader-bootstrap-v1')
+          ? {'book': book}
+          : request.url.path.endsWith('/get-book-detail')
+              ? book
+              : {'list': []};
+      return http.Response(jsonEncode({'code': 0, 'data': data}), 200,
+          headers: {'content-type': 'application/json; charset=utf-8'});
+    }));
+    tester.view.physicalSize = const Size(280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context)
+            .copyWith(textScaler: const TextScaler.linear(2)),
+        child: child!,
+      ),
+      home: const BookDetailPage(bookId: 42),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    expect(find.text('分享书籍').hitTestable(), findsOneWidget);
+    expect(find.text('书籍导出').hitTestable(), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
   for (final brightness in Brightness.values) {

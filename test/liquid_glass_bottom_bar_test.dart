@@ -150,14 +150,14 @@ void main() {
     final key = GlobalKey<HarnessState>();
     await tester.pumpWidget(Harness(key: key, width: 220));
     await tester.pumpAndSettle();
-    expect(tester.getSize(surface).width, 220);
+    expect(tester.getSize(surface).width, 188);
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
     expect(key.currentState!.selected, 3);
-    expect(lens(tester).left! + lens(tester).width! / 2, closeTo(192.5, 0.01));
+    expect(lens(tester).left! + lens(tester).width! / 2, closeTo(164.5, 0.01));
     final rect = tester.getRect(surface);
     await tester.dragFrom(
-        Offset(rect.right - 20, rect.center.dy), const Offset(-135, 0));
+        Offset(rect.right - 20, rect.center.dy), const Offset(-95, 0));
     await tester.pumpAndSettle();
     expect(key.currentState!.selected, 1);
     expect(tester.takeException(), isNull);
@@ -369,7 +369,7 @@ void main() {
     key.currentState!.hide();
     await tester.pumpAndSettle();
     expect(surface, findsOneWidget);
-    expect(tester.getSize(surface), const Size(252, 59));
+    expect(tester.getSize(surface), const Size(252, 60));
 
     LKStore.glassConfiguration.value = GlassConfiguration.defaults;
     await tester.pumpAndSettle();

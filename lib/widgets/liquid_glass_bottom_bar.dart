@@ -272,6 +272,11 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Use the latest real viewport, without notifying listeners during build.
+    MediaQuery.sizeOf(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) LKStore.ensureGlassDimensions(MediaQuery.sizeOf(context));
+    });
     _reduceMotion = AppMotion.isDisabled(context);
     if (_reduceMotion) {
       _controller.stop();
@@ -419,7 +424,8 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
           offset: Offset(
               0, (1 - fraction) * (barHeight + optics.floatingHeight + 10)),
           child: SizedBox(
-            width: math.max(optics.barWidth, widget.destinations.length * 48.0),
+            width:
+                math.min(optics.barWidth, math.max(0.0, media.size.width - 32)),
             height: barHeight,
             child: LayoutBuilder(builder: (context, constraints) {
               final width = constraints.maxWidth;

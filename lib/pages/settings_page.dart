@@ -413,8 +413,8 @@ class _SettingsPageState extends State<SettingsPage> {
               builder: (context, enabled, _) => ListTile(
                 key: const ValueKey('settings-liquid-glass-tile'),
                 leading: _settingsIcon(context, Icons.blur_on_rounded),
-                title: const Text('液态玻璃底栏 (测试)'),
-                subtitle: const Text('点击调整详细设置与实时预览'),
+                title: const Text('悬浮底栏'),
+                subtitle: const Text('点击调整悬浮底栏详细设置'),
                 trailing: Switch(
                   key: const ValueKey('settings-liquid-glass-switch'),
                   value: enabled,

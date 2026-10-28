@@ -27,6 +27,7 @@ import 'settings_page.dart';
 import 'dynamic_page.dart';
 import 'follow_list_page.dart';
 import 'home_channel_picker.dart';
+import 'home_book_actions.dart';
 import 'login_page.dart';
 import 'medal_center_page.dart';
 import 'messages_page.dart';
@@ -1051,6 +1052,7 @@ class _FeedTabState extends State<FeedTab>
                 return BookCard(
                   book: book,
                   rank: _rankOf(i),
+                  onLongPress: () => showHomeBookActions(context, book),
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -1100,6 +1102,7 @@ class _FeedTabState extends State<FeedTab>
                   return BookGridCard(
                     book: book,
                     rank: _rankOf(i),
+                    onLongPress: () => showHomeBookActions(context, book),
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -1258,6 +1261,7 @@ class _HomeRecommendCard extends StatelessWidget {
                   width: itemWidth,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(9),
+                    onLongPress: () => showHomeBookActions(context, book),
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(

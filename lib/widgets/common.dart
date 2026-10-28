@@ -373,9 +373,14 @@ class _CoverImageState extends State<CoverImage> {
 class BookCard extends StatelessWidget {
   final LKBook book;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final int? rank;
   const BookCard(
-      {super.key, required this.book, required this.onTap, this.rank});
+      {super.key,
+      required this.book,
+      required this.onTap,
+      this.onLongPress,
+      this.rank});
 
   @override
   Widget build(BuildContext context) {
@@ -396,6 +401,7 @@ class BookCard extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(14),
             onTap: onTap,
+            onLongPress: onLongPress,
             child: Padding(
               padding: const EdgeInsets.all(10),
               child: Row(
@@ -432,9 +438,7 @@ class BookCard extends StatelessWidget {
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Text(
-                              book.authorName.isEmpty
-                                  ? '佚名'
-                                  : book.authorName,
+                              book.authorName.isEmpty ? '佚名' : book.authorName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -855,12 +859,14 @@ Future<void> showGridColumnsSheet(BuildContext context) async {
 class BookGridCard extends StatelessWidget {
   final LKBook book;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final int? rank;
   final bool isShelf;
   const BookGridCard({
     super.key,
     required this.book,
     required this.onTap,
+    this.onLongPress,
     this.rank,
     this.isShelf = false,
   });
@@ -907,6 +913,7 @@ class BookGridCard extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(isDense ? 8 : 12),
             onTap: onTap,
+            onLongPress: onLongPress,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

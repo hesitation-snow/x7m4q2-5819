@@ -957,13 +957,13 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                 position: PopupMenuPosition.under,
                                 offset: const Offset(0, 8),
                                 constraints: const BoxConstraints(
-                                    minWidth: 224, maxWidth: 288),
+                                    minWidth: 160, maxWidth: 200),
                                 menuPadding:
-                                    const EdgeInsets.symmetric(vertical: 8),
+                                    const EdgeInsets.symmetric(vertical: 4),
                                 color: scheme.surfaceContainer,
                                 surfaceTintColor: Colors.transparent,
                                 shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(20)),
+                                    borderRadius: BorderRadius.circular(16)),
                                 onSelected: (value) {
                                   if (value == 'share') {
                                     _shareBook(b);

@@ -162,7 +162,7 @@ void main() {
         platformDescription: 'iOS',
       );
 
-      expect(summary.title, contains('LK域名解析失败'));
+      expect(summary.title, contains('LK 域名解析未通过'));
       expect(summary.suggestion, contains('DNS 设置'));
     });
 
@@ -186,7 +186,7 @@ void main() {
       final lkApi = await service.testLkApi();
       expect(lkApi.status, DiagnosticStatus.failed);
       expect(lkApi.errorMessage, contains('code: 429'));
-      expect(lkApi.errorMessage, contains('请求过于频繁'));
+      expect(lkApi.errorMessage, isNot(contains('请求过于频繁')));
     });
   });
 
@@ -241,7 +241,7 @@ void main() {
       expect(find.text('网络连接诊断'), findsOneWidget);
       expect(find.text('开始网络诊断'), findsOneWidget);
       expect(find.text('国内网络连通性 (Baidu)'), findsOneWidget);
-      expect(find.text('LK数据接口 (API)'), findsOneWidget);
+      expect(find.text('LK 数据接口 (API)'), findsOneWidget);
       expect(find.text('LK域名解析 (DNS)'), findsOneWidget);
 
       // Start testing

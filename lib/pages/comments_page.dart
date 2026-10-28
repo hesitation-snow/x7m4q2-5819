@@ -52,6 +52,7 @@ class _CommentsPageState extends State<CommentsPage> {
   bool _hasMore = true;
   int _loadSerial = 0;
   final _input = TextEditingController();
+  final _inputBarKey = GlobalKey<_CommentsInputBarState>();
 
   /// 表情包(code → 图片地址),评论渲染与表情面板共用
   final Map<String, String> _emojiUrl = {};
@@ -941,6 +942,15 @@ class _CommentsPageState extends State<CommentsPage> {
 
   @override
   Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      // 只响应未被子控件处理的点击；滚动、长按和按钮手势仍由子控件处理。
+      onTap: () => _inputBarKey.currentState?._dismissInput(),
+      child: _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       // 键盘 inset 只由输入行处理:动画期间评论列表不重建,交互更流畅
       resizeToAvoidBottomInset: false,
@@ -1036,6 +1046,7 @@ class _CommentsPageState extends State<CommentsPage> {
                 ),
         ),
         _CommentsInputBar(
+          key: _inputBarKey,
           publishing: _publishing || _uploadingImage,
           controller: _input,
           emojiGroups: _emojiGroups,
@@ -1078,6 +1089,7 @@ class _CommentsInputBar extends StatefulWidget {
   final bool publishing;
 
   const _CommentsInputBar({
+    super.key,
     required this.controller,
     required this.emojiGroups,
     required this.isVolume,
@@ -1146,6 +1158,17 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
     final defaultH =
         (media.size.height * 0.40).clamp(minH, available).toDouble();
     return defaultH;
+  }
+
+  void _dismissInput() {
+    _transitionTimer?.cancel();
+    _focus.unfocus();
+    if (_showEmoji || _keyboardTransitioning) {
+      setState(() {
+        _showEmoji = false;
+        _keyboardTransitioning = false;
+      });
+    }
   }
 
   void _returnToKeyboard() {

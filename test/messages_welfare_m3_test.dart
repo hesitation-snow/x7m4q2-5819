@@ -133,4 +133,78 @@ void main() {
       });
     }
   }
+
+  testWidgets(
+      'conversation card aligns username and timestamp on top row and message on bottom row',
+      (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      if (request.url.path.contains('dm-conversations')) {
+        return http.Response.bytes(
+          utf8.encode(jsonEncode({
+            'code': 0,
+            'data': {
+              'list': [
+                {
+                  'peer_uid': 100,
+                  'peer_name': '测试用户',
+                  'last_message': '这是一条测试消息内容',
+                  'updated_at': '2026-10-25 04:22:00',
+                  'unread': 2,
+                },
+                {
+                  'peer_uid': 101,
+                  'peer_name': '已读用户',
+                  'last_message': '已读消息',
+                  'updated_at': '2026-10-24 04:22:00',
+                  'unread': 0,
+                },
+                {
+                  'peer_uid': 102,
+                  'peer_name': '未读较多',
+                  'last_message': '消息较多',
+                  'updated_at': '2026-10-23 04:22:00',
+                  'unread': 120,
+                },
+              ]
+            }
+          })),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      return http.Response('{"code":0,"data":{"list":[]}}', 200);
+    }));
+
+    await tester.pumpWidget(const MaterialApp(home: MessagesPage()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('私信').first);
+    await tester.pumpAndSettle();
+
+    final nameTop = tester.getTopLeft(find.text('测试用户')).dy;
+    final timeTop = tester.getTopLeft(find.textContaining('10-25')).dy;
+    expect((nameTop - timeTop).abs(), lessThan(5.0));
+
+    final msgTop = tester.getTopLeft(find.text('这是一条测试消息内容')).dy;
+    expect(msgTop, greaterThan(nameTop));
+
+    Finder cardFor(String name) =>
+        find.ancestor(of: find.text(name), matching: find.byType(Card)).first;
+    final firstCard = cardFor('测试用户');
+    final time =
+        find.descendant(of: firstCard, matching: find.textContaining('10-25'));
+    expect(tester.getRect(firstCard).right - tester.getRect(time).right,
+        closeTo(14, 1));
+    expect(find.descendant(of: firstCard, matching: find.text('2')),
+        findsOneWidget);
+    expect(find.descendant(of: cardFor('已读用户'), matching: find.byType(Badge)),
+        findsNothing);
+    expect(find.descendant(of: cardFor('未读较多'), matching: find.text('99+')),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -559,28 +559,31 @@ class _ShelfPageState extends State<ShelfPage> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-            child: Row(
-              children: [
-                if (widget.embedded) _shelfTitle(),
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: FittedBox(
-                      key: const ValueKey('shelf-toolbar-actions'),
-                      fit: BoxFit.scaleDown,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Row(
+                children: [
+                  if (widget.embedded) _shelfTitle(),
+                  Expanded(
+                    child: Align(
                       alignment: Alignment.centerRight,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _shelfSourceButton(),
-                          _shelfFilterButton(),
-                          _viewModeButton(),
-                        ],
+                      child: FittedBox(
+                        key: const ValueKey('shelf-toolbar-actions'),
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _shelfSourceButton(),
+                            _shelfFilterButton(),
+                            _viewModeButton(),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           Padding(
