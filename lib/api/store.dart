@@ -343,32 +343,45 @@ class LKStore {
   /// 已确认需勇者权限的小说 ID 缓存（内置预置 14162 标杆书籍）
   static final Set<int> _braveBookIds = {14162};
 
-  static final bool _braveCheckerHooked = () {
+  /// Positive-only display evidence. Existing list objects consult this set and
+  /// visible pages listen to its revision; unknown is never persisted as public.
+  static final ValueNotifier<int> braveBookRevision = ValueNotifier(0);
+  static Future<void> _braveBookWrites = Future<void>.value();
+  static int _braveBookWriteEpoch = 0;
+
+  static bool isBraveBook(int bookId) => _braveBookIds.contains(bookId);
+
+  static Future<void> markBookBrave(int bookId) => markBooksBrave([bookId]);
+
+  static Future<void> markBooksBrave(Iterable<int> bookIds) async {
+    var changed = false;
+    for (final id in bookIds) {
+      if (id > 0 && _braveBookIds.add(id)) changed = true;
+    }
     setBraveBookChecker(isBraveBook);
-    return true;
-  }();
-
-  static bool isBraveBook(int bookId) {
-    // Ensure static hook is triggered
-    assert(_braveCheckerHooked);
-    return _braveBookIds.contains(bookId);
-  }
-
-  static Future<void> markBookBrave(int bookId) async {
-    if (bookId <= 0 || _braveBookIds.contains(bookId)) return;
-    _braveBookIds.add(bookId);
-    final p = await SharedPreferences.getInstance();
-    await p.setStringList(
-      'known_brave_book_ids',
-      _braveBookIds.map((e) => e.toString()).toList(),
-    );
+    if (!changed) return;
+    braveBookRevision.value++;
+    final epoch = _braveBookWriteEpoch;
+    final write = _braveBookWrites.then((_) async {
+      if (epoch != _braveBookWriteEpoch) return;
+      final preferences = await SharedPreferences.getInstance();
+      if (epoch != _braveBookWriteEpoch) return;
+      await preferences.setStringList('known_brave_book_ids',
+          _braveBookIds.map((id) => id.toString()).toList(growable: false));
+    });
+    // Learning display metadata must never break a successful chapter request.
+    _braveBookWrites = write.catchError((Object _) {});
+    await _braveBookWrites;
   }
 
   @visibleForTesting
   static void resetBraveBookIdsForTesting([Set<int>? seed]) {
+    ++_braveBookWriteEpoch;
     _braveBookIds
       ..clear()
-      ..addAll(seed ?? {14162});
+      ..addAll((seed ?? {14162}).where((id) => id > 0));
+    setBraveBookChecker(isBraveBook);
+    braveBookRevision.value++;
   }
 
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
@@ -487,7 +500,12 @@ class LKStore {
     setBraveBookChecker(isBraveBook);
     final storedBraveIds = p.getStringList('known_brave_book_ids');
     if (storedBraveIds != null) {
-      _braveBookIds.addAll(storedBraveIds.map(int.tryParse).whereType<int>());
+      final before = _braveBookIds.length;
+      _braveBookIds.addAll(storedBraveIds
+          .map(int.tryParse)
+          .whereType<int>()
+          .where((id) => id > 0));
+      if (_braveBookIds.length != before) braveBookRevision.value++;
     }
     unawaited(LKClient.shared.trimResponseCache());
   }
@@ -873,6 +891,25 @@ class LKStore {
               },
       };
 
+  // The local shelf is intentionally device-wide, including for logged-in
+  // callers. Serialize its single key independently of account/session writes.
+  static Future<void>? _localShelfQueue;
+
+  static Future<T> _queueLocalShelf<T>(Future<T> Function() action) {
+    final previous = _localShelfQueue;
+    final done = Completer<void>();
+    _localShelfQueue = done.future;
+    return () async {
+      if (previous != null) await previous;
+      try {
+        return await action();
+      } finally {
+        if (identical(_localShelfQueue, done.future)) _localShelfQueue = null;
+        done.complete();
+      }
+    }();
+  }
+
   /// 未登录时使用的本地书架,只保存公开的书籍展示字段。
   static Future<List<LKBook>> localShelf() async {
     final raw =
@@ -897,16 +934,18 @@ class LKStore {
     return books.any((book) => book.bookId == bookId);
   }
 
-  static Future<void> setLocalShelf(LKBook book, bool added) async {
-    if (book.bookId <= 0) return;
-    // localShelf() 在空数据时可能返回 const [],这里必须复制为可变列表。
-    final books = (await localShelf()).toList();
-    books.removeWhere((item) => item.bookId == book.bookId);
-    if (added) books.insert(0, book);
-    final saved = await (await SharedPreferences.getInstance()).setString(
-        _localShelfKey, jsonEncode(books.map((e) => e.toJson()).toList()));
-    if (!saved) throw StateError('本机书架保存失败');
-    localShelfRev.value++;
+  static Future<void> setLocalShelf(LKBook book, bool added) {
+    if (book.bookId <= 0) return Future<void>.value();
+    return _queueLocalShelf(() async {
+      // 空数据时可能返回 const [],这里必须复制为可变列表。
+      final books = (await localShelf()).toList();
+      books.removeWhere((item) => item.bookId == book.bookId);
+      if (added) books.insert(0, book);
+      final saved = await (await SharedPreferences.getInstance()).setString(
+          _localShelfKey, jsonEncode(books.map((e) => e.toJson()).toList()));
+      if (!saved) throw StateError('本机书架保存失败');
+      localShelfRev.value++;
+    });
   }
 
   /// 读取当前账号上次成功获取的个人资料；null 表示尚未缓存或缓存已损坏。
@@ -935,6 +974,8 @@ class LKStore {
       'signature': profile.signature,
       'level_name': profile.levelName,
       'level': profile.level,
+      'exp': profile.exp,
+      'next_exp': profile.nextExp,
       'coin': profile.coin,
       'isBrave': profile.isBrave,
       'followers': profile.followersCount,

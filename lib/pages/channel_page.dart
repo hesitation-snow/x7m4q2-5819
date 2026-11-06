@@ -31,6 +31,7 @@ class _ChannelPageState extends State<ChannelPage> {
   void initState() {
     super.initState();
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
+    LKStore.braveBookRevision.addListener(_onHideBraveRev);
     _loadPrefs();
     _load(1, false);
   }
@@ -38,6 +39,7 @@ class _ChannelPageState extends State<ChannelPage> {
   @override
   void dispose() {
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     super.dispose();
   }
 
@@ -219,6 +221,7 @@ class _RankPageState extends State<RankPage> {
   void initState() {
     super.initState();
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
+    LKStore.braveBookRevision.addListener(_onHideBraveRev);
     _loadPrefs();
     _load();
   }
@@ -226,6 +229,7 @@ class _RankPageState extends State<RankPage> {
   @override
   void dispose() {
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     super.dispose();
   }
 

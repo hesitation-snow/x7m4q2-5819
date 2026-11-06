@@ -1,0 +1,34 @@
+{
+  "source": "https://www.lightnovel.fun/reader/33172",
+  "note": "Anonymous catalog metadata only; no chapter body. The volume page was observed with pageSize=3, the chapter page with pageSize=50.",
+  "book": {
+    "book_id": 33172,
+    "volume_count": 1,
+    "chapter_count": 13,
+    "default_volume_id": 50815,
+    "display_badge_code": "",
+    "read_state": {"is_readable": 1, "reason_code": "ok", "default_chapter_id": 323918, "published_chapter_count": 13}
+  },
+  "volumes": {
+    "list": [{"volume_id": 50815, "title": "01(9/29 完)", "chapter_count": 13, "first_chapter_id": 323918, "last_chapter_id": 324146}],
+    "pagination": {"page": 1, "page_size": 3, "total": 1, "page_count": 1}
+  },
+  "chapters": {
+    "list": [
+      {"chapter_id": 323918, "chapter_no": 1, "title": "翻譯信息+下載", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 323926, "chapter_no": 2, "title": "序章", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 323927, "chapter_no": 3, "title": "第一章　美容魔法", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 323928, "chapter_no": 4, "title": "第二章　冒險者", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 323965, "chapter_no": 5, "title": "第三章　被流放的精靈", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 323966, "chapter_no": 6, "title": "第四章　悲劇的兩人", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 324014, "chapter_no": 7, "title": "第五章　前往亞爾特雷克", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 324015, "chapter_no": 8, "title": "第六章　夜襲", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 324016, "chapter_no": 9, "title": "第七章　襲擊", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 324017, "chapter_no": 10, "title": "第八章　雫的覺悟", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 324018, "chapter_no": 11, "title": "第九章　難忘之夜", "access_type": "brave", "brave_required": 1, "locked": 1, "unlocked": 0},
+      {"chapter_id": 324019, "chapter_no": 12, "title": "後記", "access_type": "public", "brave_required": 0, "locked": 0, "unlocked": 1},
+      {"chapter_id": 324146, "chapter_no": 13, "title": "人物設計", "access_type": "brave", "brave_required": 1, "locked": 1, "unlocked": 0}
+    ],
+    "pagination": {"page": 1, "page_size": 50, "total": 13, "page_count": 1}
+  }
+}

@@ -182,29 +182,45 @@ class LKApi {
     if (list == null) {
       throw LKException(-1, '接口未返回列表(字段: ${d.keys.join(', ')})');
     }
-    return (list as List)
+    final books = (list as List)
         .map((e) => LKBook.fromJson(e as Map<String, dynamic>))
         .toList();
+    unawaited(LKStore.markBooksBrave(
+        books.where((book) => book.isBrave).map((book) => book.bookId)));
+    return books;
   }
 
   // ==================== 阅读 ====================
 
   static Future<LKBook> bookDetail(int bookId,
-          {bool forceRefresh = false}) async =>
-      LKBook.fromJson(await client.post('/api/new-content-read/get-book-detail',
-          client.authed({'book_id': bookId, 'with_volumes': 0}),
-          cacheKey: 'book_detail_${client.session.uid}-$bookId',
-          forceRefresh: forceRefresh));
+      {bool forceRefresh = false,
+      bool forAccessVerification = false,
+      Duration requestTimeout = const Duration(seconds: 30)}) async {
+    final book = LKBook.fromJson(await client.post(
+        '/api/new-content-read/get-book-detail',
+        client.authed({'book_id': bookId, 'with_volumes': 0}),
+        cacheKey:
+            '${forAccessVerification ? 'access_book_detail' : 'book_detail'}_${client.session.uid}-$bookId',
+        forceRefresh: forceRefresh,
+        requestTimeout: requestTimeout));
+    if (!forAccessVerification && book.isBrave) {
+      unawaited(LKStore.markBookBrave(book.bookId > 0 ? book.bookId : bookId));
+    }
+    return book;
+  }
 
-  static Future<LKReaderBootstrap> readerBootstrap(int bookId) async =>
-      LKReaderBootstrap.fromJson(await client.post(
-        '/api/bff/reader-bootstrap-v1',
-        client.authed({'book_id': bookId}),
-        requestTimeout: const Duration(seconds: 20),
-      ));
+  static Future<LKReaderBootstrap> readerBootstrap(int bookId) async {
+    final bootstrap = LKReaderBootstrap.fromJson(await client.post(
+        '/api/bff/reader-bootstrap-v1', client.authed({'book_id': bookId}),
+        requestTimeout: const Duration(seconds: 20)));
+    if (bootstrap.book.isBrave) unawaited(LKStore.markBookBrave(bookId));
+    return bootstrap;
+  }
 
   static Future<List<LKVolume>> volumes(int bookId, int page,
-      {int pageSize = 50, bool forceRefresh = false}) async {
+      {int pageSize = 50,
+      bool forceRefresh = false,
+      Duration requestTimeout = const Duration(seconds: 30)}) async {
     final d = await client.post(
         '/api/new-content-read/get-book-volumes',
         {
@@ -213,14 +229,32 @@ class LKApi {
           'pageSize': LKClient.clampPageSize(pageSize),
         },
         cacheKey: 'book_volumes_$bookId-$page-$pageSize',
-        forceRefresh: forceRefresh);
+        forceRefresh: forceRefresh,
+        requestTimeout: requestTimeout);
     return ((d['list'] as List?) ?? const [])
         .map((e) => LKVolume.fromJson(e as Map<String, dynamic>))
         .toList();
   }
 
+  static Future<LKVolumePage> volumeCatalogPage(int bookId, int page,
+      {int pageSize = 50,
+      Duration requestTimeout = const Duration(seconds: 8)}) async {
+    final size = LKClient.clampPageSize(pageSize);
+    final data = await client.post('/api/new-content-read/get-book-volumes',
+        {'book_id': bookId, 'page': page, 'pageSize': size},
+        cacheKey:
+            'access_book_volumes_${client.session.uid}-$bookId-$page-$size',
+        forceRefresh: true,
+        requestTimeout: requestTimeout);
+    return LKVolumePage.fromJson(data,
+        fallbackPage: page, fallbackPageSize: size);
+  }
+
   static Future<LKChapterPage> chapterPage(int bookId, int volumeId, int page,
-      {int pageSize = 50, bool forceRefresh = false}) async {
+      {int pageSize = 50,
+      bool forceRefresh = false,
+      bool requireList = false,
+      Duration requestTimeout = const Duration(seconds: 30)}) async {
     final size = LKClient.clampPageSize(pageSize);
     final d = await client.post(
         '/api/new-content-read/get-volume-chapters',
@@ -230,11 +264,21 @@ class LKApi {
           'page': page,
           'pageSize': size,
         },
-        cacheKey: 'volume_chapters_$bookId-$volumeId-$page-$size',
-        forceRefresh: forceRefresh);
+        cacheKey: requireList
+            ? 'access_volume_chapters_${client.session.uid}-$bookId-$volumeId-$page-$size'
+            : 'volume_chapters_$bookId-$volumeId-$page-$size',
+        forceRefresh: forceRefresh,
+        requestTimeout: requestTimeout);
+    if (requireList) {
+      final list = d['list'] ?? d['items'];
+      if (list is! List || list.any((item) => item is! Map)) {
+        throw const FormatException(
+            'Chapter catalog list missing or malformed');
+      }
+    }
     final chPage =
         LKChapterPage.fromJson(d, fallbackPage: page, fallbackPageSize: size);
-    if (chPage.items.any((c) => c.braveOnly)) {
+    if (!requireList && chPage.items.any((c) => c.braveOnly)) {
       unawaited(LKStore.markBookBrave(bookId));
     }
     return chPage;
@@ -297,12 +341,7 @@ class LKApi {
 
     // 未登录或没有勇者权限时,接口仍可能返回 code=0,但正文区域为空。
     // 先识别访问状态,避免模型在 render_preview=[] 等形态上强制类型转换。
-    final accessTypeValue = data['access_type'] ?? data['accessType'];
-    final accessType =
-        accessTypeValue is String ? accessTypeValue.toLowerCase() : '';
-    final braveRequired = accessType == 'brave' ||
-        _flag(data['brave_required']) ||
-        _flag(data['braveRequired']);
+    final braveRequired = classifyChapterAccess(data) == BookAccessStatus.brave;
     if (braveRequired) {
       unawaited(LKStore.markBookBrave(bookId));
     }
@@ -527,9 +566,12 @@ class LKApi {
         '/api/bff/history-v1',
         client.authed(
             {'page': page, 'pageSize': LKClient.clampPageSize(pageSize)}));
-    return ((d['list'] as List?) ?? const [])
+    final items = ((d['list'] as List?) ?? const [])
         .map((e) => LKHistoryItem.fromJson(e as Map<String, dynamic>))
         .toList();
+    unawaited(LKStore.markBooksBrave(
+        items.where((book) => book.isBrave).map((book) => book.bookId)));
+    return items;
   }
 
   static Future<void> saveHistory(
@@ -1010,8 +1052,12 @@ class LKApi {
         }),
         cacheKey: 'public_user_${client.session.uid}-$uid-$page-$pageSize',
         forceRefresh: forceRefresh);
-    return LKPublicUserPage.fromJson(d,
+    final result = LKPublicUserPage.fromJson(d,
         fallbackPage: page, fallbackPageSize: pageSize);
+    unawaited(LKStore.markBooksBrave(result.publications
+        .where((book) => book.isBrave)
+        .map((book) => book.bookId)));
+    return result;
   }
 
   /// 公开用户书架(只读,不附带会话凭据)
@@ -1026,8 +1072,11 @@ class LKApi {
         },
         cacheKey: 'public_bookshelf_$uid-$page-$pageSize',
         forceRefresh: forceRefresh);
-    return LKPublicBookshelfPage.fromJson(d,
+    final result = LKPublicBookshelfPage.fromJson(d,
         fallbackPage: page, fallbackPageSize: pageSize);
+    unawaited(LKStore.markBooksBrave(
+        result.books.where((book) => book.isBrave).map((book) => book.bookId)));
+    return result;
   }
 
   /// 用户公开动态(只读)
@@ -1155,7 +1204,7 @@ class LKApi {
       client.post('/api/bff/claim-welfare-treasure-box-v1',
           client.authed({'box_index': boxIndex}));
 
-  /// 上报宝箱任务进度（如观看广告完成 watch_ad_completed）
+  /// 上报宝箱任务进度
   static Future<Map<String, dynamic>> reportWelfareTreasureBoxProgress({
     required int boxIndex,
     required String action,

@@ -286,11 +286,13 @@ void main() {
           closeTo(tester.getRect(find.byType(BookGridCard)).right, 0.01));
     });
 
-    for (final tags in <List<String>>[
+    for (final sample in <List<String>>[
       [],
       [' ', '这是一个超过十二个字符且不会显示的标签'],
-    ]) {
-      testWidgets('word count stays right aligned without visible tags: $tags',
+    ].indexed) {
+      final tags = sample.$2;
+      testWidgets(
+          'word count stays right aligned without visible tags case ${sample.$1}',
           (tester) async {
         final book = LKBook(
           bookId: 1002,

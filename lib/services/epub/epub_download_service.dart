@@ -109,8 +109,59 @@ class _SpeedTracker {
 class EpubDownloadService {
   static final EpubDownloadService shared = EpubDownloadService._();
 
-  EpubDownloadService._() {
+  EpubDownloadService._()
+      : _testTaskDirectory = null,
+        _testChapterDetail = null,
+        _testBeforeCheckpoint = null,
+        _chapterTimeout = const Duration(seconds: 40) {
     LKClient.sessionRev.addListener(_onSessionRevChanged);
+  }
+
+  @visibleForTesting
+  EpubDownloadService.forTesting({
+    required Future<Directory> Function(int) taskDirectory,
+    required Future<LKChapterDetail> Function(int, int) chapterDetail,
+    Future<void> Function(EpubDownloadTask)? beforeCheckpoint,
+    Duration chapterTimeout = const Duration(seconds: 40),
+  })  : _testTaskDirectory = taskDirectory,
+        _testChapterDetail = chapterDetail,
+        _testBeforeCheckpoint = beforeCheckpoint,
+        _chapterTimeout = chapterTimeout;
+
+  final Future<Directory> Function(int)? _testTaskDirectory;
+  final Future<LKChapterDetail> Function(int, int)? _testChapterDetail;
+  final Future<void> Function(EpubDownloadTask)? _testBeforeCheckpoint;
+  final Duration _chapterTimeout;
+  Future<void> _checkpointTail = Future<void>.value();
+  Future<void>? _activeRun;
+  Future<void>? _metadataPreparation;
+  Future<void>? _pauseCheckpoint;
+  bool _resuming = false;
+  bool _canceling = false;
+  int _taskGeneration = 0;
+  EpubTaskPhase? _pausedFrom;
+
+  void _launch(Future<void> Function() run) {
+    final future = run();
+    _activeRun = future;
+    unawaited(future.whenComplete(() {
+      if (identical(_activeRun, future)) _activeRun = null;
+    }));
+  }
+
+  @visibleForTesting
+  Future<void> waitForIdleForTesting() async {
+    await _activeRun;
+    await _checkpointTail;
+  }
+
+  @visibleForTesting
+  void startDownloadForTesting(EpubDownloadTask task) {
+    _taskGeneration++;
+    currentTask.value = task;
+    _isPausedFlag = false;
+    _isCanceledFlag = false;
+    _launch(() => _runDownloadPhase(task));
   }
 
   /// 状态通知器，驱动所有观察者 UI 响应
@@ -141,6 +192,7 @@ class EpubDownloadService {
   void _handleAccountChanged(String reason) {
     final task = currentTask.value;
     if (task == null || task.isTerminal) return;
+    _taskGeneration++;
     _isPausedFlag = false;
     _isCanceledFlag = true;
     currentTask.value = task.copyWith(
@@ -161,10 +213,15 @@ class EpubDownloadService {
     required List<LKVolume> selectedVolumes,
     required EpubExportOptions options,
   }) async {
-    if (hasActiveTask) {
+    if (hasActiveTask ||
+        currentTask.value?.isPaused == true ||
+        _activeRun != null ||
+        _metadataPreparation != null ||
+        _canceling) {
       throw StateError('已有正在制作的任务，请等待完成或取消后再试');
     }
 
+    _taskGeneration++;
     _isPausedFlag = false;
     _isCanceledFlag = false;
     _boundUid = LKClient.shared.session.uid;
@@ -186,7 +243,7 @@ class EpubDownloadService {
     currentTask.value = task;
 
     // 异步在后台启动流程，不阻塞调用方
-    unawaited(_runPipeline(task));
+    _launch(() => _runPipeline(task));
   }
 
   /// 暂停当前任务
@@ -194,16 +251,20 @@ class EpubDownloadService {
     final task = currentTask.value;
     if (task == null || !task.isRunning) return;
 
+    _pausedFrom = task.phase;
     _isPausedFlag = true;
     _speedTracker.reset();
-    currentTask.value = task.copyWith(
+    final paused = task.copyWith(
       phase: EpubTaskPhase.paused,
       statusMessage: '制作已暂停',
       speedText: '',
       currentIllustrationIndex: 0,
       currentIllustrationTotal: 0,
     );
-    await _saveTaskCheckpoint(currentTask.value!);
+    final checkpoint = _saveTaskCheckpoint(paused);
+    _pauseCheckpoint = checkpoint;
+    currentTask.value = paused;
+    await checkpoint;
   }
 
   /// 继续当前任务
@@ -220,35 +281,64 @@ class EpubDownloadService {
       return;
     }
 
-    _isPausedFlag = false;
-    _isCanceledFlag = false;
-    _speedTracker.reset();
-    _boundUid = task.ownerUid;
-
-    if (task.completedCount < task.totalChapters) {
-      currentTask.value = task.copyWith(
-        phase: EpubTaskPhase.downloadingContent,
-        statusMessage: '继续下载正文…',
-      );
-      unawaited(_runDownloadPhase(currentTask.value!));
-    } else if (task.phase == EpubTaskPhase.editingMetadata) {
-      currentTask.value = task.copyWith(
-        phase: EpubTaskPhase.editingMetadata,
-        statusMessage: '请确认封面与文件标题',
-      );
-    } else {
-      currentTask.value = task.copyWith(
-        phase: EpubTaskPhase.packaging,
-        statusMessage: '继续制作文件…',
-      );
-      unawaited(_runPackagingPhase(currentTask.value!));
+    if (_resuming) return;
+    _resuming = true;
+    try {
+      // Keep the pause flag set until every old worker and checkpoint has
+      // settled. A second resume cannot start another generation meanwhile.
+      await _pauseCheckpoint;
+      await _metadataPreparation;
+      await _activeRun;
+      final latest = currentTask.value;
+      if (latest == null ||
+          latest.phase != EpubTaskPhase.paused ||
+          _isCanceledFlag) {
+        return;
+      }
+      final uid = LKClient.shared.session.uid;
+      if (latest.ownerUid > 0 &&
+          (uid != latest.ownerUid || !LKClient.shared.session.isLoggedIn)) {
+        _handleAccountChanged('登录账号已切换或退出，制作任务已停止');
+        return;
+      }
+      _isPausedFlag = false;
+      _speedTracker.reset();
+      _boundUid = latest.ownerUid;
+      if (_pausedFrom == EpubTaskPhase.fetchingCatalog) {
+        currentTask.value = latest.copyWith(
+            phase: EpubTaskPhase.fetchingCatalog, statusMessage: '继续刷新目录…');
+        _launch(() => _runPipeline(currentTask.value!));
+      } else if (_pausedFrom == EpubTaskPhase.editingMetadata) {
+        currentTask.value = latest.copyWith(
+            phase: EpubTaskPhase.editingMetadata, statusMessage: '请确认封面与文件标题');
+      } else if (_pausedFrom == EpubTaskPhase.packaging) {
+        currentTask.value = latest.copyWith(
+            phase: EpubTaskPhase.packaging, statusMessage: '继续制作文件…');
+        _launch(() => _runPackagingPhase(currentTask.value!));
+      } else {
+        currentTask.value = latest.copyWith(
+            phase: EpubTaskPhase.downloadingContent, statusMessage: '继续下载正文…');
+        _launch(() => _resumeDownload(currentTask.value!));
+      }
+    } finally {
+      _resuming = false;
     }
+  }
+
+  Future<void> _resumeDownload(EpubDownloadTask task) async {
+    final taskDir = await _getTaskDirectory(task.bookId);
+    if (_isCanceledFlag || _isPausedFlag) return;
+    await _downloadCover(task, taskDir);
+    if (_isCanceledFlag || _isPausedFlag) return;
+    await _runDownloadPhase(task);
   }
 
   /// 取消当前任务并删除临时文件
   Future<void> cancelTask() async {
     final task = currentTask.value;
-    if (task == null) return;
+    if (task == null || _canceling) return;
+    _canceling = true;
+    _taskGeneration++;
 
     _isCanceledFlag = true;
     _isPausedFlag = false;
@@ -262,32 +352,78 @@ class EpubDownloadService {
       currentIllustrationTotal: 0,
     );
 
-    await _deleteTaskDirectory(task.bookId);
+    try {
+      await _pauseCheckpoint;
+      await _metadataPreparation;
+      await _activeRun;
+      await _checkpointTail;
+      await _deleteTaskDirectory(task.bookId);
+    } finally {
+      _canceling = false;
+    }
   }
 
   /// 重试失败章节
   Future<void> retryFailedChapters() async {
     final task = currentTask.value;
-    if (task == null || task.failedChapters.isEmpty) return;
+    if (task == null || task.failedChapters.isEmpty || _resuming) return;
+    _resuming = true;
+    try {
+      await _activeRun;
+      if (_isCanceledFlag || currentTask.value?.phase != EpubTaskPhase.paused) {
+        return;
+      }
+      final latest = currentTask.value!;
 
-    final clearedFailed = <int, String>{};
-    currentTask.value = task.copyWith(
-      failedChapters: clearedFailed,
-      phase: EpubTaskPhase.downloadingContent,
-      statusMessage: '正在重试失败章节…',
-    );
+      final clearedFailed = <int, String>{};
+      currentTask.value = latest.copyWith(
+        failedChapters: clearedFailed,
+        phase: EpubTaskPhase.downloadingContent,
+        statusMessage: '正在重试失败章节…',
+      );
 
-    _isPausedFlag = false;
-    _isCanceledFlag = false;
-    unawaited(_runDownloadPhase(currentTask.value!));
+      _isPausedFlag = false;
+      _isCanceledFlag = false;
+      _launch(() => _runDownloadPhase(currentTask.value!));
+    } finally {
+      _resuming = false;
+    }
   }
 
   /// 显式选择导出已完成内容（部分章节缺失的不完整版），先进入封面与标题确认
   Future<void> exportCompletedContent() async {
+    if (_metadataPreparation != null || _resuming) return;
+    final preparation = _prepareCompletedContentExport();
+    _metadataPreparation = preparation;
+    try {
+      await preparation;
+    } finally {
+      if (identical(_metadataPreparation, preparation)) {
+        _metadataPreparation = null;
+      }
+    }
+  }
+
+  Future<void> _prepareCompletedContentExport() async {
     final task = currentTask.value;
     if (task == null || task.completedCount == 0) return;
-
-    await _enterEditingMetadataPhase(task, exportIncomplete: true);
+    final generation = _taskGeneration;
+    _resuming = true;
+    try {
+      await _activeRun;
+      final latest = currentTask.value;
+      if (_taskGeneration != generation ||
+          _isCanceledFlag ||
+          latest == null ||
+          latest.isTerminal ||
+          latest.completedCount == 0) {
+        return;
+      }
+      _isPausedFlag = false;
+      await _enterEditingMetadataPhase(latest, exportIncomplete: true);
+    } finally {
+      _resuming = false;
+    }
   }
 
   /// 用户确认封面与标题后，正式进入 Isolate 打包阶段
@@ -295,10 +431,32 @@ class EpubDownloadService {
     String? customTitle,
     String? customCoverPath,
   }) async {
+    if (_metadataPreparation != null) return;
+    final preparation = _prepareMetadataAndPackage(
+        customTitle: customTitle, customCoverPath: customCoverPath);
+    _metadataPreparation = preparation;
+    try {
+      await preparation;
+    } finally {
+      if (identical(_metadataPreparation, preparation)) {
+        _metadataPreparation = null;
+      }
+    }
+  }
+
+  Future<void> _prepareMetadataAndPackage({
+    String? customTitle,
+    String? customCoverPath,
+  }) async {
     final task = currentTask.value;
-    if (task == null) return;
+    if (task == null || task.phase != EpubTaskPhase.editingMetadata) return;
 
     final taskDir = await _getTaskDirectory(task.bookId);
+    if (_isCanceledFlag ||
+        _isPausedFlag ||
+        !identical(currentTask.value, task)) {
+      return;
+    }
 
     // 如果指定了自定义封面路径，且不是 cover.jpg 本身，安全将其拷贝覆盖至 cover.jpg
     final targetCover = File('${taskDir.path}/cover.jpg');
@@ -326,6 +484,11 @@ class EpubDownloadService {
       }
     }
 
+    if (_isCanceledFlag ||
+        _isPausedFlag ||
+        !identical(currentTask.value, task)) {
+      return;
+    }
     final finalTitle = (customTitle != null && customTitle.trim().isNotEmpty)
         ? customTitle.trim()
         : task.customTitle;
@@ -338,9 +501,18 @@ class EpubDownloadService {
           task.options.exportAsTxt ? '正在生成 TXT 文件…' : '正在生成 EPUB 文件…',
     );
     currentTask.value = updated;
+    if (_isCanceledFlag ||
+        _isPausedFlag ||
+        !identical(currentTask.value, updated)) {
+      return;
+    }
     await _saveTaskCheckpoint(updated);
-
-    unawaited(_runPackagingPhase(updated));
+    if (_isCanceledFlag ||
+        _isPausedFlag ||
+        !identical(currentTask.value, updated)) {
+      return;
+    }
+    _launch(() => _runPackagingPhase(updated));
   }
 
   /// 完整调度管线：阶段 1 -> 阶段 2 -> 阶段 3 -> 阶段 4
@@ -352,9 +524,10 @@ class EpubDownloadService {
       await Directory('${taskDir.path}/chapters').create(recursive: true);
       await Directory('${taskDir.path}/images').create(recursive: true);
 
+      if (_isCanceledFlag || _isPausedFlag) return;
       // 阶段 1: 刷新并拉取全量目录
       final catalogChapters = await _fetchCompleteCatalog(initialTask);
-      if (_isCanceledFlag) return;
+      if (_isCanceledFlag || _isPausedFlag) return;
       if (catalogChapters.isEmpty) {
         currentTask.value = currentTask.value?.copyWith(
           phase: EpubTaskPhase.failed,
@@ -372,12 +545,14 @@ class EpubDownloadService {
       await _saveTaskCheckpoint(taskWithCatalog);
 
       // 下载封面（若存在）
+      if (_isCanceledFlag || _isPausedFlag) return;
       await _downloadCover(taskWithCatalog, taskDir);
 
       // 阶段 2: 下载正文与插画
+      if (_isCanceledFlag || _isPausedFlag) return;
       await _runDownloadPhase(taskWithCatalog);
     } catch (e) {
-      if (_isCanceledFlag) return;
+      if (_isCanceledFlag || _isPausedFlag) return;
       currentTask.value = currentTask.value?.copyWith(
         phase: EpubTaskPhase.failed,
         statusMessage: '制作失败: $e',
@@ -392,12 +567,12 @@ class EpubDownloadService {
     final seenChapterIds = <int>{};
 
     for (final volume in task.selectedVolumes) {
-      if (_isCanceledFlag) return const [];
+      if (_isCanceledFlag || _isPausedFlag) return const [];
       var page = 1;
       var hasMore = true;
 
       while (hasMore) {
-        if (_isCanceledFlag) return const [];
+        if (_isCanceledFlag || _isPausedFlag) return const [];
         final chapterPage = await _networkSemaphore.run(() => LKApi.chapterPage(
               task.bookId,
               volume.volumeId,
@@ -589,11 +764,14 @@ class EpubDownloadService {
           'body_html': detail.bodyHtml,
         }));
 
+        if (_isCanceledFlag || _isPausedFlag) return;
+
         // 处理插画（若开启）
         if (task.options.includeIllustrations) {
           await _processChapterIllustrations(detail, taskDir);
         }
 
+        if (_isCanceledFlag || _isPausedFlag) return;
         completed.add(ch.chapterId);
         failed.remove(ch.chapterId);
 
@@ -604,7 +782,7 @@ class EpubDownloadService {
           speedText: _speedTracker.speedText,
         );
       } catch (e) {
-        if (_isCanceledFlag) return;
+        if (_isCanceledFlag || _isPausedFlag) return;
         final errorMsg = _friendlyErrorMessage(e);
         failed[ch.chapterId] = errorMsg;
 
@@ -616,6 +794,7 @@ class EpubDownloadService {
 
         // 如果是 429 频率限制，主动暂停
         if (_isRateLimitError(e)) {
+          _pausedFrom = EpubTaskPhase.downloadingContent;
           _isPausedFlag = true;
           _speedTracker.reset();
           currentTask.value = currentTask.value?.copyWith(
@@ -656,7 +835,9 @@ class EpubDownloadService {
       ]);
     }
 
+    if (_isCanceledFlag || _isPausedFlag) return;
     await _saveTaskCheckpoint(currentTask.value!);
+    if (_isCanceledFlag || _isPausedFlag) return;
 
     // 检查是否所有章节都处理完毕
     if (completed.length == task.totalChapters) {
@@ -664,6 +845,8 @@ class EpubDownloadService {
       await _enterEditingMetadataPhase(currentTask.value!);
     } else {
       // 存在部分失败章节
+      _pausedFrom = EpubTaskPhase.downloadingContent;
+      _isPausedFlag = true;
       _speedTracker.reset();
       final updated = currentTask.value!.copyWith(
         phase: EpubTaskPhase.paused,
@@ -685,8 +868,9 @@ class EpubDownloadService {
     while (true) {
       attempts++;
       try {
-        return await _networkSemaphore
-            .run(() => LKApi.chapterDetail(bookId, chapterId));
+        return await _networkSemaphore.run(() =>
+            (_testChapterDetail ?? LKApi.chapterDetail)(bookId, chapterId)
+                .timeout(_chapterTimeout));
       } catch (e) {
         final accessRestricted = e is LKException && e.accessRestricted;
         if (accessRestricted ||
@@ -694,6 +878,7 @@ class EpubDownloadService {
             _isRateLimitError(e)) {
           rethrow;
         }
+        if (_isPausedFlag || _isCanceledFlag) rethrow;
         // 指数退避：1s, 2s, 4s
         await Future.delayed(Duration(seconds: 1 << (attempts - 1)));
       }
@@ -799,7 +984,9 @@ class EpubDownloadService {
           }
         }
 
+        if (_isCanceledFlag || _isPausedFlag) return;
         if (await destFile.exists()) {
+          if (_isCanceledFlag || _isPausedFlag) return;
           if (isNewDownload) {
             _downloadedIllustrationsCount++;
           }
@@ -825,7 +1012,9 @@ class EpubDownloadService {
       for (int w = 0; w < imgWorkers; w++) illustrationWorker(),
     ]);
 
+    if (_isCanceledFlag || _isPausedFlag) return;
     await mapFile.writeAsString(jsonEncode(map));
+    if (_isCanceledFlag || _isPausedFlag) return;
 
     // 本章插画处理完毕，重置当前章节插画状态
     currentTask.value = currentTask.value?.copyWith(
@@ -841,13 +1030,23 @@ class EpubDownloadService {
     EpubDownloadTask task, {
     bool exportIncomplete = false,
   }) async {
+    final generation = _taskGeneration;
+    bool stillCurrent() =>
+        _taskGeneration == generation &&
+        !_isCanceledFlag &&
+        !_isPausedFlag &&
+        currentTask.value?.bookId == task.bookId;
+    if (!stillCurrent()) return;
     _speedTracker.reset();
     final taskDir = await _getTaskDirectory(task.bookId);
+    if (!stillCurrent()) return;
 
     // 收集所有已落盘的插画文件路径
     final illustrationPaths = <String>[];
     final imagesDir = Directory('${taskDir.path}/images');
-    if (await imagesDir.exists()) {
+    final imagesExist = await imagesDir.exists();
+    if (!stillCurrent()) return;
+    if (imagesExist) {
       final entries = imagesDir.listSync().whereType<File>().toList();
       entries.sort((a, b) => a.path.compareTo(b.path));
       for (final f in entries) {
@@ -857,8 +1056,9 @@ class EpubDownloadService {
 
     // 预设默认封面（如果存在）
     final defaultCoverFile = File('${taskDir.path}/cover.jpg');
-    final defaultCoverPath =
-        await defaultCoverFile.exists() ? defaultCoverFile.path : null;
+    final defaultCoverExists = await defaultCoverFile.exists();
+    if (!stillCurrent()) return;
+    final defaultCoverPath = defaultCoverExists ? defaultCoverFile.path : null;
 
     // 计算预设标题："书名  [卷名]"
     final presetTitle =
@@ -879,7 +1079,9 @@ class EpubDownloadService {
       statusMessage:
           task.options.exportAsTxt ? '正文下载完成，请确认文件标题' : '正文与插画下载完成，请确认封面与文件标题',
     );
+    if (!stillCurrent()) return;
     currentTask.value = updated;
+    if (!stillCurrent()) return;
     await _saveTaskCheckpoint(updated);
   }
 
@@ -888,8 +1090,11 @@ class EpubDownloadService {
     try {
       _speedTracker.reset();
       final taskDir = await _getTaskDirectory(task.bookId);
+      if (_isCanceledFlag || _isPausedFlag) return;
       final exportsDir = await _getExportsDirectory();
+      if (_isCanceledFlag || _isPausedFlag) return;
       await exportsDir.create(recursive: true);
+      if (_isCanceledFlag || _isPausedFlag) return;
 
       // 文件名清洗，避免特殊符号（优先使用自定义/预设有效标题）
       final effectiveTitle = task.effectiveTitle;
@@ -909,8 +1114,10 @@ class EpubDownloadService {
           currentIllustrationTotal: 0,
         );
 
+        if (_isCanceledFlag || _isPausedFlag) return;
         final sizeBytes = await _buildTxtFile(task, taskDir, outputPath);
 
+        if (_isCanceledFlag || _isPausedFlag) return;
         // 阶段 4: TXT 制作完成
         currentTask.value = currentTask.value?.copyWith(
           phase: EpubTaskPhase.completed,
@@ -931,6 +1138,7 @@ class EpubDownloadService {
         currentIllustrationTotal: 0,
       );
 
+      if (_isCanceledFlag || _isPausedFlag) return;
       final buildContext = EpubBuildContext(
         taskDir: taskDir.path,
         outputPath: outputPath,
@@ -949,6 +1157,7 @@ class EpubDownloadService {
 
       final sizeBytes = await EpubBuilder.packageInIsolate(buildContext);
 
+      if (_isCanceledFlag || _isPausedFlag) return;
       // 阶段 4: 完成
       currentTask.value = currentTask.value?.copyWith(
         phase: EpubTaskPhase.completed,
@@ -959,7 +1168,7 @@ class EpubDownloadService {
 
       await _saveTaskCheckpoint(currentTask.value!);
     } catch (e) {
-      if (_isCanceledFlag) return;
+      if (_isCanceledFlag || _isPausedFlag) return;
       currentTask.value = currentTask.value?.copyWith(
         phase: EpubTaskPhase.failed,
         statusMessage: '打包失败: $e',
@@ -1056,6 +1265,7 @@ class EpubDownloadService {
   }
 
   Future<Directory> _getTaskDirectory(int bookId) async {
+    if (_testTaskDirectory != null) return _testTaskDirectory!(bookId);
     final temp = await getTemporaryDirectory();
     return Directory('${temp.path}/epub_maker/tasks/$bookId');
   }
@@ -1074,13 +1284,20 @@ class EpubDownloadService {
     } catch (_) {}
   }
 
-  Future<void> _saveTaskCheckpoint(EpubDownloadTask task) async {
-    try {
-      final taskDir = await _getTaskDirectory(task.bookId);
-      if (!await taskDir.exists()) return;
-      final file = File('${taskDir.path}/meta.json');
-      await file.writeAsString(jsonEncode(task.toJson()));
-    } catch (_) {}
+  Future<void> _saveTaskCheckpoint(EpubDownloadTask task) {
+    // Queue snapshots in invocation order, so a slow earlier write cannot
+    // overwrite the paused snapshot or truncate a concurrent write.
+    final next = _checkpointTail.then((_) async {
+      try {
+        await _testBeforeCheckpoint?.call(task);
+        final taskDir = await _getTaskDirectory(task.bookId);
+        if (!await taskDir.exists()) return;
+        final file = File('${taskDir.path}/meta.json');
+        await file.writeAsString(jsonEncode(task.toJson()));
+      } catch (_) {}
+    });
+    _checkpointTail = next;
+    return next;
   }
 
   /// 清除所有 EPUB 制作产生的临时任务和导出文件

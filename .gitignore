@@ -74,3 +74,17 @@ android/app/*.der
 **/.wrangler/
 **/.dev.vars
 **/.dev.vars.*
+
+# Local model exports and generated test/build artifacts
+*.ckpt
+*.pth
+*.onnx
+*.onnx.data
+*.yomiru-voice
+*.apk
+*.aab
+*.ipa
+/onnx_ookura_resona/
+/_tmp_models/
+/test_baseline_output/
+/dist/

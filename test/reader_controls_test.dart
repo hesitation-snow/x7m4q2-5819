@@ -22,6 +22,203 @@ import 'package:yomiru/widgets/m3_menu_sheet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets('system TTS panel speaks rendered reader segments',
+      (tester) async {
+    const ttsChannel = MethodChannel('moe.yutro.yomiru/tts');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final ttsCalls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(ttsChannel, (call) async {
+      ttsCalls.add(call);
+      if (call.method == 'getEngines') {
+        return [
+          {'name': 'test.engine', 'label': '测试引擎', 'isSystem': true}
+        ];
+      }
+      if (call.method == 'getVoices') {
+        return [
+          {'id': 'zh-CN-test', 'name': '测试中文', 'locale': 'zh-CN'}
+        ];
+      }
+      if (call.method == 'setLanguage') return {'available': true};
+      if (call.method == 'setVoice' || call.method == 'setSpeechRate') {
+        return true;
+      }
+      if (call.method == 'speak') {
+        return {
+          'accepted': true,
+          'utteranceId': (call.arguments as Map)['utteranceId']
+        };
+      }
+      return null;
+    });
+    try {
+      await withReader(
+        tester,
+        paged: false,
+        platform: TargetPlatform.android,
+        run: (calls, key) async {
+          await tester.tap(find.byTooltip('系统朗读'));
+          await tester.pumpAndSettle();
+          expect(find.text('听书与音色'), findsOneWidget);
+          expect(find.text('系统未提供可用语音，请检查设备语音设置'), findsNothing);
+          await tester.ensureVisible(find.byTooltip('从当前位置朗读'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byTooltip('从当前位置朗读'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 200));
+          expect(
+              ttsCalls.map((call) => call.method),
+              containsAllInOrder([
+                'getVoices',
+                'setLanguage',
+                'setVoice',
+                'setSpeechRate',
+                'speak'
+              ]));
+          expect(find.textContaining('正在朗读'), findsOneWidget);
+          expect(
+              tester
+                  .widget<IconButton>(find.byWidgetPredicate(
+                      (w) => w is IconButton && w.tooltip == '上一段'))
+                  .onPressed,
+              isNull);
+          expect(
+              tester
+                  .widget<IconButton>(find.byWidgetPredicate(
+                      (w) => w is IconButton && w.tooltip == '下一段'))
+                  .onPressed,
+              isNotNull);
+          await tester.ensureVisible(find.byTooltip('下一段'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byTooltip('下一段'));
+          await tester.pump();
+          expect(
+              tester
+                  .widget<IconButton>(find.byWidgetPredicate(
+                      (w) => w is IconButton && w.tooltip == '上一段'))
+                  .onPressed,
+              isNotNull);
+          await tester.ensureVisible(find.byTooltip('暂停朗读'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byTooltip('暂停朗读'));
+          await tester.pump();
+          expect(find.byTooltip('恢复朗读'), findsOneWidget);
+          expect(find.textContaining('暂停后从当前语段开头恢复'), findsOneWidget);
+          final slider = find.descendant(
+              of: find.byType(BottomSheet), matching: find.byType(Slider));
+          tester.widget<Slider>(slider).onChanged!(1.5);
+          await tester.pump();
+          expect(find.text('语速 1.50×'), findsOneWidget);
+        },
+      );
+    } finally {
+      messenger.setMockMethodCallHandler(ttsChannel, null);
+    }
+  });
+
+  testWidgets('TTS voice retry updates the open scrollable sheet',
+      (tester) async {
+    const channel = MethodChannel('moe.yutro.yomiru/tts');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    var attempts = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getEngines') {
+        return [
+          {'name': 'test.engine', 'label': '测试引擎', 'isSystem': true}
+        ];
+      }
+      if (call.method == 'getVoices') {
+        if (attempts++ == 0) throw PlatformException(code: 'INIT_FAILED');
+        return [
+          {'id': 'one', 'name': '语音一', 'locale': 'zh-CN'},
+          {'id': 'two', 'name': '语音二', 'locale': 'zh-CN'},
+        ];
+      }
+      return null;
+    });
+    try {
+      await withReader(tester, paged: false, platform: TargetPlatform.android,
+          run: (calls, key) async {
+        await tester.tap(find.byTooltip('系统朗读'));
+        await tester.pumpAndSettle();
+        expect(find.text('系统语音引擎初始化失败'), findsOneWidget);
+        await tester.ensureVisible(find.byTooltip('重新检测语音'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('重新检测语音'));
+        await tester.pumpAndSettle();
+        expect(find.text('系统语音引擎初始化失败'), findsNothing);
+        expect(find.textContaining('语音一'), findsOneWidget);
+        expect(
+            find.descendant(
+                of: find.byType(BottomSheet),
+                matching: find.byType(SingleChildScrollView)),
+            findsWidgets);
+        await tester.tap(find.byWidgetPredicate((widget) =>
+            widget is DropdownButtonFormField<String> &&
+            widget.initialValue == 'one'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.textContaining('语音二').last);
+        await tester.pumpAndSettle();
+        expect(find.textContaining('语音二'), findsOneWidget);
+      });
+    } finally {
+      messenger.setMockMethodCallHandler(channel, null);
+    }
+  });
+
+  for (final size in [const Size(320, 600), const Size(800, 390)]) {
+    testWidgets('TTS panel remains usable at $size and large text',
+        (tester) async {
+      const channel = MethodChannel('moe.yutro.yomiru/tts');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'getEngines') {
+          return [
+            {'name': 'test.engine', 'label': '测试引擎', 'isSystem': true}
+          ];
+        }
+        if (call.method == 'getVoices') {
+          return [
+            {'id': 'zh-CN-test', 'name': '测试中文', 'locale': 'zh-CN'}
+          ];
+        }
+        return null;
+      });
+      try {
+        await withReader(tester, paged: false, platform: TargetPlatform.android,
+            run: (calls, key) async {
+          tester.view.physicalSize = size;
+          tester.platformDispatcher.textScaleFactorTestValue = 1.7;
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull,
+              reason: 'reader before TTS sheet');
+          final entry = find.byTooltip('系统朗读');
+          if (entry.hitTestable().evaluate().isEmpty) {
+            await tester.tapAt(Offset(size.width / 2, size.height / 2));
+            await tester.pumpAndSettle();
+          }
+          await tester.tap(entry);
+          await tester.pumpAndSettle();
+          expect(find.text('听书与音色'), findsOneWidget);
+          await tester.ensureVisible(find.byTooltip('从当前位置朗读'));
+          await tester.pumpAndSettle();
+          expect(find.byTooltip('从当前位置朗读').hitTestable(), findsOneWidget);
+          final layoutError = tester.takeException();
+          if (layoutError is FlutterError) {
+            debugPrint(layoutError.toStringDeep());
+          }
+          expect(layoutError, isNull);
+        });
+      } finally {
+        tester.platformDispatcher.clearTextScaleFactorTestValue();
+        messenger.setMockMethodCallHandler(channel, null);
+      }
+    });
+  }
+
   for (final paged in [false, true]) {
     for (final enhanced in [false, true]) {
       testWidgets(
@@ -370,6 +567,18 @@ Future<void> withReader(WidgetTester tester,
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
     debugDefaultTargetPlatformOverride = null;
-    await tester.runAsync(() => root!.delete(recursive: true));
+    await tester.runAsync(() async {
+      // Windows may retain an async cache file handle for one completion turn.
+      // Only retry a sharing violation; never suppress genuine teardown errors.
+      for (var attempt = 0;; attempt++) {
+        try {
+          if (await root!.exists()) await root.delete(recursive: true);
+          break;
+        } on FileSystemException catch (error) {
+          if (error.osError?.errorCode != 32 || attempt >= 5) rethrow;
+          await Future<void>.delayed(const Duration(milliseconds: 40));
+        }
+      }
+    });
   }
 }

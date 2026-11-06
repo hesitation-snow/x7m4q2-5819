@@ -1,5 +1,6 @@
 import 'm3_menu_sheet.dart';
 import 'm3_controls.dart';
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -10,6 +11,8 @@ import '../services/app_motion.dart';
 
 import '../api/models.dart';
 import '../api/store.dart';
+import '../api/lk_client.dart';
+import '../services/book_access_probe.dart';
 
 /// 动态中引用书籍的柔和底色，保持深浅主题下的辨识度。
 Color activityBookReferenceColor(Brightness brightness) =>
@@ -172,6 +175,8 @@ class CoverImage extends StatefulWidget {
   final bool isBrave;
   final bool showPeekButton;
   final bool compactPeek;
+  final int bookId;
+  final BookAccessStatus accessStatus;
   const CoverImage({
     super.key,
     required this.url,
@@ -182,6 +187,8 @@ class CoverImage extends StatefulWidget {
     this.isBrave = false,
     this.showPeekButton = true,
     this.compactPeek = false,
+    this.bookId = 0,
+    this.accessStatus = BookAccessStatus.unknown,
   });
 
   @override
@@ -190,13 +197,88 @@ class CoverImage extends StatefulWidget {
 
 class _CoverImageState extends State<CoverImage> {
   bool _revealed = false;
+  bool _probeScheduled = false;
+  bool _lastBrave = false;
+  int _probeEpoch = 0;
+  ModalRoute<dynamic>? _route;
+  bool get _brave =>
+      widget.isBrave ||
+      (widget.bookId > 0 && LKStore.isBraveBook(widget.bookId));
+
+  @override
+  void initState() {
+    super.initState();
+    _lastBrave = _brave;
+    LKStore.braveBookRevision.addListener(_onBraveChanged);
+  }
+
+  void _onBraveChanged() {
+    if (!mounted || _lastBrave == _brave) return;
+    _lastBrave = _brave;
+    setState(() {
+      _revealed = false;
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+  }
 
   @override
   void didUpdateWidget(covariant CoverImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url || oldWidget.isBrave != widget.isBrave) {
+    if (oldWidget.bookId != widget.bookId ||
+        oldWidget.url != widget.url ||
+        oldWidget.isBrave != widget.isBrave ||
+        oldWidget.accessStatus != widget.accessStatus) {
       _revealed = false;
+      ++_probeEpoch;
+      _probeScheduled = false;
+      _lastBrave = _brave;
     }
+  }
+
+  void _scheduleAccessProbe() {
+    if (_probeScheduled ||
+        widget.bookId <= 0 ||
+        _brave ||
+        widget.accessStatus != BookAccessStatus.unknown ||
+        !LKStore.hideBraveBooks.value ||
+        LKStore.dataSaverMode.value) {
+      return;
+    }
+    _probeScheduled = true;
+    final epoch = _probeEpoch;
+    final id = widget.bookId;
+    final account = LKClient.sessionRev.value;
+    bool current() =>
+        mounted &&
+        epoch == _probeEpoch &&
+        id == widget.bookId &&
+        account == LKClient.sessionRev.value &&
+        _route?.isCurrent != false &&
+        LKStore.hideBraveBooks.value &&
+        !LKStore.dataSaverMode.value;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(() async {
+        try {
+          if (current()) {
+            await BookAccessProbe.shared.lookup(id, isCurrent: current);
+          }
+        } finally {
+          if (mounted && epoch == _probeEpoch) _probeScheduled = false;
+        }
+      }());
+    });
+  }
+
+  @override
+  void dispose() {
+    ++_probeEpoch;
+    LKStore.braveBookRevision.removeListener(_onBraveChanged);
+    super.dispose();
   }
 
   Widget _buildPlaceholder(BuildContext context) {
@@ -262,6 +344,7 @@ class _CoverImageState extends State<CoverImage> {
           );
         }
 
+        _scheduleAccessProbe();
         final targetUrl = effectiveUrl.isEmpty ? kDefaultCover : effectiveUrl;
 
         return ValueListenableBuilder<CoverBlurMode>(
@@ -269,7 +352,7 @@ class _CoverImageState extends State<CoverImage> {
           builder: (context, blurMode, _) {
             final isBlurTarget = switch (blurMode) {
               CoverBlurMode.all => true,
-              CoverBlurMode.brave => widget.isBrave,
+              CoverBlurMode.brave => _brave,
               CoverBlurMode.none => false,
             };
             final shouldBlur = isBlurTarget && !_revealed;
@@ -415,7 +498,9 @@ class BookCard extends StatelessWidget {
                       width: 76,
                       height: 107,
                       radius: 8,
-                      isBrave: book.isBrave),
+                      isBrave: book.isBrave,
+                      bookId: book.bookId,
+                      accessStatus: book.accessStatus),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -930,6 +1015,8 @@ class BookGridCard extends StatelessWidget {
                           height: double.infinity,
                           radius: isDense ? 8 : 12,
                           isBrave: book.isBrave,
+                          bookId: book.bookId,
+                          accessStatus: book.accessStatus,
                           compactPeek: isDense,
                         ),
                       ),

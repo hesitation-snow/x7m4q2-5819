@@ -1,6 +1,7 @@
 import '../reader/layout_cache.dart';
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
@@ -9,6 +10,7 @@ import 'package:flutter/material.dart';
 import '../widgets/instant_page_swipe.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_open_chinese_convert/flutter_open_chinese_convert.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -29,6 +31,19 @@ import '../reader/pagination_key.dart';
 import 'catalog_paging.dart';
 import 'login_page.dart';
 import '../reader/reading_position.dart';
+import '../reader/reader_bookmarks.dart';
+import '../reader/reader_tts_core.dart';
+import '../reader/speech_segments.dart';
+import '../reader/reader_language_segments.dart';
+import '../reader/reader_speech_session.dart';
+import '../reader/reader_tts_resume.dart';
+import '../reader/reader_speech_synthesizers.dart';
+import '../services/system_tts.dart';
+import '../services/custom_ssml_tts.dart';
+import 'custom_tts_settings_page.dart';
+import '../services/reader_audio_handler.dart';
+import '../services/reader_audio_bootstrap.dart';
+import '../widgets/reader_listening_sheet.dart';
 import 'comments_page.dart';
 import 'media_viewer_page.dart';
 import 'reader_catalog_sheet.dart';
@@ -177,6 +192,8 @@ class ReaderPage extends StatefulWidget {
   final int chapterId;
   final String chapterTitle;
   final int volumeId;
+  final bool autoStartTts;
+  final String initialTtsSource;
 
   const ReaderPage(
       {super.key,
@@ -184,7 +201,9 @@ class ReaderPage extends StatefulWidget {
       required this.bookTitle,
       required this.chapterId,
       required this.chapterTitle,
-      required this.volumeId});
+      required this.volumeId,
+      this.autoStartTts = false,
+      this.initialTtsSource = 'system'});
 
   @override
   State<ReaderPage> createState() => _ReaderPageState();
@@ -192,6 +211,7 @@ class ReaderPage extends StatefulWidget {
 
 class _ReaderPageState extends State<ReaderPage>
     with WidgetsBindingObserver, RouteAware {
+  static bool _ttsNotificationPermissionChecked = false;
   static const int _parsedChapterCacheLimit = 8;
   static final LinkedHashMap<String, List<_BodyBlock>> _parsedChapterCache =
       LinkedHashMap<String, List<_BodyBlock>>();
@@ -306,6 +326,48 @@ class _ReaderPageState extends State<ReaderPage>
 
   final ReadingPositionController _positionController =
       ReadingPositionController();
+  late final SystemTts _systemTts;
+  late final NativeSystemTtsService _ttsPlatform;
+  late final ReaderTtsController _ttsController;
+  List<SystemTtsVoice> _ttsVoices = const [];
+  List<SystemTtsEngine> _ttsEngines = const [];
+  bool _ttsEnginesLoading = false;
+  String? _ttsEngineError;
+  String? _ttsEngineId;
+  final Map<String, String> _ttsVoiceByLanguage = <String, String>{};
+  bool _ttsVoicesLoading = false;
+  String? _ttsVoiceError;
+  String? _ttsPreferredSystemVoiceId;
+  String? _ttsSettingsLoadedForAccount;
+  double _ttsDraftRate = 1.0;
+  final Object _ttsMediaOwnerKey = Object();
+  final Object _speechSessionOwnerKey = Object();
+  ReaderSpeechSession? _speechSession;
+  CustomSsmlTts? _activeSpeechClient;
+  SpeechSynthesisConfig? _activeSpeechConfig;
+  String _speechAccountId = '';
+  String _ttsSourceMode = 'system';
+  ReaderLanguageFilter _ttsLanguageFilter = ReaderLanguageFilter.automatic;
+  Duration _ttsSegmentInterval = Duration.zero;
+  PlaybackSleepTimer _ttsSleepTimer = PlaybackSleepTimer.none;
+  bool _ttsContinuousChapter = false;
+  String? _ttsSessionError;
+  int _speechStartRevision = 0;
+  bool _speechStarting = false;
+  CustomSsmlTtsConfig? _customSpeechProfile;
+  String? _customSpeechProfileError;
+  bool _mediaServiceRetrying = false;
+  bool _speechAutoAdvanceHandled = false;
+  bool _autoTtsStarted = false;
+  int? _lastSpeechScrollBlock;
+  final ValueNotifier<int> _ttsUiRevision = ValueNotifier<int>(0);
+  int _ttsContentRevision = 0;
+  bool _readerInputActive = true;
+
+  void _refreshTtsSheet() {
+    if (mounted) _ttsUiRevision.value++;
+  }
+
   int _positionRestoreSerial = 0;
   int _scrollProgressGeneration = 0;
   bool _restoringScrollAnchor = false;
@@ -402,7 +464,13 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void initState() {
     super.initState();
+    _ttsSourceMode = widget.initialTtsSource;
+    _ttsContinuousChapter = widget.autoStartTts;
     _systemUi = ReaderSystemUi();
+    _systemTts = SystemTts();
+    _ttsPlatform = NativeSystemTtsService(_systemTts);
+    _ttsController = ReaderTtsController(_ttsPlatform);
+    _ttsController.addListener(_onTtsChanged);
     WidgetsBinding.instance.addObserver(this);
     _title = widget.chapterTitle;
     _effectiveVolumeId = widget.volumeId;
@@ -429,8 +497,69 @@ class _ReaderPageState extends State<ReaderPage>
     _load();
   }
 
+  void _syncTtsMediaSession() {
+    final handler = activeReaderAudioHandler;
+    if (handler == null || !mounted) return;
+    final status = _ttsController.status;
+    final active = status == TtsPlaybackStatus.playing ||
+        status == TtsPlaybackStatus.paused;
+    if (active && handler.ttsOwnerKey != _ttsMediaOwnerKey) {
+      handler.bindTtsOwner(
+        ownerKey: _ttsMediaOwnerKey,
+        callbacks: TtsMediaCallbacks(
+          onPlay: _ttsController.resume,
+          onPause: _ttsController.pause,
+          onStop: _ttsController.stop,
+          onPrevious: _ttsController.previous,
+          onNext: _ttsController.next,
+        ),
+      );
+    }
+    if (handler.ttsOwnerKey == _ttsMediaOwnerKey) {
+      final segment = _ttsController.currentSegment;
+      unawaited(handler.publishTtsState(
+        ownerKey: _ttsMediaOwnerKey,
+        title: widget.bookTitle,
+        author: _title,
+        segment: segment?.text,
+        status: switch (status) {
+          TtsPlaybackStatus.playing => 'playing',
+          TtsPlaybackStatus.paused => 'paused',
+          TtsPlaybackStatus.completed => 'completed',
+          TtsPlaybackStatus.error => 'error',
+          _ => 'stopped',
+        },
+      ));
+      if (!active) handler.disposeTtsOwner(_ttsMediaOwnerKey);
+    }
+  }
+
+  void _onTtsChanged() {
+    _syncTtsMediaSession();
+    // stop() may notify synchronously while reader content is being replaced
+    // inside setState. Schedule the reader highlight update outside that call.
+    scheduleMicrotask(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  bool _isTtsBlockHighlighted(int index) {
+    final speech = _speechSession;
+    if (speech != null && (speech.isPlaying || speech.isPaused)) {
+      return speech.currentSegment?.blockIndex == index;
+    }
+    final status = _ttsController.status;
+    if (status != TtsPlaybackStatus.playing &&
+        status != TtsPlaybackStatus.paused) {
+      return false;
+    }
+    return _ttsController.currentSegment?.blockIndex == index;
+  }
+
   void _onAccountChanged() {
     if (!mounted) return;
+    unawaited(_disposeSpeechSession(clearAccountCache: true));
+    unawaited(_ttsController.stop());
     _detail = null;
     _parsedDetail = null;
     _parsedBlocks = null;
@@ -720,6 +849,15 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _applyBlocks(List<_BodyBlock> blocks) {
+    if (!identical(blocks, _blocks)) {
+      _ttsContentRevision++;
+      unawaited(_disposeSpeechSession());
+      if (_ttsController.status == TtsPlaybackStatus.playing ||
+          _ttsController.status == TtsPlaybackStatus.paused) {
+        unawaited(_ttsController.stop());
+      }
+      scheduleMicrotask(_refreshTtsSheet);
+    }
     _blocks = blocks;
     final footnotes = <String, String>{};
     for (final block in blocks) {
@@ -1154,7 +1292,20 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   @override
+  void deactivate() {
+    _readerInputActive = false;
+    super.deactivate();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _readerInputActive = true;
+  }
+
+  @override
   void dispose() {
+    _readerInputActive = false;
     LKClient.sessionRev.removeListener(_onAccountChanged);
     _exitConfirmationTimer?.cancel();
     readerRouteObserver.unsubscribe(this);
@@ -1179,6 +1330,11 @@ class _ReaderPageState extends State<ReaderPage>
     _pageController.dispose();
     _progressN.dispose();
     _positionController.dispose();
+    unawaited(_disposeSpeechSession());
+    _ttsController.removeListener(_onTtsChanged);
+    _ttsController.dispose();
+    _ttsUiRevision.dispose();
+    unawaited(_ttsPlatform.dispose());
     WakelockPlus.disable();
     _systemUi.dispose();
     super.dispose();
@@ -1186,8 +1342,11 @@ class _ReaderPageState extends State<ReaderPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) _resetExitConfirmation();
+    if (state != AppLifecycleState.resumed) {
+      _resetExitConfirmation();
+    }
     _readerForeground = state == AppLifecycleState.resumed;
+    _refreshTtsSheet();
     _volumeKeys.sync(force: _readerForeground);
     switch (state) {
       case AppLifecycleState.resumed:
@@ -1545,6 +1704,13 @@ class _ReaderPageState extends State<ReaderPage>
       _positionPersistTimer?.cancel();
     }
     final loadSerial = ++_loadSerial;
+    unawaited(_disposeSpeechSession());
+    if (_ttsController.status == TtsPlaybackStatus.playing ||
+        _ttsController.status == TtsPlaybackStatus.paused) {
+      unawaited(_ttsController.stop());
+    }
+    _ttsContentRevision++;
+    scheduleMicrotask(_refreshTtsSheet);
     setState(() {
       _loading = true;
       _loadError = null;
@@ -1591,6 +1757,7 @@ class _ReaderPageState extends State<ReaderPage>
       }
       setState(() => _loading = false);
       _resolveAdjacentOrPrefetch();
+      _startAutoTtsIfNeeded();
 
       // 缓存只负责快速展示,仍在后台向服务端刷新,防止正文过期。
       unawaited(_refreshFromNetwork(restore,
@@ -1640,6 +1807,7 @@ class _ReaderPageState extends State<ReaderPage>
       }
       if (!mounted) return;
       setState(() => _loading = false);
+      if (initialLoad) _startAutoTtsIfNeeded();
 
       // 只缓存公开正文或当前账号已解锁的付费正文。
       if (cacheOwnerUid != null) {
@@ -1731,6 +1899,15 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _updateDetailState(LKChapterDetail d, {List<_BodyBlock>? blocks}) {
+    if (_detail != null && (_locked != d.locked || _unlocked != d.unlocked)) {
+      _ttsContentRevision++;
+      unawaited(_disposeSpeechSession());
+      if (_ttsController.status == TtsPlaybackStatus.playing ||
+          _ttsController.status == TtsPlaybackStatus.paused) {
+        unawaited(_ttsController.stop());
+      }
+      scheduleMicrotask(_refreshTtsSheet);
+    }
     _detail = d;
     if (!mounted) return;
     setState(() {
@@ -2275,8 +2452,21 @@ class _ReaderPageState extends State<ReaderPage>
     if (pos < clean.length) buf.write(clean.substring(pos));
   }
 
-  Future<void> _open(int chapterId, String title, {int? volumeId}) async {
+  Future<void> _open(
+    int chapterId,
+    String title, {
+    int? volumeId,
+    bool autoTts = false,
+    String ttsSource = 'system',
+  }) async {
     _resetExitConfirmation();
+    _ttsContentRevision++;
+    _refreshTtsSheet();
+    unawaited(_disposeSpeechSession());
+    if (_ttsController.status == TtsPlaybackStatus.playing ||
+        _ttsController.status == TtsPlaybackStatus.paused) {
+      unawaited(_ttsController.stop());
+    }
     await _finishReadingSession();
     if (!mounted) return;
     Navigator.pushReplacement(
@@ -2288,6 +2478,8 @@ class _ReaderPageState extends State<ReaderPage>
                 chapterId: chapterId,
                 chapterTitle: title,
                 volumeId: volumeId ?? _effectiveVolumeId,
+                autoStartTts: autoTts,
+                initialTtsSource: ttsSource,
               )),
     );
   }
@@ -2434,10 +2626,1622 @@ class _ReaderPageState extends State<ReaderPage>
         curve: Curves.easeOut);
   }
 
+  List<TtsSegment> _allTtsSegments() => splitSpeechSegments(
+        _blocks.indexed
+            .where(
+                (entry) => !entry.$2.isDivider && entry.$2.text != '(本章暂无内容)')
+            .map((entry) => SpeechTextBlock(
+                  blockIndex: entry.$1,
+                  text: entry.$2.text,
+                  image: entry.$2.image,
+                )),
+      )
+          .map((segment) => TtsSegment(
+                blockIndex: segment.blockIndex,
+                startOffset: segment.startOffset,
+                endOffset: segment.endOffset,
+                text: segment.text,
+              ))
+          .toList(growable: false);
+
+  List<TtsSegment> _currentTtsSegments() {
+    final rawAnchor = _paged
+        ? (_logicalAnchor ?? _anchorForPage(_pageIndex))
+        : (_captureScrollAnchor() ?? _logicalAnchor);
+    return _speechSegmentsFromAnchor(_allTtsSegments(), rawAnchor);
+  }
+
+  List<TtsSegment> _speechSegmentsFromAnchor(
+    List<TtsSegment> source,
+    ReadingPosition? rawAnchor,
+  ) {
+    if (source.isEmpty) return source;
+    if (rawAnchor == null) return source;
+    final anchor = _normalizeAnchor(rawAnchor);
+    if (anchor.blockIndex < 0 || anchor.blockIndex >= _blocks.length) {
+      return source;
+    }
+    final block = _blocks[anchor.blockIndex];
+    var offset = anchor.textOffset ?? 0;
+    if (offset > 0 &&
+        offset < block.text.length &&
+        block.text.codeUnitAt(offset - 1) >= 0xd800 &&
+        block.text.codeUnitAt(offset - 1) <= 0xdbff &&
+        block.text.codeUnitAt(offset) >= 0xdc00 &&
+        block.text.codeUnitAt(offset) <= 0xdfff) {
+      offset--;
+    }
+    final index = source.indexWhere((segment) =>
+        segment.blockIndex > anchor.blockIndex ||
+        (segment.blockIndex == anchor.blockIndex &&
+            segment.endOffset > offset));
+    if (index < 0) return const [];
+    final segment = source[index];
+    if (segment.blockIndex != anchor.blockIndex ||
+        offset <= segment.startOffset ||
+        offset >= segment.endOffset) {
+      return source.skip(index).toList(growable: false);
+    }
+    final trimmed = TtsSegment(
+      blockIndex: segment.blockIndex,
+      startOffset: offset,
+      endOffset: segment.endOffset,
+      text: block.text.substring(offset, segment.endOffset),
+    );
+    return [trimmed, ...source.skip(index + 1)];
+  }
+
+  Future<void> _loadTtsEngines() async {
+    if (_ttsEnginesLoading) return;
+    setState(() {
+      _ttsEnginesLoading = true;
+      _ttsEngineError = null;
+    });
+    _refreshTtsSheet();
+    try {
+      final engines = await _systemTts.getEngines();
+      if (!mounted) return;
+      setState(() {
+        _ttsEngines = engines;
+        _ttsEnginesLoading = false;
+        if (_ttsEngineId != null &&
+            !engines.any((engine) => engine.id == _ttsEngineId)) {
+          _ttsEngineId = null;
+          _ttsPreferredSystemVoiceId = null;
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _ttsEnginesLoading = false;
+        _ttsEngineError = error.toString();
+      });
+    } finally {
+      _refreshTtsSheet();
+    }
+  }
+
+  Future<void> _loadTtsVoices() async {
+    if (_ttsVoicesLoading) return;
+    setState(() {
+      _ttsVoicesLoading = true;
+      _ttsVoiceError = null;
+    });
+    _refreshTtsSheet();
+    try {
+      final voices = await _systemTts.getVoices();
+      if (!mounted) return;
+      final selectedId = _ttsPreferredSystemVoiceId ?? _ttsPlatform.voiceId;
+      final selectedVoice =
+          voices.where((voice) => voice.id == selectedId).firstOrNull ??
+              voices
+                  .where((voice) =>
+                      voice.locale?.toLowerCase().startsWith('zh') == true)
+                  .firstOrNull ??
+              voices.firstOrNull;
+      setState(() {
+        _ttsVoices = voices;
+        _ttsVoicesLoading = false;
+        _ttsVoiceError = null;
+        _ttsPreferredSystemVoiceId = selectedVoice?.id;
+        _ttsPlatform.selectVoice(selectedVoice);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _ttsVoicesLoading = false;
+        _ttsVoiceError = error.toString();
+      });
+    } finally {
+      _refreshTtsSheet();
+    }
+  }
+
+  void _startAutoTtsIfNeeded() {
+    if (!widget.autoStartTts ||
+        _autoTtsStarted ||
+        !mounted ||
+        _loading ||
+        _loadError != null ||
+        !_positionRestored) {
+      return;
+    }
+    _autoTtsStarted = true;
+    unawaited(_loadTtsPreferences().then((_) => _startSpeechSession()));
+  }
+
+  String _currentTtsAccountKey() {
+    final session = LKClient.shared.session;
+    return session.uid > 0 ? 'uid:${session.uid}' : 'guest';
+  }
+
+  String _customTtsMetadataKey(String accountKey) =>
+      'custom_ssml_tts_metadata_${Uri.encodeComponent(accountKey)}';
+
+  String _customTtsCredentialKey(String accountKey) =>
+      'custom_ssml_tts_credential_${Uri.encodeComponent(accountKey)}';
+
+  String _ttsPreferencesKey(String accountKey) =>
+      'reader_tts_preferences_v1_${Uri.encodeComponent(accountKey)}';
+
+  Future<void> _loadTtsPreferences() async {
+    final accountKey = _currentTtsAccountKey();
+    if (_ttsSettingsLoadedForAccount == accountKey) return;
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted || accountKey != _currentTtsAccountKey()) return;
+    final raw = preferences.getString(_ttsPreferencesKey(accountKey));
+    if (raw == null || raw.isEmpty) {
+      _ttsSettingsLoadedForAccount = accountKey;
+      return;
+    }
+    try {
+      final values = jsonDecode(raw);
+      if (values is! Map) return;
+      final source = values['source'];
+      final filter = values['languageFilter'];
+      final sleep = values['sleepTimer'];
+      final voiceMap = values['voiceByLanguage'];
+      setState(() {
+        _ttsSourceMode = source is String &&
+                const {'system', 'online', 'custom'}.contains(source)
+            ? source
+            : 'system';
+        _ttsDraftRate =
+            ((values['rate'] as num?)?.toDouble() ?? 1.0).clamp(.5, 3);
+        _ttsSegmentInterval = Duration(
+            milliseconds: (values['segmentIntervalMs'] as num?)?.toInt() ?? 0);
+        _ttsLanguageFilter = ReaderLanguageFilter.values.firstWhere(
+          (value) => value.name == filter,
+          orElse: () => ReaderLanguageFilter.automatic,
+        );
+        _ttsSleepTimer = PlaybackSleepTimer.values.firstWhere(
+          (value) => value.name == sleep,
+          orElse: () => PlaybackSleepTimer.none,
+        );
+        _ttsContinuousChapter = values['continuousChapter'] == true;
+        _ttsPreferredSystemVoiceId = values['systemVoice'] as String?;
+        _ttsEngineId = values['systemEngine'] as String?;
+        _ttsVoiceByLanguage.clear();
+        if (voiceMap is Map) {
+          for (final entry in voiceMap.entries) {
+            if (entry.key is String && entry.value is String) {
+              _ttsVoiceByLanguage[entry.key as String] = entry.value as String;
+            }
+          }
+        }
+      });
+      _ttsSettingsLoadedForAccount = accountKey;
+    } catch (_) {
+      _ttsSettingsLoadedForAccount = accountKey;
+    }
+  }
+
+  Future<void> _saveTtsPreferences() async {
+    final accountKey = _currentTtsAccountKey();
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted || accountKey != _currentTtsAccountKey()) return;
+    await preferences.setString(
+      _ttsPreferencesKey(accountKey),
+      jsonEncode(<String, Object?>{
+        'source': _ttsSourceMode,
+        'rate': _ttsDraftRate,
+        'systemVoice': _ttsPlatform.voiceId,
+        'systemEngine': _ttsEngineId,
+        'voiceByLanguage': _ttsVoiceByLanguage,
+        'languageFilter': _ttsLanguageFilter.name,
+        'segmentIntervalMs': _ttsSegmentInterval.inMilliseconds,
+        'sleepTimer': _ttsSleepTimer.name,
+        'continuousChapter': _ttsContinuousChapter,
+      }),
+    );
+  }
+
+  void _followSpeechSegment(TtsSegment segment) {
+    final anchor = ReadingPosition.text(
+      blockIndex: segment.blockIndex,
+      offset: segment.startOffset,
+    );
+    if (_paged) {
+      final target = _pageForAnchor(anchor);
+      if (target != null &&
+          _pageController.hasClients &&
+          target != _pageIndex) {
+        _pageController.jumpToPage(target);
+      }
+    } else if (_sc.hasClients) {
+      unawaited(_restoreScrollAnchor(anchor, retainAnchor: true));
+    }
+  }
+
+  void _onSpeechSessionChanged() {
+    if (!mounted) return;
+    final segment = _speechSession?.currentSegment;
+    if (segment != null && segment.blockIndex != _lastSpeechScrollBlock) {
+      _lastSpeechScrollBlock = segment.blockIndex;
+      _followSpeechSegment(segment);
+    }
+    if (segment != null && _positionRestored) {
+      final anchor = ReadingPosition.text(
+        blockIndex: segment.blockIndex,
+        offset: segment.startOffset,
+      );
+      _publishPosition(anchor);
+      if (_speechAccountId.isNotEmpty) {
+        unawaited(ReaderTtsResumeStore.save(
+          accountId: _speechAccountId,
+          bookId: widget.bookId,
+          chapterId: widget.chapterId,
+          position: anchor,
+        ));
+      }
+    }
+    _ttsUiRevision.value++;
+    setState(() {});
+    final session = _speechSession;
+    if (session == null ||
+        !session.isCompleted ||
+        !_ttsContinuousChapter ||
+        _ttsSleepTimer == PlaybackSleepTimer.chapterEnd ||
+        _speechAutoAdvanceHandled ||
+        _nextId == null) {
+      return;
+    }
+    _speechAutoAdvanceHandled = true;
+    final nextId = _nextId!;
+    final nextTitle = _nextTitle ?? '';
+    final nextVolumeId = _nextVolumeId;
+    unawaited(_open(
+      nextId,
+      nextTitle,
+      volumeId: nextVolumeId,
+      autoTts: true,
+      ttsSource: _ttsSourceMode,
+    ));
+  }
+
+  Future<void> _stopSpeechPlayback() async {
+    ++_speechStartRevision;
+    _speechStarting = false;
+    final speech = _speechSession;
+    if (speech != null) {
+      await speech.stop();
+    } else {
+      await _ttsController.stop();
+    }
+    if (mounted) {
+      setState(() {});
+      _refreshTtsSheet();
+    }
+  }
+
+  Future<void> _disposeSpeechSession({
+    bool clearAccountCache = false,
+    bool invalidateStart = true,
+  }) async {
+    if (invalidateStart) {
+      ++_speechStartRevision;
+      _speechStarting = false;
+    }
+    final session = _speechSession;
+    final client = _activeSpeechClient;
+    final account = _speechAccountId;
+    // Detach synchronously: an old dispose must never close a newly started
+    // session or the new page's HTTP client after its first await.
+    _speechSession = null;
+    _activeSpeechClient = null;
+    _activeSpeechConfig = null;
+    session?.removeListener(_onSpeechSessionChanged);
+    final handler = activeReaderAudioHandler;
+    final ownsHandler =
+        handler?.speechSessionOwnerKey == _speechSessionOwnerKey;
+    if (ownsHandler) {
+      handler?.unbindSpeechSessionControls(_speechSessionOwnerKey);
+    }
+    if (session != null) {
+      if (ownsHandler) {
+        try {
+          await session.stop();
+        } catch (_) {}
+      }
+      session.dispose();
+      if (clearAccountCache && account.isNotEmpty) {
+        try {
+          await session.clearAccount(account);
+        } catch (_) {}
+      }
+    }
+    client?.close();
+  }
+
+  Future<void> _toggleTtsAtBlock(int blockIndex) async {
+    final speech = _speechSession;
+    if (speech != null && speech.currentSegment?.blockIndex == blockIndex) {
+      if (speech.isPaused) {
+        await speech.resume();
+      } else if (speech.isPlaying) {
+        await speech.pause();
+      } else {
+        await _startSpeechSession(startBlock: blockIndex);
+      }
+      return;
+    }
+    if (speech != null && !speech.isStopped) await speech.stop();
+    if (_ttsController.status == TtsPlaybackStatus.playing ||
+        _ttsController.status == TtsPlaybackStatus.paused) {
+      await _ttsController.stop();
+    }
+    await _startSpeechSession(startBlock: blockIndex);
+  }
+
+  Future<void> _startSpeechSession({int? startBlock}) async {
+    if (_speechStarting || !mounted) return;
+    final revision = ++_speechStartRevision;
+    setState(() {
+      _speechStarting = true;
+      _ttsSessionError = null;
+    });
+    _refreshTtsSheet();
+    try {
+      await _startSpeechSessionImpl(
+          startBlock: startBlock, startRevision: revision);
+    } catch (error) {
+      if (mounted && revision == _speechStartRevision) {
+        _ttsSessionError = error.toString();
+        setState(() {});
+        _refreshTtsSheet();
+      }
+    } finally {
+      if (mounted && revision == _speechStartRevision) {
+        setState(() => _speechStarting = false);
+        _refreshTtsSheet();
+      }
+    }
+  }
+
+  Future<void> _startSpeechSessionImpl(
+      {int? startBlock, required int startRevision}) async {
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      showFloatingPrompt(context, '当前版本的音频文件合成仅支持 Android');
+      return;
+    }
+    final handler = activeReaderAudioHandler;
+    final accountKey = _currentTtsAccountKey();
+    final accountRevision = LKClient.sessionRev.value;
+    final contentRevision = _ttsContentRevision;
+    bool current() =>
+        mounted &&
+        startRevision == _speechStartRevision &&
+        accountRevision == LKClient.sessionRev.value &&
+        contentRevision == _ttsContentRevision;
+    final allSegments = _allTtsSegments();
+    final savedResume = startBlock == null
+        ? await ReaderTtsResumeStore.read(
+            accountId: accountKey,
+            bookId: widget.bookId,
+            chapterId: widget.chapterId,
+          )
+        : null;
+    if (!current()) return;
+    final resumedSegments = savedResume == null
+        ? const <TtsSegment>[]
+        : _speechSegmentsFromAnchor(allSegments, savedResume);
+    final segments = startBlock != null
+        ? allSegments
+            .where((segment) => segment.blockIndex >= startBlock)
+            .toList(growable: false)
+        : resumedSegments.isNotEmpty
+            ? resumedSegments
+            : _currentTtsSegments();
+    if (segments.isEmpty) {
+      if (mounted) showFloatingPrompt(context, '本章没有可朗读内容');
+      return;
+    }
+    if (handler == null) {
+      if (_ttsSourceMode == 'system') {
+        final filtered = const ReaderLanguageSegments()
+            .filter(segments, filter: _ttsLanguageFilter);
+        if (filtered.isEmpty) {
+          if (mounted) showFloatingPrompt(context, '当前语言筛选下没有可朗读内容');
+          return;
+        }
+        await _ttsController.setRate(_ttsDraftRate);
+        if (!current()) return;
+        await _ttsController.play(filtered);
+      } else if (mounted) {
+        showFloatingPrompt(context, '音频服务尚未初始化');
+      }
+      return;
+    }
+    if (!_ttsNotificationPermissionChecked) {
+      _ttsNotificationPermissionChecked = true;
+      try {
+        final notificationsAllowed =
+            await _systemTts.requestNotificationPermission();
+        if (!notificationsAllowed && mounted) {
+          showFloatingPrompt(context, '未开启通知时，锁屏媒体控件可能不可见');
+        }
+      } catch (_) {
+        if (mounted) showFloatingPrompt(context, '通知权限状态未确认，仍会尝试启动听书');
+      }
+    }
+    await _disposeSpeechSession(invalidateStart: false);
+    if (!current()) return;
+    await _ttsController.stop();
+    if (!current()) return;
+    handler.disposeTtsOwner(_ttsMediaOwnerKey);
+
+    late final SpeechAudioSynthesizer synthesizer;
+    late final SpeechSynthesisConfig config;
+    if (_ttsSourceMode == 'system') {
+      if (_ttsEngines.isEmpty) await _loadTtsEngines();
+      if (!current()) return;
+      if (_ttsEngineId != null) {
+        try {
+          await _systemTts.setEngine(_ttsEngineId!);
+        } catch (error) {
+          _ttsSessionError = error.toString();
+          if (current()) {
+            setState(() {});
+            _refreshTtsSheet();
+          }
+          return;
+        }
+      }
+      if (_ttsVoices.isEmpty) await _loadTtsVoices();
+      if (!current()) return;
+      synthesizer = SystemFileSpeechSynthesizer(_systemTts);
+      config = systemSpeechConfig(
+        engineId: _ttsEngineId,
+        voice: _ttsPlatform.voiceId ?? 'default',
+        language: _ttsPlatform.locale ?? 'zh-CN',
+        rate: _ttsDraftRate,
+        availableVoices: _ttsVoices,
+        voiceByLanguage: _ttsVoiceByLanguage,
+      );
+    } else if (_ttsSourceMode == 'gpt_sovits') {
+      throw const SystemTtsException('本地 GPT-SoVITS 推理后端尚未实现。',
+          code: 'LOCAL_GPTSOVITS_NOT_IMPLEMENTED');
+    } else {
+      final preferences = await SharedPreferences.getInstance();
+      if (!current()) return;
+      final metadataJson =
+          preferences.getString(_customTtsMetadataKey(accountKey));
+      if (metadataJson == null || metadataJson.isEmpty) {
+        if (mounted) showFloatingPrompt(context, '请先配置在线或自定义语音接口');
+        return;
+      }
+      final metadata = decodeCustomTtsMetadata(metadataJson);
+      final customConfig = CustomSsmlTtsConfig.fromMetadata(metadata);
+      if (_ttsSourceMode == 'online') {
+        final host =
+            Uri.tryParse(customConfig.endpoint)?.host.toLowerCase() ?? '';
+        if (!host.endsWith('.tts.speech.microsoft.com') ||
+            customConfig.authMode != CustomTtsAuthMode.azureKey) {
+          if (mounted) {
+            showFloatingPrompt(
+                context, '在线自然音源需配置 Azure Speech 区域 Endpoint 和 Azure Key');
+          }
+          return;
+        }
+      }
+      final source = _ttsSourceMode == 'online' ? 'cloud' : 'custom';
+      final savedConfig =
+          speechConfigFromCustomMetadata(metadata, rate: _ttsDraftRate);
+      config = SpeechSynthesisConfig(
+        source: source,
+        voice: savedConfig.voice,
+        language: savedConfig.language,
+        rate: savedConfig.rate,
+        options: savedConfig.options,
+        fileExtension: savedConfig.fileExtension,
+      );
+      final client = CustomSsmlTts(
+        credentialStorageKey: _customTtsCredentialKey(accountKey),
+      );
+      _activeSpeechClient = client;
+      synthesizer = ConfiguredCustomSpeechSynthesizer(client: client);
+    }
+
+    if (!current()) return;
+    final speech = ReaderSpeechSession(
+      handler: handler,
+      synthesizer: synthesizer,
+    )
+      ..setSegmentInterval(_ttsSegmentInterval)
+      ..setSleepTimer(_ttsSleepTimer);
+    _speechAccountId = accountKey;
+    _speechSession = speech;
+    _activeSpeechConfig = config;
+    _speechAutoAdvanceHandled = false;
+    _lastSpeechScrollBlock = null;
+    _ttsSessionError = null;
+    speech.addListener(_onSpeechSessionChanged);
+    handler.bindSpeechSessionControls(
+      ownerKey: _speechSessionOwnerKey,
+      callbacks: TtsMediaCallbacks(
+        onPlay: speech.onHandlerPlay,
+        onPause: speech.onHandlerPaused,
+        onStop: speech.onHandlerStopped,
+        onPrevious: speech.onHandlerPrevious,
+        onNext: speech.onHandlerNext,
+        onError: speech.reportPlaybackError,
+      ),
+    );
+    _ttsUiRevision.value++;
+    setState(() {});
+    try {
+      await speech.start(
+        segments,
+        accountId: accountKey,
+        config: config,
+        languageFilter: _ttsLanguageFilter,
+        title: widget.bookTitle,
+        artist: _title,
+      );
+    } catch (error) {
+      _ttsSessionError = error.toString();
+      if (current()) {
+        setState(() {});
+        _refreshTtsSheet();
+      }
+    }
+  }
+
+  Future<void> _applySystemSpeechVoice() async {
+    final speech = _speechSession;
+    if (speech != null &&
+        _activeSpeechConfig?.source == 'system' &&
+        !speech.isStopped) {
+      final config = systemSpeechConfig(
+        engineId: _ttsEngineId,
+        voice: _ttsPlatform.voiceId ?? 'default',
+        language: _ttsPlatform.locale ?? 'zh-CN',
+        rate: _ttsDraftRate,
+        availableVoices: _ttsVoices,
+        voiceByLanguage: _ttsVoiceByLanguage,
+      );
+      _activeSpeechConfig = config;
+      await speech.updateConfig(config);
+    } else if (_ttsController.status == TtsPlaybackStatus.playing ||
+        _ttsController.status == TtsPlaybackStatus.paused) {
+      await _ttsController.stop();
+    }
+    await _saveTtsPreferences();
+    _refreshTtsSheet();
+  }
+
+  Future<void> _updateSpeechRate(double rate) async {
+    _ttsDraftRate = rate;
+    final session = _speechSession;
+    final current = _activeSpeechConfig;
+    if (session != null && current != null && !session.isStopped) {
+      final next = SpeechSynthesisConfig(
+        source: current.source,
+        voice: current.voice,
+        language: current.language,
+        rate: rate,
+        options: current.options,
+        fileExtension: current.fileExtension,
+      );
+      _activeSpeechConfig = next;
+      try {
+        await session.updateConfig(next);
+      } catch (error) {
+        _ttsSessionError = error.toString();
+      }
+    } else {
+      await _ttsController.setRate(rate);
+    }
+    unawaited(_saveTtsPreferences());
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _retryReaderAudioService() async {
+    if (_mediaServiceRetrying || !mounted) return;
+    _mediaServiceRetrying = true;
+    _refreshTtsSheet();
+    try {
+      await _disposeSpeechSession();
+      await _ttsController.stop();
+      if (!mounted) return;
+      await ensureReaderAudioHandler().timeout(const Duration(seconds: 15));
+      _ttsSessionError = null;
+    } catch (_) {
+      if (mounted) _ttsSessionError = '媒体服务连接失败，请检查应用后台权限后重试。';
+    } finally {
+      _mediaServiceRetrying = false;
+      _refreshTtsSheet();
+    }
+  }
+
+  Future<void> _loadCustomSpeechProfile() async {
+    final account = _currentTtsAccountKey();
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted || account != _currentTtsAccountKey()) return;
+    final raw = preferences.getString(_customTtsMetadataKey(account));
+    try {
+      _customSpeechProfile = raw == null || raw.isEmpty
+          ? null
+          : CustomSsmlTtsConfig.fromMetadata(decodeCustomTtsMetadata(raw));
+      _customSpeechProfileError = null;
+    } catch (_) {
+      _customSpeechProfile = null;
+      _customSpeechProfileError = '已保存的服务配置无效，请重新配置。';
+    }
+    _refreshTtsSheet();
+  }
+
+  Future<void> _openCustomTtsSettings() async {
+    await _disposeSpeechSession();
+    await _ttsController.stop();
+    if (!mounted) return;
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final mediaHandler = activeReaderAudioHandler;
+    if (mediaHandler == null) {
+      showFloatingPrompt(context, '音频服务尚未初始化，请稍后重试');
+      return;
+    }
+    final accountKey = _currentTtsAccountKey();
+    final service = CustomSsmlTts(
+      credentialStorageKey: _customTtsCredentialKey(accountKey),
+    );
+    try {
+      await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+        builder: (_) => CustomTtsSettingsPage(
+          tts: service,
+          preferences: preferences,
+          metadataStorageKey: _customTtsMetadataKey(accountKey),
+          createPlayer: () => AudioHandlerCustomTtsPreviewPlayer(
+            ReaderAudioHandlerTtsAdapter(mediaHandler),
+          ),
+        ),
+      ));
+    } finally {
+      service.close();
+      if (mounted) await _loadCustomSpeechProfile();
+    }
+  }
+
+  Future<void> _prepareSystemSpeechOptions() async {
+    if (_ttsEngines.isEmpty) await _loadTtsEngines();
+    if (!mounted || _ttsSourceMode != 'system') return;
+    if (_ttsEngineId != null) {
+      try {
+        await _systemTts.setEngine(_ttsEngineId!);
+      } catch (error) {
+        if (mounted) setState(() => _ttsEngineError = error.toString());
+        _refreshTtsSheet();
+        return;
+      }
+    }
+    if (mounted && _ttsSourceMode == 'system' && _ttsVoices.isEmpty) {
+      await _loadTtsVoices();
+    }
+  }
+
+  Future<void> _showTtsSheet() async {
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      showFloatingPrompt(context, '系统朗读初版暂支持 Android');
+      return;
+    }
+    if (_loading ||
+        _loadError != null ||
+        _blocks.isEmpty ||
+        !_positionRestored) {
+      showFloatingPrompt(context, '正文加载完成后可开始朗读');
+      return;
+    }
+    final accountRevision = LKClient.sessionRev.value;
+    final contentRevision = _ttsContentRevision;
+    bool validContent() =>
+        mounted &&
+        accountRevision == LKClient.sessionRev.value &&
+        contentRevision == _ttsContentRevision &&
+        !_loading &&
+        _loadError == null &&
+        _positionRestored;
+    await _loadTtsPreferences();
+    if (!validContent()) return;
+    await _loadCustomSpeechProfile();
+    if (_ttsSourceMode == 'system') {
+      unawaited(_prepareSystemSpeechOptions());
+    }
+    if (!mounted || !validContent()) return;
+    if (_activeSpeechConfig != null) _ttsDraftRate = _activeSpeechConfig!.rate;
+    var changingSource = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      sheetAnimationStyle: AppMotion.style(context),
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      clipBehavior: Clip.antiAlias,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheet) => ValueListenableBuilder<int>(
+          valueListenable: _ttsUiRevision,
+          builder: (context, _, __) => AnimatedBuilder(
+            animation: _ttsController,
+            builder: (context, _) {
+              if (!validContent()) {
+                return SafeArea(
+                    child: ListTile(
+                  title: const Text('章节内容或账户已变化，请重新打开朗读'),
+                  trailing: IconButton(
+                    tooltip: '关闭朗读',
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(sheetContext),
+                  ),
+                ));
+              }
+              final speech = _speechSession;
+              final segment =
+                  speech?.currentSegment ?? _ttsController.currentSegment;
+              final status = speech == null
+                  ? (_ttsSessionError == null
+                      ? _ttsController.status
+                      : TtsPlaybackStatus.error)
+                  : speech.isPlaying
+                      ? TtsPlaybackStatus.playing
+                      : speech.isPaused
+                          ? TtsPlaybackStatus.paused
+                          : speech.isCompleted
+                              ? TtsPlaybackStatus.completed
+                              : speech.error != null || _ttsSessionError != null
+                                  ? TtsPlaybackStatus.error
+                                  : TtsPlaybackStatus.stopped;
+              final position = speech?.position ?? _ttsController.position;
+              final segmentCount =
+                  speech?.segmentCount ?? _ttsController.segmentCount;
+              final error =
+                  speech?.error ?? _ttsSessionError ?? _ttsController.error;
+              final loading = _speechStarting || speech?.isLoading == true;
+              final playing = status == TtsPlaybackStatus.playing;
+              final preparing = status == TtsPlaybackStatus.idle ||
+                  status == TtsPlaybackStatus.stopped ||
+                  status == TtsPlaybackStatus.completed ||
+                  status == TtsPlaybackStatus.error;
+              final statusText = loading
+                  ? '正在准备语音…'
+                  : status == TtsPlaybackStatus.playing
+                      ? '正在朗读 · 第 ${position + 1}/$segmentCount 段'
+                      : status == TtsPlaybackStatus.paused
+                          ? '已暂停 · 第 ${position + 1}/$segmentCount 段'
+                          : status == TtsPlaybackStatus.completed
+                              ? '本章朗读完成'
+                              : status == TtsPlaybackStatus.error
+                                  ? '朗读失败：$error'
+                                  : '准备就绪 · 从当前阅读位置开始';
+              return ReaderListeningSheet(
+                onClose: () => Navigator.pop(sheetContext),
+                controls: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton.filledTonal(
+                      tooltip: '上一段',
+                      onPressed: validContent() &&
+                              _readerForeground &&
+                              (playing || status == TtsPlaybackStatus.paused) &&
+                              segment != null &&
+                              position > 0
+                          ? () {
+                              if (validContent()) {
+                                final speech = _speechSession;
+                                unawaited(speech != null
+                                    ? speech.previous()
+                                    : _ttsController.previous());
+                              }
+                            }
+                          : null,
+                      icon: const Icon(Icons.skip_previous_rounded),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      iconSize: 32,
+                      style:
+                          IconButton.styleFrom(minimumSize: const Size(64, 56)),
+                      tooltip: playing
+                          ? '暂停朗读'
+                          : status == TtsPlaybackStatus.paused
+                              ? '恢复朗读'
+                              : '从当前位置朗读',
+                      onPressed: loading ||
+                              (_ttsSourceMode == 'system' &&
+                                  _ttsVoicesLoading) ||
+                              !validContent()
+                          ? null
+                          : () async {
+                              if (!validContent() || !_readerForeground) {
+                                return;
+                              }
+                              final speech = _speechSession;
+                              if (playing) {
+                                if (speech != null) {
+                                  await speech.pause();
+                                } else {
+                                  await _ttsController.pause();
+                                }
+                              } else if (status == TtsPlaybackStatus.paused) {
+                                if (speech != null) {
+                                  await speech.resume();
+                                } else {
+                                  await _ttsController.resume();
+                                }
+                              } else if (preparing) {
+                                await _startSpeechSession();
+                              }
+                            },
+                      icon: Icon(playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filledTonal(
+                      tooltip: '下一段',
+                      onPressed: validContent() &&
+                              _readerForeground &&
+                              (playing ||
+                                  status == TtsPlaybackStatus.paused ||
+                                  status == TtsPlaybackStatus.error) &&
+                              segment != null &&
+                              position + 1 < segmentCount
+                          ? () {
+                              if (validContent()) {
+                                final speech = _speechSession;
+                                unawaited(speech != null
+                                    ? speech.next()
+                                    : _ttsController.next());
+                              }
+                            }
+                          : null,
+                      icon: const Icon(Icons.skip_next_rounded),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filledTonal(
+                      tooltip: '停止朗读',
+                      onPressed: !loading &&
+                              (status == TtsPlaybackStatus.idle ||
+                                  status == TtsPlaybackStatus.stopped)
+                          ? null
+                          : _stopSpeechPlayback,
+                      icon: const Icon(Icons.stop_rounded),
+                    ),
+                  ],
+                ),
+                content: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      ListeningPlaybackCard(
+                        title: '${widget.bookTitle} · $_title',
+                        status: statusText,
+                        position: position,
+                        segmentCount: segmentCount,
+                        text: segment?.text,
+                        loading: loading,
+                        hasError: status == TtsPlaybackStatus.error,
+                      ),
+                      if (activeReaderAudioHandler == null)
+                        Card.filled(
+                            child: ListTile(
+                          leading: const Icon(Icons.info_outline_rounded),
+                          title: const Text('媒体服务尚未连接'),
+                          subtitle:
+                              const Text('系统朗读使用兼容模式；连接后可使用预缓存、睡眠定时及完整后台控制。'),
+                          trailing: TextButton(
+                              onPressed: _mediaServiceRetrying
+                                  ? null
+                                  : _retryReaderAudioService,
+                              child:
+                                  Text(_mediaServiceRetrying ? '连接中…' : '重连')),
+                        )),
+                      const SizedBox(height: 14),
+                      Text('语速 ${_ttsDraftRate.toStringAsFixed(2)}×'),
+                      Slider(
+                        min: .5,
+                        max: 3,
+                        divisions: 25,
+                        value: _ttsDraftRate.clamp(.5, 3),
+                        label: '${_ttsDraftRate.toStringAsFixed(2)}×',
+                        onChanged: (value) =>
+                            setSheet(() => _ttsDraftRate = value),
+                        onChangeEnd: (value) {
+                          if (validContent()) {
+                            unawaited(_updateSpeechRate(value));
+                          }
+                        },
+                      ),
+                      ListeningSection(
+                          title: '语音来源',
+                          child: ListeningSourcePicker(
+                            value: _ttsSourceMode,
+                            enabled: !changingSource,
+                            onChanged: (source) async {
+                              if (changingSource || source == _ttsSourceMode) {
+                                return;
+                              }
+                              setSheet(() => changingSource = true);
+                              try {
+                                await _disposeSpeechSession();
+                                await _ttsController.stop();
+                                if (!sheetContext.mounted) return;
+                                setSheet(() {
+                                  _ttsSourceMode = source;
+                                  _ttsSessionError = null;
+                                });
+                                unawaited(_saveTtsPreferences());
+                                if (source == 'system') {
+                                  final engineTask = _ttsEngines.isEmpty
+                                      ? _loadTtsEngines()
+                                      : Future<void>.value();
+                                  setSheet(() {});
+                                  await engineTask;
+                                  try {
+                                    if (_ttsEngineId != null) {
+                                      await _systemTts.setEngine(_ttsEngineId!);
+                                    }
+                                    if (_ttsVoices.isEmpty) {
+                                      await _loadTtsVoices();
+                                    }
+                                  } catch (error) {
+                                    if (mounted) {
+                                      setState(() =>
+                                          _ttsEngineError = error.toString());
+                                    }
+                                  }
+                                  if (sheetContext.mounted) setSheet(() {});
+                                }
+                              } finally {
+                                if (sheetContext.mounted) {
+                                  setSheet(() => changingSource = false);
+                                }
+                              }
+                            },
+                          )),
+                      const SizedBox(height: 12),
+                      if (changingSource)
+                        const LinearProgressIndicator(minHeight: 2),
+                      if (_ttsSourceMode == 'system')
+                        ListeningSection(
+                            title: '音色与引擎',
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  if (_ttsSourceMode == 'system' &&
+                                      _ttsEnginesLoading)
+                                    const LinearProgressIndicator(minHeight: 2)
+                                  else if (_ttsSourceMode == 'system' &&
+                                      _ttsEngineError != null)
+                                    ListTile(
+                                      dense: true,
+                                      leading: const Icon(
+                                          Icons.info_outline_rounded),
+                                      title: Text(_ttsEngineError!),
+                                      trailing: IconButton(
+                                        tooltip: '重新检测引擎',
+                                        onPressed: () async {
+                                          final task = _loadTtsEngines();
+                                          setSheet(() {});
+                                          await task;
+                                          if (sheetContext.mounted) {
+                                            setSheet(() {});
+                                          }
+                                        },
+                                        icon: const Icon(Icons.refresh_rounded),
+                                      ),
+                                    )
+                                  else if (_ttsSourceMode == 'system')
+                                    DropdownButtonFormField<String>(
+                                      key: ValueKey(
+                                          'system-tts-engine-$_ttsEngineId'),
+                                      initialValue: _ttsEngineId ?? 'default',
+                                      isExpanded: true,
+                                      decoration: const InputDecoration(
+                                        labelText: '系统朗读引擎',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                      items: [
+                                        const DropdownMenuItem(
+                                          value: 'default',
+                                          child: Text('系统默认引擎'),
+                                        ),
+                                        for (final engine in _ttsEngines)
+                                          DropdownMenuItem(
+                                            value: engine.id,
+                                            child: Text(
+                                              '${engine.label} · ${engine.id}',
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                      ],
+                                      onChanged: (id) async {
+                                        if (id == null ||
+                                            id == (_ttsEngineId ?? 'default')) {
+                                          return;
+                                        }
+                                        await _disposeSpeechSession();
+                                        await _ttsController.stop();
+                                        try {
+                                          await _systemTts.setEngine(id);
+                                          if (!mounted ||
+                                              !sheetContext.mounted) {
+                                            return;
+                                          }
+                                          setState(() {
+                                            _ttsEngineId =
+                                                id == 'default' ? null : id;
+                                            _ttsVoices = const [];
+                                            _ttsPreferredSystemVoiceId = null;
+                                            _ttsVoiceByLanguage.clear();
+                                          });
+                                          _ttsPlatform.selectVoice(null);
+                                          await _saveTtsPreferences();
+                                          await _loadTtsVoices();
+                                          if (sheetContext.mounted) {
+                                            setSheet(() {});
+                                          }
+                                        } catch (error) {
+                                          if (!mounted) return;
+                                          setState(() => _ttsEngineError =
+                                              error.toString());
+                                          if (sheetContext.mounted) {
+                                            setSheet(() {});
+                                          }
+                                        }
+                                      },
+                                    ),
+                                  if (_ttsSourceMode == 'system' &&
+                                      _ttsVoicesLoading)
+                                    const LinearProgressIndicator(minHeight: 2)
+                                  else if (_ttsSourceMode == 'system' &&
+                                      _ttsVoiceError != null)
+                                    ListTile(
+                                      dense: true,
+                                      leading: const Icon(
+                                          Icons.info_outline_rounded),
+                                      title: Text(_ttsVoiceError!),
+                                      trailing: IconButton(
+                                        tooltip: '重新检测语音',
+                                        onPressed: () async {
+                                          final task = _loadTtsVoices();
+                                          setSheet(() {});
+                                          await task;
+                                          if (sheetContext.mounted) {
+                                            setSheet(() {});
+                                          }
+                                        },
+                                        icon: const Icon(Icons.refresh_rounded),
+                                      ),
+                                    )
+                                  else if (_ttsSourceMode == 'system' &&
+                                      _ttsVoices.isEmpty)
+                                    const ListTile(
+                                      dense: true,
+                                      leading:
+                                          Icon(Icons.warning_amber_rounded),
+                                      title: Text('系统未提供可用语音，请检查设备语音设置'),
+                                    )
+                                  else if (_ttsSourceMode == 'system')
+                                    DropdownButtonFormField<String>(
+                                      key: ValueKey(_ttsPlatform.voiceId),
+                                      isExpanded: true,
+                                      initialValue: _ttsVoices.any((v) =>
+                                              v.id == _ttsPlatform.voiceId)
+                                          ? _ttsPlatform.voiceId
+                                          : null,
+                                      decoration: const InputDecoration(
+                                        labelText: '系统语音',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                      items: [
+                                        for (final voice in _ttsVoices)
+                                          DropdownMenuItem(
+                                            value: voice.id,
+                                            child: Text(
+                                              '${voice.name} · ${voice.locale ?? '未知语言'}${voice.networkRequired == true ? ' · 需联网' : ''}',
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                      ],
+                                      onChanged: (id) {
+                                        final voice = _ttsVoices
+                                            .where((item) => item.id == id)
+                                            .firstOrNull;
+                                        setSheet(() {
+                                          _ttsPlatform.selectVoice(voice);
+                                          _ttsPreferredSystemVoiceId =
+                                              voice?.id;
+                                        });
+                                        unawaited(_applySystemSpeechVoice());
+                                      },
+                                    ),
+                                  if (_ttsSourceMode == 'system' &&
+                                      _ttsVoices.isNotEmpty)
+                                    ExpansionTile(
+                                      tilePadding: EdgeInsets.zero,
+                                      title: const Text('分语言音色'),
+                                      subtitle: activeReaderAudioHandler == null
+                                          ? const Text('连接媒体服务后可用')
+                                          : null,
+                                      children: [
+                                        for (final language in const [
+                                          ('chinese', '中文', 'zh'),
+                                          ('japanese', '日语', 'ja'),
+                                          ('korean', '韩语', 'ko'),
+                                        ])
+                                          ListTile(
+                                            dense: true,
+                                            title: Text(language.$2),
+                                            trailing: DropdownButton<String>(
+                                              value: _ttsVoices.any((voice) =>
+                                                      voice.id ==
+                                                          _ttsVoiceByLanguage[
+                                                              language.$1] &&
+                                                      voice.locale
+                                                              ?.toLowerCase()
+                                                              .startsWith(
+                                                                  language
+                                                                      .$3) ==
+                                                          true)
+                                                  ? _ttsVoiceByLanguage[
+                                                      language.$1]
+                                                  : '',
+                                              items: [
+                                                const DropdownMenuItem(
+                                                  value: '',
+                                                  child: Text('自动'),
+                                                ),
+                                                for (final voice
+                                                    in _ttsVoices.where(
+                                                  (item) =>
+                                                      item.locale
+                                                          ?.toLowerCase()
+                                                          .startsWith(
+                                                              language.$3) ==
+                                                      true,
+                                                ))
+                                                  DropdownMenuItem(
+                                                    value: voice.id,
+                                                    child: Text(
+                                                      voice.name,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                              ],
+                                              onChanged:
+                                                  activeReaderAudioHandler ==
+                                                          null
+                                                      ? null
+                                                      : (id) {
+                                                          setSheet(() {
+                                                            if (id == null ||
+                                                                id.isEmpty) {
+                                                              _ttsVoiceByLanguage
+                                                                  .remove(
+                                                                      language
+                                                                          .$1);
+                                                            } else {
+                                                              _ttsVoiceByLanguage[
+                                                                  language
+                                                                      .$1] = id;
+                                                            }
+                                                          });
+                                                          unawaited(
+                                                              _applySystemSpeechVoice());
+                                                        },
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                ])),
+                      if (_ttsSourceMode != 'system') ...[
+                        ListeningSection(
+                            title: '服务配置',
+                            child: Card.filled(
+                              margin: EdgeInsets.zero,
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 8),
+                                leading:
+                                    const Icon(Icons.settings_voice_rounded),
+                                title: Text(_customSpeechProfile
+                                            ?.displayName.isNotEmpty ==
+                                        true
+                                    ? _customSpeechProfile!.displayName
+                                    : '尚未配置语音服务'),
+                                subtitle: Text(_customSpeechProfile == null
+                                    ? (_customSpeechProfileError ??
+                                        '填写服务地址和音色；Azure 还需要区域密钥。')
+                                    : '${Uri.tryParse(_customSpeechProfile!.endpoint)?.host ?? ''} · ${_customSpeechProfile!.locale}\n配置已保存，连接状态以试听为准'),
+                                trailing:
+                                    const Icon(Icons.chevron_right_rounded),
+                                onTap: _openCustomTtsSettings,
+                              ),
+                            )),
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          onPressed: _openCustomTtsSettings,
+                          icon: const Icon(Icons.cloud_outlined),
+                          label: const Text('配置在线 / 自定义 SSML 语音'),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      ExpansionTile(
+                        key:
+                            const PageStorageKey('listening-playback-settings'),
+                        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+                        childrenPadding:
+                            const EdgeInsets.only(top: 8, bottom: 8),
+                        title: const Text('播放设置'),
+                        subtitle: const Text('语言筛选 · 睡眠定时 · 连续朗读'),
+                        leading: const Icon(Icons.tune_rounded),
+                        children: [
+                          DropdownButtonFormField<ReaderLanguageFilter>(
+                            initialValue: _ttsLanguageFilter,
+                            decoration: const InputDecoration(
+                              labelText: '朗读语言',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: ReaderLanguageFilter.automatic,
+                                child: Text('自动识别'),
+                              ),
+                              DropdownMenuItem(
+                                value: ReaderLanguageFilter.chineseOnly,
+                                child: Text('仅中文'),
+                              ),
+                              DropdownMenuItem(
+                                value: ReaderLanguageFilter.japaneseOnly,
+                                child: Text('仅日文'),
+                              ),
+                            ],
+                            onChanged: (value) async {
+                              if (value == null) return;
+                              await _disposeSpeechSession();
+                              await _ttsController.stop();
+                              if (!sheetContext.mounted) return;
+                              setSheet(() => _ttsLanguageFilter = value);
+                              unawaited(_saveTtsPreferences());
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<int>(
+                            initialValue: _ttsSegmentInterval.inMilliseconds,
+                            decoration: const InputDecoration(
+                              labelText: '语段间隔',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 0, child: Text('无间隔')),
+                              DropdownMenuItem(
+                                  value: 500, child: Text('0.5 秒')),
+                              DropdownMenuItem(value: 1000, child: Text('1 秒')),
+                              DropdownMenuItem(value: 2000, child: Text('2 秒')),
+                            ],
+                            onChanged: activeReaderAudioHandler == null
+                                ? null
+                                : (value) {
+                                    if (value == null) return;
+                                    setSheet(() => _ttsSegmentInterval =
+                                        Duration(milliseconds: value));
+                                    _speechSession?.setSegmentInterval(
+                                        Duration(milliseconds: value));
+                                    unawaited(_saveTtsPreferences());
+                                  },
+                          ),
+                          const SizedBox(height: 8),
+                          DropdownButtonFormField<PlaybackSleepTimer>(
+                            initialValue: _ttsSleepTimer,
+                            decoration: const InputDecoration(
+                              labelText: '睡眠定时',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                  value: PlaybackSleepTimer.none,
+                                  child: Text('关闭')),
+                              DropdownMenuItem(
+                                  value: PlaybackSleepTimer.minutes15,
+                                  child: Text('15 分钟')),
+                              DropdownMenuItem(
+                                  value: PlaybackSleepTimer.minutes30,
+                                  child: Text('30 分钟')),
+                              DropdownMenuItem(
+                                  value: PlaybackSleepTimer.minutes60,
+                                  child: Text('60 分钟')),
+                              DropdownMenuItem(
+                                  value: PlaybackSleepTimer.chapterEnd,
+                                  child: Text('本章结束时停止')),
+                            ],
+                            onChanged: activeReaderAudioHandler == null
+                                ? null
+                                : (value) {
+                                    if (value == null) return;
+                                    setSheet(() => _ttsSleepTimer = value);
+                                    _speechSession?.setSleepTimer(value);
+                                    unawaited(_saveTtsPreferences());
+                                  },
+                          ),
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('连续朗读下一章'),
+                            value: _ttsContinuousChapter,
+                            onChanged: activeReaderAudioHandler == null
+                                ? null
+                                : (value) {
+                                    setSheet(
+                                        () => _ttsContinuousChapter = value);
+                                    unawaited(_saveTtsPreferences());
+                                  },
+                          ),
+                        ],
+                      ),
+                      ExpansionTile(
+                        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+                        title: const Text('使用说明与功能状态'),
+                        leading: const Icon(Icons.info_outline_rounded),
+                        children: [
+                          const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: Text(
+                                  '后台与锁屏通过媒体通知控制；暂停后从当前语段开头恢复。在线音源会发送正文到配置的服务。')),
+                          const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: Text(
+                                'Azure 在线音色需配置区域 Endpoint 与 Azure Key；会联网发送正文并按服务商规则计费。'),
+                          ),
+                          if (_ttsSourceMode == 'custom')
+                            const Padding(
+                              padding: EdgeInsets.only(top: 8),
+                              child: Text(
+                                  '自定义 SSML 会将朗读正文发送至你配置的 HTTPS Endpoint。'),
+                            ),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: Text(
+                                '本地 GPT-SoVITS：尚未实现手机推理，当前不可用。电脑导出的模型包不代表手机已经支持。'),
+                          ),
+                        ],
+                      ),
+                    ]),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showBookmarks() async {
+    if (_loading ||
+        _loadError != null ||
+        _blocks.isEmpty ||
+        !_positionRestored) {
+      showFloatingPrompt(context, '正文加载完成后可使用书签');
+      return;
+    }
+    final session = LKClient.shared.session;
+    final loggedIn = session.isLoggedIn;
+    if (loggedIn && session.uid <= 0) {
+      showFloatingPrompt(context, '账户信息尚未就绪，暂时无法使用书签');
+      return;
+    }
+    final uid = loggedIn ? session.uid : 0;
+    final revision = LKClient.sessionRev.value;
+    bool sameAccount() =>
+        mounted &&
+        loggedIn == session.isLoggedIn &&
+        (!loggedIn || uid == session.uid) &&
+        revision == LKClient.sessionRev.value;
+    List<ReaderBookmark> items;
+    try {
+      items = await ReaderBookmarkStore.list(
+          uid: uid, bookId: widget.bookId, chapterId: widget.chapterId);
+    } catch (_) {
+      if (mounted) showFloatingPrompt(context, '读取书签失败');
+      return;
+    }
+    if (!sameAccount()) return;
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      sheetAnimationStyle: AppMotion.style(context),
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      clipBehavior: Clip.antiAlias,
+      builder: (sheetContext) => ValueListenableBuilder<int>(
+        valueListenable: LKClient.sessionRev,
+        builder: (sheetContext, _, __) {
+          if (!sameAccount()) {
+            return SafeArea(
+                child: ListTile(
+                    title: const Text('账户已切换'),
+                    trailing: IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(sheetContext))));
+          }
+          return StatefulBuilder(builder: (sheetContext, setSheet) {
+            return SafeArea(
+                top: false,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(sheetContext).height * .7),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    M3SheetHeader(
+                        title: '本章书签',
+                        icon: Icons.bookmark_outline_rounded,
+                        onClose: () => Navigator.pop(sheetContext)),
+                    const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 20),
+                        child: Text('书签仅保存在本机，按当前账户隔离',
+                            style: TextStyle(fontSize: 12))),
+                    ListTile(
+                        leading: const Icon(Icons.bookmark_add_outlined),
+                        title: const Text('保存当前位置'),
+                        onTap: () async {
+                          if (!sameAccount()) {
+                            Navigator.pop(sheetContext);
+                            return;
+                          }
+                          final raw = _paged
+                              ? (_logicalAnchor ?? _anchorForPage(_pageIndex))
+                              : (_captureScrollAnchor() ?? _logicalAnchor);
+                          if (raw == null || _blocks.isEmpty) return;
+                          final position = _normalizeAnchor(raw);
+                          final block = _blocks[position.blockIndex];
+                          final offset = position.textOffset ?? 0;
+                          final start =
+                              (offset - 24).clamp(0, block.text.length);
+                          final end = (offset + 24).clamp(0, block.text.length);
+                          if (block.image == null && start == end) {
+                            showFloatingPrompt(context, '此位置没有可保存的正文');
+                            return;
+                          }
+                          final now = DateTime.now();
+                          final bookmark = ReaderBookmark(
+                              id: '${now.microsecondsSinceEpoch}',
+                              bookId: widget.bookId,
+                              chapterId: widget.chapterId,
+                              chapterTitle: _title,
+                              position: position,
+                              context: block.text.substring(start, end),
+                              contextOffset: offset - start,
+                              createdAt: now,
+                              imageFingerprint: block.image == null
+                                  ? null
+                                  : bookmarkImageFingerprint(block.image!));
+                          try {
+                            await ReaderBookmarkStore.add(
+                                uid: uid, bookmark: bookmark);
+                            if (!mounted ||
+                                !sameAccount() ||
+                                !sheetContext.mounted) {
+                              return;
+                            }
+                            setSheet(() => items = [...items, bookmark]);
+                            showFloatingPrompt(context, '已保存本地书签');
+                          } catch (_) {
+                            if (mounted && sameAccount()) {
+                              showFloatingPrompt(context, '保存书签失败');
+                            }
+                          }
+                        }),
+                    Flexible(
+                        child: items.isEmpty
+                            ? const Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Text('本章暂无书签'))
+                            : ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: items.length,
+                                itemBuilder: (ctx, i) {
+                                  final bookmark = items[items.length - 1 - i];
+                                  final date = bookmark.createdAt.toLocal();
+                                  final time =
+                                      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+                                  return ListTile(
+                                    title: Text(
+                                        bookmark.context.isEmpty
+                                            ? '插画'
+                                            : bookmark.context,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis),
+                                    subtitle: Text(
+                                        '${bookmark.chapterTitle} · $time'),
+                                    trailing: IconButton(
+                                        tooltip: '删除书签',
+                                        icon: const Icon(
+                                            Icons.delete_outline_rounded),
+                                        onPressed: () async {
+                                          if (!sameAccount()) {
+                                            Navigator.pop(sheetContext);
+                                            return;
+                                          }
+                                          try {
+                                            await ReaderBookmarkStore.delete(
+                                                uid: uid,
+                                                bookId: widget.bookId,
+                                                chapterId: widget.chapterId,
+                                                id: bookmark.id);
+                                            if (!sameAccount() ||
+                                                !sheetContext.mounted) {
+                                              return;
+                                            }
+                                            setSheet(() => items = items
+                                                .where((item) =>
+                                                    item.id != bookmark.id)
+                                                .toList());
+                                          } catch (_) {
+                                            if (mounted && sameAccount()) {
+                                              showFloatingPrompt(
+                                                  context, '删除书签失败');
+                                            }
+                                          }
+                                        }),
+                                    onTap: () {
+                                      if (!sameAccount()) {
+                                        Navigator.pop(sheetContext);
+                                        return;
+                                      }
+                                      final position = resolveBookmark(
+                                          bookmark,
+                                          _blocks
+                                              .map((b) => (
+                                                    text: b.text,
+                                                    image: b.image
+                                                  ))
+                                              .toList());
+                                      if (position == null) {
+                                        showFloatingPrompt(
+                                            context, '正文已变化，书签位置失效');
+                                        return;
+                                      }
+                                      Navigator.pop(sheetContext);
+                                      unawaited(_seekToProgress(
+                                          _progressForAnchor(position),
+                                          position: position));
+                                    },
+                                  );
+                                })),
+                  ]),
+                ));
+          });
+        },
+      ),
+    );
+  }
+
   /// 从底部阅读进度条跳转到本章指定位置。
-  Future<void> _seekToProgress(double rawValue) async {
+  Future<void> _seekToProgress(double rawValue,
+      {ReadingPosition? position}) async {
     final value = rawValue.clamp(0.0, 1.0).toDouble();
-    final requestedAnchor = _anchorForProgress(value);
+    final requestedAnchor = position == null
+        ? _anchorForProgress(value)
+        : _normalizeAnchor(position);
     unawaited(HapticFeedback.selectionClick());
 
     if (_paged) {
@@ -3200,6 +5004,15 @@ class _ReaderPageState extends State<ReaderPage>
             locale: _readerLocale,
             textAlign: textAlign,
           );
+    if (_isTtsBlockHighlighted(index)) {
+      content = DecoratedBox(
+        decoration: BoxDecoration(
+          color: _linkColor.withValues(alpha: .12),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: content,
+      );
+    }
 
     if (block.structured?.isBlockquote == true) {
       content = Container(
@@ -3223,14 +5036,18 @@ class _ReaderPageState extends State<ReaderPage>
 
     return Padding(
       padding: EdgeInsets.only(bottom: _typography.paragraphSpacing),
-      child: Listener(
+      child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: _textPointerDown,
-        onPointerMove: _textPointerMove,
-        onPointerUp: _textPointerUp,
-        onPointerCancel: _textPointerCancel,
-        child: SelectionArea(
-          child: content,
+        onDoubleTap: () => unawaited(_toggleTtsAtBlock(index)),
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _textPointerDown,
+          onPointerMove: _textPointerMove,
+          onPointerUp: _textPointerUp,
+          onPointerCancel: _textPointerCancel,
+          child: SelectionArea(
+            child: content,
+          ),
         ),
       ),
     );
@@ -3565,74 +5382,87 @@ class _ReaderPageState extends State<ReaderPage>
     } else {
       return Padding(
         padding: EdgeInsets.only(bottom: _typography.paragraphSpacing),
-        child: Listener(
+        child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onPointerDown: _textPointerDown,
-          onPointerMove: _textPointerMove,
-          onPointerUp: _textPointerUp,
-          onPointerCancel: _textPointerCancel,
-          child: SelectionArea(
-            child: Builder(builder: (_) {
-              final isLocked =
-                  lockedBody && it.links.isEmpty && it.text == '(本章暂无内容)';
-              final TextSpan span;
-              if (isLocked) {
-                span = const TextSpan(text: '本章需要轻币解锁');
-              } else if (it.structured != null) {
-                span = it.structured!.buildTextSpan(
-                  baseStyle: _bodyTextStyle,
-                  linkColor: _linkColor,
-                  backgroundColor: _bgColor,
-                  onFootnoteTap: _showFootnote,
-                  forMeasurement: false,
-                );
-              } else {
-                span = withReaderIndent(
-                  TextSpan(
-                    style: _bodyTextStyle,
-                    children: _spans(it.text, it.links),
-                  ),
-                  _bodyTextStyle,
-                );
-              }
+          onDoubleTap: () => unawaited(_toggleTtsAtBlock(it.blockIndex)),
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: _textPointerDown,
+            onPointerMove: _textPointerMove,
+            onPointerUp: _textPointerUp,
+            onPointerCancel: _textPointerCancel,
+            child: SelectionArea(
+              child: Builder(builder: (_) {
+                final isLocked =
+                    lockedBody && it.links.isEmpty && it.text == '(本章暂无内容)';
+                final TextSpan span;
+                if (isLocked) {
+                  span = const TextSpan(text: '本章需要轻币解锁');
+                } else if (it.structured != null) {
+                  span = it.structured!.buildTextSpan(
+                    baseStyle: _bodyTextStyle,
+                    linkColor: _linkColor,
+                    backgroundColor: _bgColor,
+                    onFootnoteTap: _showFootnote,
+                    forMeasurement: false,
+                  );
+                } else {
+                  span = withReaderIndent(
+                    TextSpan(
+                      style: _bodyTextStyle,
+                      children: _spans(it.text, it.links),
+                    ),
+                    _bodyTextStyle,
+                  );
+                }
 
-              final textAlign = _effectiveTextAlign(it.structured?.align,
-                  isHeading: it.structured?.isHeading ?? false);
-              Widget textWidget = it.structured != null && !isLocked
-                  ? _structuredTextWidget(
-                      it.structured!,
-                      span,
-                      textAlign: textAlign,
-                    )
-                  : Text.rich(
-                      span,
-                      textScaler: _readerTextScaler,
-                      locale: _readerLocale,
-                      textAlign: textAlign,
-                    );
+                final textAlign = _effectiveTextAlign(it.structured?.align,
+                    isHeading: it.structured?.isHeading ?? false);
+                Widget textWidget = it.structured != null && !isLocked
+                    ? _structuredTextWidget(
+                        it.structured!,
+                        span,
+                        textAlign: textAlign,
+                      )
+                    : Text.rich(
+                        span,
+                        textScaler: _readerTextScaler,
+                        locale: _readerLocale,
+                        textAlign: textAlign,
+                      );
+                if (_isTtsBlockHighlighted(it.blockIndex)) {
+                  textWidget = DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: _linkColor.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: textWidget,
+                  );
+                }
 
-              if (it.structured?.isBlockquote == true) {
-                textWidget = Container(
-                  decoration: BoxDecoration(
-                    border: Border(
-                      left: BorderSide(
-                        color: _linkColor.withValues(alpha: 0.6),
-                        width: 3,
+                if (it.structured?.isBlockquote == true) {
+                  textWidget = Container(
+                    decoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(
+                          color: _linkColor.withValues(alpha: 0.6),
+                          width: 3,
+                        ),
                       ),
                     ),
-                  ),
-                  padding: const EdgeInsets.only(left: 11),
-                  child: textWidget,
-                );
-              } else if ((it.structured?.indent ?? 0) > 0) {
-                textWidget = Padding(
-                  padding: EdgeInsets.only(left: it.structured!.indent),
-                  child: textWidget,
-                );
-              }
+                    padding: const EdgeInsets.only(left: 11),
+                    child: textWidget,
+                  );
+                } else if ((it.structured?.indent ?? 0) > 0) {
+                  textWidget = Padding(
+                    padding: EdgeInsets.only(left: it.structured!.indent),
+                    child: textWidget,
+                  );
+                }
 
-              return textWidget;
-            }),
+                return textWidget;
+              }),
+            ),
           ),
         ),
       );
@@ -4326,7 +6156,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _handleBodyTap(Offset position) {
-    if (_isEditingIndicators) return;
+    if (!mounted || !_readerInputActive || _isEditingIndicators) return;
     final width = MediaQuery.of(context).size.width;
     if (_paged) {
       if (position.dx < width / 3) {
@@ -4599,6 +6429,19 @@ class _ReaderPageState extends State<ReaderPage>
                                     color: _textColor),
                               ),
                             ),
+                            if (defaultTargetPlatform == TargetPlatform.android)
+                              IconButton(
+                                tooltip: '系统朗读',
+                                icon: Icon(Icons.record_voice_over_rounded,
+                                    size: 22, color: _textColor),
+                                onPressed: _showTtsSheet,
+                              ),
+                            IconButton(
+                              tooltip: '本章书签',
+                              icon: Icon(Icons.bookmark_outline_rounded,
+                                  size: 22, color: _textColor),
+                              onPressed: _showBookmarks,
+                            ),
                             IconButton(
                               key: _shareButtonKey,
                               tooltip: '分享',
@@ -4646,9 +6489,10 @@ class _ReaderPageState extends State<ReaderPage>
                                     }
                                   }),
                                   Expanded(
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
+                                    child: Wrap(
+                                      alignment: WrapAlignment.center,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
                                       children: [
                                         if (_locked && !_unlocked)
                                           Padding(

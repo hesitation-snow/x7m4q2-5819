@@ -837,6 +837,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
               ),
       child: CoverImage(
           url: book.coverUrl,
+          bookId: book.bookId,
+          accessStatus: book.accessStatus,
           width: 112,
           height: 160,
           radius: 12,

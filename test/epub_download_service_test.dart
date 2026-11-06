@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/models.dart';
@@ -7,6 +10,333 @@ import 'package:yomiru/services/illustration_cache.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('pause/resume worker barrier', () {
+    late Directory dir;
+    EpubDownloadService? serviceForCleanup;
+    const chapter = EpubChapterItem(
+        chapterId: 1,
+        chapterNo: 1,
+        title: 'chapter',
+        volumeId: 1,
+        volumeTitle: 'volume');
+    const task = EpubDownloadTask(
+        bookId: 1,
+        bookTitle: 'book',
+        authorName: 'author',
+        ownerUid: 0,
+        options: EpubExportOptions(includeIllustrations: false),
+        phase: EpubTaskPhase.downloadingContent,
+        chapters: [chapter]);
+
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('epub_race_');
+      await Directory('${dir.path}/chapters').create();
+      await Directory('${dir.path}/images').create();
+    });
+    tearDown(() async {
+      await serviceForCleanup?.waitForIdleForTesting();
+      serviceForCleanup = null;
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+
+    Future<void> until(bool Function() condition) async {
+      for (var i = 0; i < 300 && !condition(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(condition(), isTrue, reason: 'timed out waiting for service');
+    }
+
+    test(
+        'immediate repeated resume waits for old fetch before starting one worker',
+        () async {
+      final oldFetch = Completer<LKChapterDetail>();
+      final newFetch = Completer<LKChapterDetail>();
+      var calls = 0;
+      var running = 0;
+      var peak = 0;
+      final service = serviceForCleanup = EpubDownloadService.forTesting(
+        taskDirectory: (_) async => dir,
+        chapterDetail: (_, __) async {
+          calls++;
+          running++;
+          if (running > peak) peak = running;
+          try {
+            return await (calls == 1 ? oldFetch.future : newFetch.future);
+          } finally {
+            running--;
+          }
+        },
+      );
+      service.startDownloadForTesting(task);
+      await until(() => calls == 1);
+      final pause = service.pauseTask();
+      final resume = service.resumeTask();
+      final duplicateResume = service.resumeTask();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(calls, 1);
+      expect(service.currentTask.value!.phase, EpubTaskPhase.paused);
+      oldFetch.complete(
+          LKChapterDetail(chapterId: 1, title: 'old', bodyText: 'stale'));
+      await Future.wait([pause, resume, duplicateResume]);
+      await until(() => calls == 2);
+      expect(peak, 1);
+      expect(await File('${dir.path}/chapters/1.json').exists(), isFalse);
+      newFetch.complete(
+          LKChapterDetail(chapterId: 1, title: 'new', bodyText: 'fresh'));
+      await until(() =>
+          service.currentTask.value!.phase == EpubTaskPhase.editingMetadata);
+      expect(service.currentTask.value!.completedChapterIds, {1});
+      expect(await File('${dir.path}/chapters/1.json').readAsString(),
+          contains('fresh'));
+      expect(calls, 2);
+    });
+
+    test('resume waits for all parallel chapter workers', () async {
+      final old = List.generate(3, (_) => Completer<LKChapterDetail>());
+      var calls = 0;
+      final service = serviceForCleanup = EpubDownloadService.forTesting(
+        taskDirectory: (_) async => dir,
+        chapterDetail: (_, id) {
+          final n = calls++;
+          if (n < 3) return old[n].future;
+          return Future.value(
+              LKChapterDetail(chapterId: id, bodyText: 'new $id'));
+        },
+      );
+      final multiTask = task.copyWith(chapters: [
+        for (var i = 1; i <= 3; i++)
+          EpubChapterItem(
+              chapterId: i,
+              chapterNo: i,
+              title: '$i',
+              volumeId: 1,
+              volumeTitle: 'v'),
+      ]);
+      service.startDownloadForTesting(multiTask);
+      await until(() => calls == 3);
+      final pause = service.pauseTask();
+      final resume = service.resumeTask();
+      old[0].complete(LKChapterDetail(chapterId: 1, bodyText: 'stale'));
+      old[1].complete(LKChapterDetail(chapterId: 2, bodyText: 'stale'));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(calls, 3);
+      expect(service.currentTask.value!.phase, EpubTaskPhase.paused);
+      old[2].complete(LKChapterDetail(chapterId: 3, bodyText: 'stale'));
+      await Future.wait([pause, resume]);
+      await until(() =>
+          service.currentTask.value!.phase == EpubTaskPhase.editingMetadata);
+      expect(calls, 6);
+      expect(service.currentTask.value!.completedChapterIds, {1, 2, 3});
+      for (var i = 1; i <= 3; i++) {
+        expect(await File('${dir.path}/chapters/$i.json').readAsString(),
+            contains('new $i'));
+      }
+    });
+
+    test('hanging request times out and resume makes progress', () async {
+      final never = Completer<LKChapterDetail>();
+      var calls = 0;
+      final service = serviceForCleanup = EpubDownloadService.forTesting(
+        taskDirectory: (_) async => dir,
+        chapterTimeout: const Duration(milliseconds: 80),
+        chapterDetail: (_, __) {
+          calls++;
+          return calls == 1
+              ? never.future
+              : Future.value(
+                  LKChapterDetail(chapterId: 1, bodyText: 'after timeout'));
+        },
+      );
+      service.startDownloadForTesting(task);
+      await until(() => calls == 1);
+      await service.pauseTask();
+      expect(service.currentTask.value!.phase, EpubTaskPhase.paused);
+      await service.resumeTask().timeout(const Duration(seconds: 2));
+      await until(() =>
+          service.currentTask.value!.phase == EpubTaskPhase.editingMetadata);
+      expect(calls, 2);
+      never.complete(LKChapterDetail(chapterId: 1, bodyText: 'late'));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(await File('${dir.path}/chapters/1.json').readAsString(),
+          contains('after timeout'));
+    });
+
+    test('pause snapshot waits behind an in-flight checkpoint', () async {
+      final checkpointEntered = Completer<void>();
+      final releaseCheckpoint = Completer<void>();
+      final phases = <EpubTaskPhase>[];
+      final service = serviceForCleanup = EpubDownloadService.forTesting(
+        taskDirectory: (_) async => dir,
+        chapterDetail: (_, __) async =>
+            LKChapterDetail(chapterId: 1, bodyText: 'body'),
+        beforeCheckpoint: (snapshot) async {
+          phases.add(snapshot.phase);
+          if (phases.length == 1) {
+            checkpointEntered.complete();
+            await releaseCheckpoint.future;
+          }
+        },
+      );
+      service.startDownloadForTesting(task);
+      await checkpointEntered.future.timeout(const Duration(seconds: 2));
+      final pause = service.pauseTask();
+      final resume = service.resumeTask();
+      expect(service.currentTask.value!.phase, EpubTaskPhase.paused);
+      releaseCheckpoint.complete();
+      await Future.wait([pause, resume]);
+      await until(() =>
+          service.currentTask.value!.phase == EpubTaskPhase.editingMetadata);
+      expect(phases.take(2).toList(),
+          [EpubTaskPhase.downloadingContent, EpubTaskPhase.paused]);
+      expect(service.currentTask.value!.completedChapterIds, {1});
+    });
+
+    test('cancel waits for incomplete export preparation before a new task',
+        () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      var blockDirectory = true;
+      final service = serviceForCleanup = EpubDownloadService.forTesting(
+        taskDirectory: (_) async {
+          if (blockDirectory) {
+            blockDirectory = false;
+            entered.complete();
+            await release.future;
+          }
+          return dir;
+        },
+        chapterDetail: (_, __) async => LKChapterDetail(),
+      );
+      service.currentTask.value =
+          task.copyWith(phase: EpubTaskPhase.paused, completedChapterIds: {1});
+      final export = service.exportCompletedContent();
+      await entered.future.timeout(const Duration(seconds: 2));
+      final cancel = service.cancelTask();
+      await expectLater(
+        service.startTask(
+            book: LKBook(bookId: 2, title: 'new'),
+            selectedVolumes: const [],
+            options: const EpubExportOptions()),
+        throwsStateError,
+      );
+      release.complete();
+      await Future.wait([export, cancel]).timeout(const Duration(seconds: 2));
+      expect(service.currentTask.value!.phase, EpubTaskPhase.canceled);
+      await service.startTask(
+          book: LKBook(bookId: 2, title: 'new'),
+          selectedVolumes: const [],
+          options: const EpubExportOptions());
+      await service.waitForIdleForTesting();
+      expect(service.currentTask.value!.bookId, 2);
+      expect(service.currentTask.value!.phase, EpubTaskPhase.failed);
+    });
+
+    test('pause during packaging setup keeps the paused phase', () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      var directoryCalls = 0;
+      final service = serviceForCleanup = EpubDownloadService.forTesting(
+        taskDirectory: (_) async {
+          directoryCalls++;
+          if (directoryCalls == 3) {
+            entered.complete();
+            await release.future;
+          }
+          return dir;
+        },
+        chapterDetail: (_, __) async => LKChapterDetail(),
+      );
+      service.currentTask.value =
+          task.copyWith(phase: EpubTaskPhase.editingMetadata);
+      await service.confirmMetadataAndPackage();
+      await entered.future.timeout(const Duration(seconds: 2));
+      final pause = service.pauseTask();
+      release.complete();
+      await pause;
+      await service.waitForIdleForTesting();
+      expect(service.currentTask.value!.phase, EpubTaskPhase.paused);
+      expect(service.currentTask.value!.statusMessage, '制作已暂停');
+    });
+
+    test('cancel during metadata checkpoint cannot restart packaging',
+        () async {
+      final checkpointEntered = Completer<void>();
+      final releaseCheckpoint = Completer<void>();
+      final service = serviceForCleanup = EpubDownloadService.forTesting(
+        taskDirectory: (_) async => dir,
+        chapterDetail: (_, __) async => LKChapterDetail(),
+        beforeCheckpoint: (snapshot) async {
+          if (snapshot.phase == EpubTaskPhase.packaging) {
+            checkpointEntered.complete();
+            await releaseCheckpoint.future;
+          }
+        },
+      );
+      service.currentTask.value =
+          task.copyWith(phase: EpubTaskPhase.editingMetadata);
+      final confirm = service.confirmMetadataAndPackage();
+      await checkpointEntered.future.timeout(const Duration(seconds: 2));
+      final cancel = service.cancelTask();
+      expect(service.currentTask.value!.phase, EpubTaskPhase.canceled);
+      releaseCheckpoint.complete();
+      await Future.wait([confirm, cancel]).timeout(const Duration(seconds: 2));
+      await service.waitForIdleForTesting();
+      expect(service.currentTask.value!.phase, EpubTaskPhase.canceled);
+      expect(await dir.exists(), isFalse);
+    });
+
+    test(
+        'cancel while resume is waiting preserves cancellation and deletes files',
+        () async {
+      final fetch = Completer<LKChapterDetail>();
+      var calls = 0;
+      final service = serviceForCleanup = EpubDownloadService.forTesting(
+        taskDirectory: (_) async => dir,
+        chapterDetail: (_, __) {
+          calls++;
+          return fetch.future;
+        },
+      );
+      service.startDownloadForTesting(task);
+      await until(() => calls == 1);
+      final pause = service.pauseTask();
+      final resume = service.resumeTask();
+      final cancel = service.cancelTask();
+      fetch.complete(LKChapterDetail(chapterId: 1, bodyText: 'late'));
+      await Future.wait([pause, resume, cancel]);
+      expect(service.currentTask.value!.phase, EpubTaskPhase.canceled);
+      expect(await dir.exists(), isFalse);
+      expect(calls, 1);
+    });
+
+    test(
+        'failure from paused fetch is ignored; failure after resume is retained',
+        () async {
+      final oldFetch = Completer<LKChapterDetail>();
+      var calls = 0;
+      final service = serviceForCleanup = EpubDownloadService.forTesting(
+        taskDirectory: (_) async => dir,
+        chapterDetail: (_, __) {
+          calls++;
+          if (calls == 1) return oldFetch.future;
+          throw LKException(403, 'denied', accessRestricted: true);
+        },
+      );
+      service.startDownloadForTesting(task);
+      await until(() => calls == 1);
+      final pause = service.pauseTask();
+      final resume = service.resumeTask();
+      oldFetch
+          .completeError(LKException(403, 'old error', accessRestricted: true));
+      await Future.wait([pause, resume]);
+      await until(() =>
+          service.currentTask.value!.phase == EpubTaskPhase.paused &&
+          calls == 2);
+      expect(service.currentTask.value!.failedChapters[1], contains('无权限'));
+      expect(service.currentTask.value!.completedCount, 0);
+    });
+  });
 
   group('EpubDownloadService Logic & Concurrency Tests', () {
     test('EpubChapterItem models serialization and deserialization', () {

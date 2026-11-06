@@ -1,5 +1,9 @@
 import 'dart:convert';
 
+import 'book_access.dart';
+export 'book_access.dart'
+    show BookAccessStatus, classifyBookAccess, classifyChapterAccess;
+
 // 数据模型(手写 fromJson,字段与服务端 snake_case 一一对应)
 
 Map<String, dynamic>? _jsonMap(dynamic value) =>
@@ -140,6 +144,8 @@ class LKMyProfile {
   final String signature;
   final String levelName;
   final int level;
+  final int? exp;
+  final int? nextExp;
   final int coin;
   final bool isBrave;
   final int followersCount;
@@ -156,6 +162,8 @@ class LKMyProfile {
     this.signature = '',
     this.levelName = '',
     this.level = 0,
+    this.exp,
+    this.nextExp,
     this.coin = 0,
     this.isBrave = false,
     this.followersCount = 0,
@@ -196,6 +204,22 @@ class LKMyProfile {
             levelObject?['title'] ??
             '')
         .toString();
+    int? experience(dynamic value) {
+      final int? parsed;
+      if (value is int) {
+        parsed = value;
+      } else if (value is num) {
+        parsed = value.isFinite && value == value.truncateToDouble()
+            ? value.toInt()
+            : null;
+      } else if (value is String) {
+        parsed = int.tryParse(value.trim());
+      } else {
+        parsed = null;
+      }
+      return parsed != null && parsed >= 0 ? parsed : null;
+    }
+
     return LKMyProfile(
       uid: _jsonInt(profile['uid'] ?? profile['user_id'] ?? profile['id']),
       nickname: (profile['nickname'] ?? profile['username'] ?? '').toString(),
@@ -203,6 +227,8 @@ class LKMyProfile {
       signature: (profile['sign'] ?? profile['signature'] ?? '').toString(),
       levelName: levelName,
       level: _jsonInt(rawLevel),
+      exp: experience(profile['exp'] ?? j['exp']),
+      nextExp: experience(profile['next_exp'] ?? j['next_exp']),
       coin: _jsonInt(profile['coin'] ??
           profile['light_coin'] ??
           profile['lightCoin'] ??
@@ -880,7 +906,14 @@ class LKPublicBook {
   final String summary;
   final String updatedAt;
   final String typeText;
-  final bool isBrave;
+  final bool _braveFlag;
+  final BookAccessStatus _accessStatus;
+  bool get isBrave =>
+      _braveFlag ||
+      _accessStatus == BookAccessStatus.brave ||
+      (bookId > 0 && (_externalBraveChecker?.call(bookId) ?? false));
+  BookAccessStatus get accessStatus =>
+      isBrave ? BookAccessStatus.brave : _accessStatus;
 
   LKPublicBook({
     this.bookId = 0,
@@ -889,8 +922,10 @@ class LKPublicBook {
     this.summary = '',
     this.updatedAt = '',
     this.typeText = '',
-    this.isBrave = false,
-  });
+    bool isBrave = false,
+    BookAccessStatus accessStatus = BookAccessStatus.unknown,
+  })  : _braveFlag = isBrave,
+        _accessStatus = accessStatus;
 
   LKPublicBook copyWith({
     int? bookId,
@@ -900,6 +935,7 @@ class LKPublicBook {
     String? updatedAt,
     String? typeText,
     bool? isBrave,
+    BookAccessStatus? accessStatus,
   }) =>
       LKPublicBook(
         bookId: bookId ?? this.bookId,
@@ -909,14 +945,11 @@ class LKPublicBook {
         updatedAt: updatedAt ?? this.updatedAt,
         typeText: typeText ?? this.typeText,
         isBrave: isBrave ?? this.isBrave,
+        accessStatus: accessStatus ?? this.accessStatus,
       );
 
   factory LKPublicBook.fromJson(Map<String, dynamic> j) => LKPublicBook(
-        bookId: _jsonInt(j['book_id'] ??
-            j['bookId'] ??
-            j['article_id'] ??
-            j['aid'] ??
-            j['id']),
+        bookId: bookIdentityFromJson(j),
         title: (j['title'] ?? j['subject'] ?? j['name'] ?? '').toString(),
         coverUrl: (j['cover_url'] ?? j['cover'] ?? j['image'] ?? j['img'] ?? '')
             .toString(),
@@ -935,6 +968,7 @@ class LKPublicBook {
                 '')
             .toString(),
         isBrave: _isBraveBook(j),
+        accessStatus: classifyBookAccess(j),
       );
 }
 
@@ -1087,7 +1121,14 @@ class LKBook {
   final int unreadChapterCount;
   final double ratingScore;
   final String updatedAt;
-  final bool isBrave;
+  final bool _braveFlag;
+  final BookAccessStatus _accessStatus;
+  bool get isBrave =>
+      _braveFlag ||
+      _accessStatus == BookAccessStatus.brave ||
+      (bookId > 0 && (_externalBraveChecker?.call(bookId) ?? false));
+  BookAccessStatus get accessStatus =>
+      isBrave ? BookAccessStatus.brave : _accessStatus;
   LKBook({
     this.bookId = 0,
     this.title = '',
@@ -1110,10 +1151,12 @@ class LKBook {
     this.unreadChapterCount = 0,
     this.ratingScore = 0,
     this.updatedAt = '',
-    this.isBrave = false,
-  });
+    bool isBrave = false,
+    BookAccessStatus accessStatus = BookAccessStatus.unknown,
+  })  : _braveFlag = isBrave,
+        _accessStatus = accessStatus;
   factory LKBook.fromJson(Map<String, dynamic> j) => LKBook(
-        bookId: (j['book_id'] as num?)?.toInt() ?? 0,
+        bookId: bookIdentityFromJson(j),
         title: (j['title'] as String?) ?? '',
         authorName: _bookAuthorName(j),
         publisherUid: _bookPublisherUid(j),
@@ -1139,6 +1182,7 @@ class LKBook {
             (j['updated_at'] as String?) ??
             '',
         isBrave: _isBraveBook(j),
+        accessStatus: classifyBookAccess(j),
       );
 
   Map<String, dynamic> toJson() => {
@@ -1164,6 +1208,7 @@ class LKBook {
         'rating_score': ratingScore,
         'updated_at': updatedAt,
         'is_brave': isBrave ? 1 : 0,
+        'book_access_state': accessStatus.name,
       };
 
   LKBook copyWith({
@@ -1189,6 +1234,7 @@ class LKBook {
     double? ratingScore,
     String? updatedAt,
     bool? isBrave,
+    BookAccessStatus? accessStatus,
   }) =>
       LKBook(
         bookId: bookId ?? this.bookId,
@@ -1213,6 +1259,7 @@ class LKBook {
         ratingScore: ratingScore ?? this.ratingScore,
         updatedAt: updatedAt ?? this.updatedAt,
         isBrave: isBrave ?? this.isBrave,
+        accessStatus: accessStatus ?? this.accessStatus,
       );
 }
 
@@ -1222,38 +1269,9 @@ void setBraveBookChecker(bool Function(int bookId)? checker) {
 }
 
 bool _isBraveBook(Map<String, dynamic> j) {
-  final bookId = _jsonInt(j['book_id'] ?? j['id']);
-  if (bookId > 0 && (_externalBraveChecker?.call(bookId) ?? false)) {
-    return true;
-  }
-
-  if (_jsonFlag(j['is_brave'] ?? j['isBrave'])) return true;
-  if (_jsonFlag(j['brave_required'] ?? j['braveRequired'])) return true;
-
-  final accessType =
-      (j['access_type'] ?? j['accessType'])?.toString().trim().toLowerCase();
-  if (accessType == 'brave') return true;
-
-  final metaJson = _jsonMap(j['meta_json']);
-  if (metaJson != null) {
-    final braveScope =
-        (metaJson['brave_scope'] as String?)?.trim().toLowerCase();
-    if (braveScope == 'brave') return true;
-  }
-
-  final tags = j['tags'];
-  if (tags is List &&
-      tags.any((t) {
-        final s = t.toString().trim();
-        return s == '勇者' || s == '勇者可读';
-      })) {
-    return true;
-  }
-
-  final badge = (j['display_badge_code'] ?? '').toString().toLowerCase();
-  if (badge.contains('brave')) return true;
-
-  return false;
+  final id = bookIdentityFromJson(j);
+  return classifyBookAccess(j) == BookAccessStatus.brave ||
+      (id > 0 && (_externalBraveChecker?.call(id) ?? false));
 }
 
 String _bookSerialStatus(Map<String, dynamic> json) {
@@ -1435,6 +1453,62 @@ class LKVolume {
       );
 }
 
+/// Strict volume pagination for catalog verification; normal readers may use
+/// the legacy list-only API. A missing list must never mean "scanned all".
+class LKVolumePage {
+  const LKVolumePage(
+      {required this.items,
+      required this.page,
+      required this.pageSize,
+      required this.hasMore,
+      this.total});
+  final List<LKVolume> items;
+  final int page;
+  final int pageSize;
+  final int? total;
+  final bool hasMore;
+
+  factory LKVolumePage.fromJson(Map<String, dynamic> json,
+      {required int fallbackPage, required int fallbackPageSize}) {
+    final raw = json['list'] ?? json['items'];
+    if (raw is! List || raw.any((item) => item is! Map)) {
+      throw const FormatException('Volume catalog list missing or malformed');
+    }
+    final pagination =
+        _jsonMap(json['pagination']) ?? const <String, dynamic>{};
+    final info = _jsonMap(json['page_info']) ?? const <String, dynamic>{};
+    final current = _jsonInt(pagination['page'] ?? info['cur'] ?? fallbackPage);
+    final size = _jsonInt(pagination['page_size'] ??
+        pagination['pageSize'] ??
+        info['size'] ??
+        fallbackPageSize);
+    final effectiveSize = size > 0 ? size : fallbackPageSize;
+    final totalRaw = pagination['total'] ?? info['count'] ?? json['total'];
+    final total = totalRaw == null ? null : _jsonInt(totalRaw);
+    final pageCountRaw = pagination['page_count'] ?? info['page_count'];
+    final more = pagination['has_more'] ??
+        pagination['has_next'] ??
+        info['has_next'] ??
+        json['has_more'];
+    final items = raw
+        .map(
+            (item) => LKVolume.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList(growable: false);
+    return LKVolumePage(
+        items: items,
+        page: current,
+        pageSize: effectiveSize,
+        total: total,
+        hasMore: more != null
+            ? _jsonFlag(more)
+            : pageCountRaw != null
+                ? current < _jsonInt(pageCountRaw)
+                : total != null
+                    ? current * effectiveSize < total
+                    : items.length >= effectiveSize);
+  }
+}
+
 class LKChapter {
   final int chapterId;
   final int chapterNo;
@@ -1444,6 +1518,7 @@ class LKChapter {
   final bool unlocked;
   final String accessType;
   final bool braveRequired;
+  final BookAccessStatus? _accessStatus;
   LKChapter({
     this.chapterId = 0,
     this.chapterNo = 0,
@@ -1453,20 +1528,32 @@ class LKChapter {
     this.unlocked = false,
     this.accessType = '',
     this.braveRequired = false,
-  });
+    BookAccessStatus? accessStatus,
+  }) : _accessStatus = accessStatus;
   factory LKChapter.fromJson(Map<String, dynamic> j) => LKChapter(
         chapterId: (j['chapter_id'] as num?)?.toInt() ?? 0,
         chapterNo: (j['chapter_no'] as num?)?.toInt() ?? 0,
         title: (j['title'] as String?) ?? '',
         wordCount: (j['word_count'] as num?)?.toInt() ?? 0,
-        locked: (j['locked'] as num?)?.toInt() == 1,
-        unlocked: (j['unlocked'] as num?)?.toInt() == 1,
+        locked: _jsonFlag(j['locked']),
+        unlocked: _jsonFlag(j['unlocked']),
         accessType:
             (j['access_type'] as String?) ?? (j['accessType'] as String?) ?? '',
-        braveRequired: _jsonFlag(j['brave_required'] ?? j['braveRequired']),
+        braveRequired: classifyChapterAccess(j) == BookAccessStatus.brave,
+        accessStatus: classifyChapterAccess(j),
       );
 
-  bool get braveOnly => accessType.toLowerCase() == 'brave' || braveRequired;
+  bool get braveOnly =>
+      accessType.trim().toLowerCase() == 'brave' ||
+      braveRequired ||
+      _accessStatus == BookAccessStatus.brave;
+
+  BookAccessStatus get accessStatus => braveOnly
+      ? BookAccessStatus.brave
+      : _accessStatus ??
+          (accessType.trim().toLowerCase() == 'public'
+              ? BookAccessStatus.public
+              : BookAccessStatus.unknown);
 }
 
 class LKChapterPage {
@@ -1475,6 +1562,8 @@ class LKChapterPage {
   final int pageSize;
   final int total;
   final bool hasMore;
+  final bool? _totalKnown;
+  bool get hasKnownTotal => _totalKnown ?? total > 0;
 
   const LKChapterPage({
     this.items = const [],
@@ -1482,7 +1571,8 @@ class LKChapterPage {
     this.pageSize = 50,
     this.total = 0,
     this.hasMore = false,
-  });
+    bool? totalKnown,
+  }) : _totalKnown = totalKnown;
 
   factory LKChapterPage.fromJson(Map<String, dynamic> j,
       {int fallbackPage = 1, int fallbackPageSize = 50}) {
@@ -1507,11 +1597,13 @@ class LKChapterPage {
         j['page_size'] ??
         j['pageSize'] ??
         fallbackPageSize);
-    final total = _jsonInt(pagination['total'] ??
+    final totalRaw = pagination['total'] ??
         pagination['total_count'] ??
         pageInfo['count'] ??
         j['chapter_count'] ??
-        j['total']);
+        j['total'];
+    final total = _jsonInt(totalRaw);
+    final pageCountRaw = pagination['page_count'] ?? pageInfo['page_count'];
     final rawHasMore = pagination['has_more'] ??
         pagination['hasMore'] ??
         pagination['has_next'] ??
@@ -1526,10 +1618,14 @@ class LKChapterPage {
       page: effectivePage,
       pageSize: effectivePageSize,
       total: total,
-      hasMore: rawHasMore == null
-          ? total > effectivePage * effectivePageSize ||
-              items.length >= effectivePageSize
-          : _jsonFlag(rawHasMore),
+      totalKnown: totalRaw != null,
+      hasMore: rawHasMore != null
+          ? _jsonFlag(rawHasMore)
+          : pageCountRaw != null
+              ? effectivePage < _jsonInt(pageCountRaw)
+              : totalRaw != null
+                  ? total > effectivePage * effectivePageSize
+                  : items.length >= effectivePageSize,
     );
   }
 }
@@ -1987,7 +2083,14 @@ class LKHistoryItem {
   final int progressPercent;
   final String lastReadAt;
   final int unreadChapters;
-  final bool isBrave;
+  final bool _braveFlag;
+  final BookAccessStatus _accessStatus;
+  bool get isBrave =>
+      _braveFlag ||
+      _accessStatus == BookAccessStatus.brave ||
+      (bookId > 0 && (_externalBraveChecker?.call(bookId) ?? false));
+  BookAccessStatus get accessStatus =>
+      isBrave ? BookAccessStatus.brave : _accessStatus;
   LKHistoryItem({
     this.bookId = 0,
     this.title = '',
@@ -1999,13 +2102,15 @@ class LKHistoryItem {
     this.progressPercent = 0,
     this.lastReadAt = '',
     this.unreadChapters = 0,
-    this.isBrave = false,
-  });
+    bool isBrave = false,
+    BookAccessStatus accessStatus = BookAccessStatus.unknown,
+  })  : _braveFlag = isBrave,
+        _accessStatus = accessStatus;
   factory LKHistoryItem.fromJson(Map<String, dynamic> j) {
     final h =
         (j['history'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
     return LKHistoryItem(
-      bookId: (j['book_id'] as num?)?.toInt() ?? 0,
+      bookId: bookIdentityFromJson(j),
       title: (j['title'] as String?) ?? '',
       authorName: (j['author_name'] as String?) ?? '',
       coverUrl: (j['cover_url'] as String?) ?? '',
@@ -2022,6 +2127,7 @@ class LKHistoryItem {
       lastReadAt: (h['last_read_at'] as String?) ?? '',
       unreadChapters: (j['unread_chapter_count'] as num?)?.toInt() ?? 0,
       isBrave: _isBraveBook(j),
+      accessStatus: classifyBookAccess(j),
     );
   }
 }

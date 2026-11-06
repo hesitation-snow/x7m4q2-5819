@@ -630,6 +630,7 @@ class _FeedTabState extends State<FeedTab>
     super.initState();
     LKClient.sessionRev.addListener(_onSessionChanged);
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
+    LKStore.braveBookRevision.addListener(_onHideBraveRev);
     LKStore.gridColumnCount.addListener(_onGridColumnsChanged);
     if (_showRecommend) _loadRecommend();
     unawaited(_startLoad());
@@ -639,6 +640,7 @@ class _FeedTabState extends State<FeedTab>
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionChanged);
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     LKStore.gridColumnCount.removeListener(_onGridColumnsChanged);
     _gridScrollController.dispose();
     _listScrollController.dispose();
@@ -1272,6 +1274,8 @@ class _HomeRecommendCard extends StatelessWidget {
                       children: [
                         CoverImage(
                           url: book.coverUrl,
+                          bookId: book.bookId,
+                          accessStatus: book.accessStatus,
                           width: itemWidth,
                           height: coverHeight,
                           radius: 8,
@@ -1343,7 +1347,20 @@ class _SectionTabState extends State<SectionTab> {
   @override
   void initState() {
     super.initState();
+    LKStore.hideBraveBooks.addListener(_onBookAccessChanged);
+    LKStore.braveBookRevision.addListener(_onBookAccessChanged);
     _init();
+  }
+
+  void _onBookAccessChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    LKStore.hideBraveBooks.removeListener(_onBookAccessChanged);
+    LKStore.braveBookRevision.removeListener(_onBookAccessChanged);
+    super.dispose();
   }
 
   Future<void> _init() async {
@@ -1364,6 +1381,8 @@ class _SectionTabState extends State<SectionTab> {
             .map((e) => LKBook.fromJson((e as Map).cast<String, dynamic>()))
             .toList();
         if (!mounted) return;
+        unawaited(LKStore.markBooksBrave(
+            list.where((book) => book.isBrave).map((book) => book.bookId)));
         setState(() => _latest[s.$4] = list);
       } catch (_) {}
     }
@@ -1396,6 +1415,8 @@ class _SectionTabState extends State<SectionTab> {
         'title': b.title,
         'author_name': b.authorName,
         'cover_url': b.coverUrl,
+        'is_brave': b.isBrave ? 1 : 0,
+        'book_access_state': b.accessStatus.name,
       };
 
   void _openBook(LKBook b) {
@@ -1407,7 +1428,10 @@ class _SectionTabState extends State<SectionTab> {
 
   /// 分区卡片下方的「最新五部」横向滑动列表(大封面)
   Widget _latestRow(String path) {
-    final items = _latest[path];
+    final source = _latest[path];
+    final items = LKStore.hideBraveBooks.value
+        ? source?.where((book) => !book.isBrave).toList(growable: false)
+        : source;
     if (items == null || items.isEmpty) return const SizedBox.shrink();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     // 高度按字体缩放动态计算,避免 BOTTOM OVERFLOW
@@ -1432,6 +1456,8 @@ class _SectionTabState extends State<SectionTab> {
                   children: [
                     CoverImage(
                         url: b.coverUrl,
+                        bookId: b.bookId,
+                        accessStatus: b.accessStatus,
                         width: 143,
                         height: 191,
                         radius: 10,
@@ -1574,6 +1600,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
   void initState() {
     super.initState();
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
+    LKStore.braveBookRevision.addListener(_onHideBraveRev);
     LKClient.sessionRev.addListener(_onSessionChanged);
     _load();
   }
@@ -1581,6 +1608,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
   @override
   void dispose() {
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     LKClient.sessionRev.removeListener(_onSessionChanged);
     super.dispose();
   }
@@ -1840,6 +1868,10 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                       child: Row(children: [
                         CoverImage(
                             url: h.coverUrl,
+                            bookId: h.bookId,
+                            accessStatus: h is LKHistoryItem
+                                ? h.accessStatus
+                                : BookAccessStatus.unknown,
                             width: 50,
                             height: 66,
                             radius: 8,
@@ -2281,6 +2313,10 @@ class _MyTabState extends State<MyTab> {
             children: [
               _profileChip(Icons.workspace_premium_outlined,
                   profile.levelName.isEmpty ? '等级未知' : profile.levelName),
+              if (profile.exp != null)
+                _profileChip(Icons.auto_graph_outlined, '经验 ${profile.exp}'),
+              if (profile.nextExp != null)
+                _profileChip(Icons.trending_up, '升级经验参考 ${profile.nextExp}'),
               _profileChip(
                 Icons.monetization_on_outlined,
                 '${profile.coin} 轻币',

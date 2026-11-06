@@ -36,11 +36,38 @@ class _SearchPageState extends State<SearchPage> {
   int _page = 0;
   bool _hasMore = false;
   int _requestSerial = 0;
+  ({
+    String query,
+    String sort,
+    String primaryTag,
+    String preset,
+    String channelCode,
+    String workType
+  })? _submitted;
+
+  void _clearResults() {
+    _requestSerial++;
+    setState(() {
+      _submitted = null;
+      _items.clear();
+      _page = 0;
+      _hasMore = false;
+      _loading = false;
+      _error = null;
+    });
+  }
+
+  void _onQueryChanged(String value) {
+    // A cleared query immediately invalidates the previous search, even if
+    // its response is still in flight. Active filters start a new search.
+    if (value.trim().isEmpty) _search(0, false);
+  }
 
   @override
   void initState() {
     super.initState();
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
+    LKStore.braveBookRevision.addListener(_onHideBraveRev);
     _tag = widget.initialTag;
     _loadTaxonomy();
     if (widget.initialTag != null) {
@@ -51,6 +78,7 @@ class _SearchPageState extends State<SearchPage> {
   @override
   void dispose() {
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     _controller.dispose();
     super.dispose();
   }
@@ -106,8 +134,11 @@ class _SearchPageState extends State<SearchPage> {
     if (!mounted) return;
     if (append && (_loading || !_hasMore)) return;
     var query = _controller.text.trim();
-    if (query.isEmpty && _tag == null && _channel == null) return;
-    final request = ++_requestSerial;
+    if (!append && query.isEmpty && _tag == null && _channel == null) {
+      _clearResults();
+      return;
+    }
+    if (append && _submitted == null) return;
     var preset = '';
     var primaryTag = '';
     var channelCode = '';
@@ -129,16 +160,36 @@ class _SearchPageState extends State<SearchPage> {
       primaryTag = '';
       preset = '';
     }
-    setState(() => _loading = true);
+    final criteria = append
+        ? _submitted!
+        : (
+            query: query,
+            sort: _sort,
+            primaryTag: primaryTag,
+            preset: preset,
+            channelCode: channelCode,
+            workType: workType
+          );
+    final request = ++_requestSerial;
+    setState(() {
+      if (!append) {
+        _submitted = criteria;
+        _items.clear();
+        _page = 0;
+        _hasMore = false;
+      }
+      _error = null;
+      _loading = true;
+    });
     try {
       final items = await LKApi.search(
-        query,
+        criteria.query,
         page,
-        sort: _sort,
-        primaryTag: primaryTag,
-        preset: preset,
-        channelCode: channelCode,
-        workType: workType,
+        sort: criteria.sort,
+        primaryTag: criteria.primaryTag,
+        preset: criteria.preset,
+        channelCode: criteria.channelCode,
+        workType: criteria.workType,
       );
       if (!mounted || request != _requestSerial) return;
       setState(() {
@@ -165,8 +216,7 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Future<void> _refresh() async {
-    await _loadTaxonomy();
-    await _search(0, false);
+    await Future.wait([_search(0, false), _loadTaxonomy()]);
   }
 
   @override
@@ -190,6 +240,7 @@ class _SearchPageState extends State<SearchPage> {
                   controller: _controller,
                   autofocus: true,
                   textInputAction: TextInputAction.search,
+                  onChanged: _onQueryChanged,
                   onSubmitted: (_) => _search(0, false),
                   style: const TextStyle(fontSize: 14),
                   decoration: InputDecoration(

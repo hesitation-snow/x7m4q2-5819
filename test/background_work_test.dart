@@ -40,7 +40,8 @@ void main() {
     expect(await queue.run<int>(() async => 2), 2);
   });
 
-  test('book probe shares requests and briefly caches non-brave samples',
+  test(
+      'book probe shares requests and cools down inconclusive samples without declaring public',
       () async {
     var now = DateTime(2026, 9, 5);
     var calls = 0;
@@ -55,9 +56,9 @@ void main() {
     final first = probe.lookup(1, isCurrent: () => true);
     final second = probe.lookup(1, isCurrent: () => true);
     gate.complete();
-    expect(await Future.wait([first, second]), [false, false]);
+    expect(await Future.wait([first, second]), [null, null]);
     expect(calls, 1);
-    expect(await probe.lookup(1, isCurrent: () => true), isFalse);
+    expect(await probe.lookup(1, isCurrent: () => true), isNull);
     expect(calls, 1);
     now = now.add(const Duration(minutes: 6));
     await probe.lookup(1, isCurrent: () => true);
@@ -82,19 +83,26 @@ void main() {
     expect(calls, 1);
   });
 
-  test('canceled and failed probes do not create a negative cache entry',
+  test(
+      'canceled probes skip work and failed probes briefly back off without a negative mark',
       () async {
+    var now = DateTime(2026, 1, 1);
     var fail = true;
     var calls = 0;
-    final probe = BookAccessProbe(query: (_, current) async {
-      calls++;
-      if (fail) throw StateError('offline');
-      return true;
-    });
+    final probe = BookAccessProbe(
+        now: () => now,
+        query: (_, current) async {
+          calls++;
+          if (fail) throw StateError('offline');
+          return true;
+        });
     expect(await probe.lookup(1, isCurrent: () => false), isNull);
     expect(calls, 0);
     expect(await probe.lookup(1, isCurrent: () => true), isNull);
     fail = false;
+    expect(await probe.lookup(1, isCurrent: () => true), isNull);
+    expect(calls, 1);
+    now = now.add(const Duration(seconds: 16));
     expect(await probe.lookup(1, isCurrent: () => true), isTrue);
     expect(calls, 2);
   });

@@ -10,6 +10,7 @@ import 'pages/login_page.dart';
 import 'services/app_motion.dart';
 import 'services/app_theme.dart';
 import 'services/reader_volume_keys.dart';
+import 'services/reader_audio_bootstrap.dart';
 
 final _rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
@@ -41,6 +42,10 @@ void main() async {
   LKClient.sessionExpiredRev.addListener(_showSessionExpiredNotice);
   PaintingBinding.instance.imageCache.maximumSizeBytes = 128 * 1024 * 1024;
   runApp(const LKApp());
+  unawaited(ensureReaderAudioHandler().then<void>((_) {},
+      onError: (Object _, StackTrace __) {
+    debugPrint('Yomiru: media service unavailable; audio can be retried.');
+  }));
   unawaited(LKClient.shared.warmErrorCodeHints());
   unawaited(LKStore.removeLegacyUsageIdentifier());
 }

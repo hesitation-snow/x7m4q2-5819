@@ -63,6 +63,7 @@ class _ShelfPageState extends State<ShelfPage> {
     LKClient.sessionRev.addListener(_onSessionRev);
     LKStore.localShelfRev.addListener(_onLocalShelfRev);
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
+    LKStore.braveBookRevision.addListener(_onHideBraveRev);
     LKStore.gridColumnCount.addListener(_onGridColumnsChanged);
     _loadListMode();
     unawaited(_startLoad());
@@ -73,6 +74,7 @@ class _ShelfPageState extends State<ShelfPage> {
     LKClient.sessionRev.removeListener(_onSessionRev);
     LKStore.localShelfRev.removeListener(_onLocalShelfRev);
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
+    LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     LKStore.gridColumnCount.removeListener(_onGridColumnsChanged);
     _gridScrollController.dispose();
     _topBarFrac.dispose();

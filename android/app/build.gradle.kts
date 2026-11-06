@@ -16,6 +16,8 @@ val sideBySideRelease =
     providers.gradleProperty("sideBySideRelease").orNull == "true" ||
         System.getenv("LKAPP_SIDE_BY_SIDE_RELEASE") == "true"
 val sideBySideDebug = System.getenv("YOMIRU_SIDE_BY_SIDE_DEBUG") == "true"
+// Device smoke tests use a separate app sandbox, never the reader's account data.
+val isolatedDeviceSmoke = System.getenv("YOMIRU_DEVICE_SMOKE") == "true"
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
@@ -62,7 +64,8 @@ android {
             if (sideBySideRelease) applicationIdSuffix = ".release"
         }
         debug {
-            if (sideBySideDebug) applicationIdSuffix = ".debug"
+            if (isolatedDeviceSmoke) applicationIdSuffix = ".smoketest"
+            else if (sideBySideDebug) applicationIdSuffix = ".debug"
         }
     }
 }

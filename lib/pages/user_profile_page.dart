@@ -9,7 +9,6 @@ import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
-import '../services/book_access_probe.dart';
 import '../widgets/filtered_list_continuation.dart';
 import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
@@ -59,7 +58,6 @@ class _UserProfilePageState extends State<UserProfilePage>
   int _relationRevision = 0;
   int _dynamicLoadSerial = 0;
   int _bookshelfLoadSerial = 0;
-  final Set<int> _braveProbeBooks = {};
   String? _publicationError;
 
   @override
@@ -69,6 +67,7 @@ class _UserProfilePageState extends State<UserProfilePage>
     _tabs.addListener(_onTabChanged);
     LKClient.followChanged.addListener(_onFollowChanged);
     LKClient.sessionRev.addListener(_onSessionChanged);
+    LKStore.braveBookRevision.addListener(_onHideBraveRev);
     _loadGlobalMedals();
     _loadEmojis();
     _loadInitial();
@@ -78,10 +77,15 @@ class _UserProfilePageState extends State<UserProfilePage>
   void dispose() {
     LKClient.followChanged.removeListener(_onFollowChanged);
     LKClient.sessionRev.removeListener(_onSessionChanged);
+    LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     _tabs
       ..removeListener(_onTabChanged)
       ..dispose();
     super.dispose();
+  }
+
+  void _onHideBraveRev() {
+    if (mounted) setState(() {});
   }
 
   void _onSessionChanged() {
@@ -144,7 +148,6 @@ class _UserProfilePageState extends State<UserProfilePage>
   Future<void> _loadInitial({bool forceRefresh = false}) async {
     final request = ++_homeLoadSerial;
     final relationRevision = _relationRevision;
-    _braveProbeBooks.clear();
     _publicationError = null;
     if (mounted) {
       setState(() {
@@ -185,24 +188,6 @@ class _UserProfilePageState extends State<UserProfilePage>
         });
       }
     }
-  }
-
-  void _verifyBookAccess(LKPublicBook book) {
-    if (book.bookId <= 0 ||
-        book.isBrave ||
-        LKStore.isBraveBook(book.bookId) ||
-        LKStore.dataSaverMode.value ||
-        !_braveProbeBooks.add(book.bookId)) {
-      return;
-    }
-    final serial = _homeLoadSerial;
-    bool isCurrent() =>
-        mounted && serial == _homeLoadSerial && !LKStore.dataSaverMode.value;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final result = await BookAccessProbe.shared
-          .lookup(book.bookId, isCurrent: isCurrent);
-      if (result == true && isCurrent()) setState(() {});
-    });
   }
 
   Future<void> _loadInitialBookshelf({bool forceRefresh = false}) async {
@@ -788,6 +773,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                         children: [
                           CoverImage(
                               url: item.bookCover,
+                              bookId: item.bookId,
                               width: 40,
                               height: 54,
                               showPeekButton: false,
@@ -992,7 +978,6 @@ class _UserProfilePageState extends State<UserProfilePage>
   }
 
   Widget _bookTile(LKPublicBook book) {
-    _verifyBookAccess(book);
     final isBrave = book.isBrave || LKStore.isBraveBook(book.bookId);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1005,6 +990,8 @@ class _UserProfilePageState extends State<UserProfilePage>
           leading: CoverImage(
             key: ValueKey(book.bookId),
             url: book.coverUrl,
+            bookId: book.bookId,
+            accessStatus: book.accessStatus,
             width: 48,
             height: 64,
             isBrave: isBrave,
