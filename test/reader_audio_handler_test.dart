@@ -333,6 +333,13 @@ class FakeReaderAudioPlayer implements ReaderAudioPlayer {
     positionController.add(value);
   }
 
+  double speed = 1;
+
+  @override
+  Future<void> setSpeed(double value) async {
+    speed = value;
+  }
+
   @override
   Future<void> seekToNext() async {
     final next = (_currentIndex ?? -1) + 1;

@@ -90,6 +90,7 @@ class ReaderAudioHandler extends BaseAudioHandler
   TtsMediaCallbacks? _ttsOwnerCallbacks;
   Object? _speechSessionOwnerKey;
   TtsMediaCallbacks? _speechSessionCallbacks;
+  double _playbackRate = 1;
 
   /// Assign the external TTS media controls to one owner. A later bind takes
   /// ownership; callbacks from the previous owner are never retained.
@@ -182,6 +183,14 @@ class ReaderAudioHandler extends BaseAudioHandler
   Object? get ttsOwnerKey => _ttsOwnerKey;
   Object? get speechSessionOwnerKey => _speechSessionOwnerKey;
 
+  /// Player speed for already synthesized audio. Does not change cache identity.
+  Future<void> setPlaybackRate(double rate) async {
+    _ensureAlive();
+    _playbackRate = rate.clamp(0.5, 3.0);
+    await _player.setSpeed(_playbackRate);
+    _publishState();
+  }
+
   @override
   Future<void> playFiles(
     List<File> files, {
@@ -237,6 +246,7 @@ class ReaderAudioHandler extends BaseAudioHandler
       if (_disposed || generation != _sourceGeneration) return;
       await _player.setFiles(_files, initialIndex: startIndex);
       if (_disposed || generation != _sourceGeneration) return;
+      await _player.setSpeed(_playbackRate);
       _loadingSource = false;
       _completionSent = false;
       final current = mediaItem.valueOrNull;
@@ -668,7 +678,7 @@ class ReaderAudioHandler extends BaseAudioHandler
       systemActions: const {MediaAction.seek},
       updatePosition: effectivePosition,
       bufferedPosition: _player.bufferedPosition,
-      speed: 1.0,
+      speed: _playbackRate,
       queueIndex: index ?? _player.currentIndex,
       captioningEnabled: false,
       repeatMode: AudioServiceRepeatMode.none,
@@ -737,6 +747,7 @@ abstract interface class ReaderAudioPlayer {
   Future<void> pause();
   Future<void> stop();
   Future<void> seek(Duration position);
+  Future<void> setSpeed(double speed);
   Future<void> seekToNext();
   Future<void> seekToPrevious();
   Future<void> seekToIndex(int index);
@@ -787,6 +798,8 @@ class JustAudioReaderPlayer implements ReaderAudioPlayer {
   Future<void> stop() => player.stop();
   @override
   Future<void> seek(Duration position) => player.seek(position);
+  @override
+  Future<void> setSpeed(double speed) => player.setSpeed(speed);
   @override
   Future<void> seekToNext() => player.seekToNext();
   @override

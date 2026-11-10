@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../services/custom_ssml_tts.dart';
+import '../services/edge_speech.dart';
 import '../services/system_tts.dart';
 import 'reader_language_segments.dart';
 import 'reader_tts_core.dart';
@@ -295,7 +296,34 @@ SpeechSynthesisConfig systemSpeechConfig({
       },
     );
 
+/// Synthesizes one sentence through Edge neural voices. Speed is not baked
+/// into the file; the player applies it.
+class EdgeFileSpeechSynthesizer implements SpeechAudioSynthesizer {
+  EdgeFileSpeechSynthesizer({EdgeSpeechClient? client})
+      : _client = client ?? EdgeSpeechClient();
+
+  final EdgeSpeechClient _client;
+
+  @override
+  Future<File> synthesize(
+    String text,
+    SpeechSynthesisConfig config,
+    String cachePath,
+  ) async {
+    if (config.source != 'edge') {
+      throw ArgumentError.value(config.source, 'source', 'Expected edge TTS');
+    }
+    final voice = edgeVoiceForText(text, config);
+    final bytes = await _client.synthesize(text, voice);
+    final file = File(cachePath);
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+}
+
 /// Synthesizes speech through GPT-SoVITS local voice packs or HTTP inference API.
+/// Parked: basic listening does not call this.
 class GptSoVitsSpeechSynthesizer implements SpeechAudioSynthesizer {
   GptSoVitsSpeechSynthesizer({http.Client? client})
       : _client = client ?? http.Client();

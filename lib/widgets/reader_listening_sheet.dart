@@ -77,9 +77,9 @@ class ListeningSourcePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const sources = [
+      ('online', '在线自然音', '免密钥，中日韩自动换音色', Icons.cloud_outlined),
       ('system', '系统引擎', '使用手机已安装的语音', Icons.phone_android_rounded),
-      ('online', 'Azure 在线', '需配置区域与密钥', Icons.cloud_outlined),
-      ('custom', '自定义', '连接自己的 SSML 服务', Icons.tune_rounded),
+      ('custom', '自定义', 'Azure 或自己的 SSML 服务', Icons.tune_rounded),
     ];
     final theme = Theme.of(context);
     return LayoutBuilder(builder: (context, constraints) {

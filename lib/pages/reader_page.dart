@@ -38,6 +38,7 @@ import '../reader/reader_language_segments.dart';
 import '../reader/reader_speech_session.dart';
 import '../reader/reader_tts_resume.dart';
 import '../reader/reader_speech_synthesizers.dart';
+import '../services/edge_speech.dart';
 import '../services/system_tts.dart';
 import '../services/custom_ssml_tts.dart';
 import 'custom_tts_settings_page.dart';
@@ -203,7 +204,7 @@ class ReaderPage extends StatefulWidget {
       required this.chapterTitle,
       required this.volumeId,
       this.autoStartTts = false,
-      this.initialTtsSource = 'system'});
+      this.initialTtsSource = 'online'});
 
   @override
   State<ReaderPage> createState() => _ReaderPageState();
@@ -335,6 +336,7 @@ class _ReaderPageState extends State<ReaderPage>
   String? _ttsEngineError;
   String? _ttsEngineId;
   final Map<String, String> _ttsVoiceByLanguage = <String, String>{};
+  final Map<String, String> _edgeVoiceByLanguage = <String, String>{};
   bool _ttsVoicesLoading = false;
   String? _ttsVoiceError;
   String? _ttsPreferredSystemVoiceId;
@@ -346,7 +348,7 @@ class _ReaderPageState extends State<ReaderPage>
   CustomSsmlTts? _activeSpeechClient;
   SpeechSynthesisConfig? _activeSpeechConfig;
   String _speechAccountId = '';
-  String _ttsSourceMode = 'system';
+  String _ttsSourceMode = 'online';
   ReaderLanguageFilter _ttsLanguageFilter = ReaderLanguageFilter.automatic;
   Duration _ttsSegmentInterval = Duration.zero;
   PlaybackSleepTimer _ttsSleepTimer = PlaybackSleepTimer.none;
@@ -2802,10 +2804,12 @@ class _ReaderPageState extends State<ReaderPage>
       final sleep = values['sleepTimer'];
       final voiceMap = values['voiceByLanguage'];
       setState(() {
-        _ttsSourceMode = source is String &&
-                const {'system', 'online', 'custom'}.contains(source)
-            ? source
-            : 'system';
+        _ttsSourceMode = source == 'gpt_sovits'
+            ? 'online'
+            : source is String &&
+                    const {'system', 'online', 'custom'}.contains(source)
+                ? source
+                : 'online';
         _ttsDraftRate =
             ((values['rate'] as num?)?.toDouble() ?? 1.0).clamp(.5, 3);
         _ttsSegmentInterval = Duration(
@@ -2829,6 +2833,19 @@ class _ReaderPageState extends State<ReaderPage>
             }
           }
         }
+        _edgeVoiceByLanguage.clear();
+        final edgeMap = values['edgeVoiceByLanguage'];
+        if (edgeMap is Map) {
+          for (final entry in edgeMap.entries) {
+            if (entry.key is String &&
+                entry.value is String &&
+                edgeVoiceById(entry.value as String)?.language ==
+                    entry.key) {
+              _edgeVoiceByLanguage[entry.key as String] =
+                  entry.value as String;
+            }
+          }
+        }
       });
       _ttsSettingsLoadedForAccount = accountKey;
     } catch (_) {
@@ -2848,6 +2865,7 @@ class _ReaderPageState extends State<ReaderPage>
         'systemVoice': _ttsPlatform.voiceId,
         'systemEngine': _ttsEngineId,
         'voiceByLanguage': _ttsVoiceByLanguage,
+        'edgeVoiceByLanguage': _edgeVoiceByLanguage,
         'languageFilter': _ttsLanguageFilter.name,
         'segmentIntervalMs': _ttsSegmentInterval.inMilliseconds,
         'sleepTimer': _ttsSleepTimer.name,
@@ -3118,37 +3136,24 @@ class _ReaderPageState extends State<ReaderPage>
         availableVoices: _ttsVoices,
         voiceByLanguage: _ttsVoiceByLanguage,
       );
-    } else if (_ttsSourceMode == 'gpt_sovits') {
-      throw const SystemTtsException('本地 GPT-SoVITS 推理后端尚未实现。',
-          code: 'LOCAL_GPTSOVITS_NOT_IMPLEMENTED');
+    } else if (_ttsSourceMode == 'online') {
+      synthesizer = EdgeFileSpeechSynthesizer();
+      config = edgeSpeechConfig(voiceByLanguage: _edgeVoiceByLanguage);
+      await handler.setPlaybackRate(_ttsDraftRate);
     } else {
       final preferences = await SharedPreferences.getInstance();
       if (!current()) return;
       final metadataJson =
           preferences.getString(_customTtsMetadataKey(accountKey));
       if (metadataJson == null || metadataJson.isEmpty) {
-        if (mounted) showFloatingPrompt(context, '请先配置在线或自定义语音接口');
+        if (mounted) showFloatingPrompt(context, '请先配置自定义语音接口');
         return;
       }
       final metadata = decodeCustomTtsMetadata(metadataJson);
-      final customConfig = CustomSsmlTtsConfig.fromMetadata(metadata);
-      if (_ttsSourceMode == 'online') {
-        final host =
-            Uri.tryParse(customConfig.endpoint)?.host.toLowerCase() ?? '';
-        if (!host.endsWith('.tts.speech.microsoft.com') ||
-            customConfig.authMode != CustomTtsAuthMode.azureKey) {
-          if (mounted) {
-            showFloatingPrompt(
-                context, '在线自然音源需配置 Azure Speech 区域 Endpoint 和 Azure Key');
-          }
-          return;
-        }
-      }
-      final source = _ttsSourceMode == 'online' ? 'cloud' : 'custom';
       final savedConfig =
           speechConfigFromCustomMetadata(metadata, rate: _ttsDraftRate);
       config = SpeechSynthesisConfig(
-        source: source,
+        source: 'custom',
         voice: savedConfig.voice,
         language: savedConfig.language,
         rate: savedConfig.rate,
@@ -3230,8 +3235,35 @@ class _ReaderPageState extends State<ReaderPage>
     _refreshTtsSheet();
   }
 
+  Future<void> _applyEdgeVoices() async {
+    final speech = _speechSession;
+    final config = edgeSpeechConfig(voiceByLanguage: _edgeVoiceByLanguage);
+    if (speech != null &&
+        _activeSpeechConfig?.source == 'edge' &&
+        !speech.isStopped) {
+      _activeSpeechConfig = config;
+      try {
+        await speech.updateConfig(config);
+      } catch (error) {
+        _ttsSessionError = error.toString();
+      }
+    }
+    await _saveTtsPreferences();
+    _refreshTtsSheet();
+  }
+
   Future<void> _updateSpeechRate(double rate) async {
     _ttsDraftRate = rate;
+    if (_ttsSourceMode == 'online') {
+      try {
+        await activeReaderAudioHandler?.setPlaybackRate(rate);
+      } catch (error) {
+        _ttsSessionError = error.toString();
+      }
+      unawaited(_saveTtsPreferences());
+      if (mounted) setState(() {});
+      return;
+    }
     final session = _speechSession;
     final current = _activeSpeechConfig;
     if (session != null && current != null && !session.isStopped) {
@@ -3855,7 +3887,74 @@ class _ReaderPageState extends State<ReaderPage>
                                       ],
                                     ),
                                 ])),
-                      if (_ttsSourceMode != 'system') ...[
+                      if (_ttsSourceMode == 'online')
+                        ListeningSection(
+                          title: '在线音色',
+                          child: Card.filled(
+                            margin: EdgeInsets.zero,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                              child: Column(
+                                children: [
+                                  const ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: Icon(Icons.cloud_outlined),
+                                    title: Text('中日韩自动换音色'),
+                                    subtitle: Text(
+                                        '不需要密钥。语速只改变播放速度，不会重新合成。正文会发送到在线语音服务。'),
+                                  ),
+                                  for (final language in const [
+                                    ('chinese', '中文'),
+                                    ('japanese', '日文'),
+                                    ('korean', '韩文'),
+                                  ])
+                                    DropdownButtonFormField<String>(
+                                      key: ValueKey(
+                                          'edge-voice-${language.$1}-${_edgeVoiceByLanguage[language.$1] ?? ''}'),
+                                      isExpanded: true,
+                                      initialValue: edgeVoiceById(
+                                                      _edgeVoiceByLanguage[
+                                                          language.$1])
+                                                  ?.language ==
+                                              language.$1
+                                          ? _edgeVoiceByLanguage[language.$1]
+                                          : '',
+                                      decoration: InputDecoration(
+                                        labelText: language.$2,
+                                        border: const OutlineInputBorder(),
+                                      ),
+                                      items: [
+                                        const DropdownMenuItem(
+                                          value: '',
+                                          child: Text('自动'),
+                                        ),
+                                        for (final voice in builtInEdgeVoices
+                                            .where((item) =>
+                                                item.language == language.$1))
+                                          DropdownMenuItem(
+                                            value: voice.id,
+                                            child: Text(voice.label),
+                                          ),
+                                      ],
+                                      onChanged: (id) {
+                                        setSheet(() {
+                                          if (id == null || id.isEmpty) {
+                                            _edgeVoiceByLanguage
+                                                .remove(language.$1);
+                                          } else {
+                                            _edgeVoiceByLanguage[language.$1] =
+                                                id;
+                                          }
+                                        });
+                                        unawaited(_applyEdgeVoices());
+                                      },
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (_ttsSourceMode == 'custom') ...[
                         ListeningSection(
                             title: '服务配置',
                             child: Card.filled(
@@ -4006,23 +4105,13 @@ class _ReaderPageState extends State<ReaderPage>
                           const Padding(
                               padding: EdgeInsets.all(12),
                               child: Text(
-                                  '后台与锁屏通过媒体通知控制；暂停后从当前语段开头恢复。在线音源会发送正文到配置的服务。')),
-                          const Padding(
-                            padding: EdgeInsets.only(top: 8),
-                            child: Text(
-                                'Azure 在线音色需配置区域 Endpoint 与 Azure Key；会联网发送正文并按服务商规则计费。'),
-                          ),
+                                  '后台与锁屏通过媒体通知控制；暂停后从当前语段开头恢复。在线自然音会把正文发到语音服务，不需要密钥。')),
                           if (_ttsSourceMode == 'custom')
                             const Padding(
                               padding: EdgeInsets.only(top: 8),
                               child: Text(
-                                  '自定义 SSML 会将朗读正文发送至你配置的 HTTPS Endpoint。'),
+                                  '自定义 SSML 会将朗读正文发送至你配置的 HTTPS Endpoint。Azure 也从这里配置。'),
                             ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 8),
-                            child: Text(
-                                '本地 GPT-SoVITS：尚未实现手机推理，当前不可用。电脑导出的模型包不代表手机已经支持。'),
-                          ),
                         ],
                       ),
                     ]),
