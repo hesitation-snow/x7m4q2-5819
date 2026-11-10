@@ -4,7 +4,10 @@ import '../services/app_motion.dart';
 
 import 'package:flutter/material.dart';
 
+import '../api/epub_catalog.dart';
+import '../api/home_channels.dart';
 import '../api/lk_api.dart';
+import '../api/models.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
 import '../widgets/filtered_list_continuation.dart';
@@ -181,6 +184,10 @@ class _SearchPageState extends State<SearchPage> {
       _error = null;
       _loading = true;
     });
+    if (criteria.channelCode == 'epub') {
+      await _searchEpub(page, append, criteria, request);
+      return;
+    }
     try {
       final items = await LKApi.search(
         criteria.query,
@@ -213,6 +220,81 @@ class _SearchPageState extends State<SearchPage> {
         setState(() => _loading = false);
       }
     }
+  }
+
+  Future<void> _searchEpub(
+    int page,
+    bool append,
+    ({
+      String query,
+      String sort,
+      String primaryTag,
+      String preset,
+      String channelCode,
+      String workType
+    }) criteria,
+    int request,
+  ) async {
+    try {
+      final query = criteria.query.trim();
+      final List<dynamic> items;
+      final bool hasMore;
+      if (query.isEmpty) {
+        // 信息流从第 1 页开始；第 0 页会和第 1 页重复。
+        items = await LKApi.channelFeed(
+          homeChannelByCode('epub').path,
+          page + 1,
+        );
+        hasMore = items.length >= 20;
+      } else {
+        await EpubCatalog.collect(
+          (page + 1) * 20,
+          (book) => epubBookMatches(book, query),
+        );
+        final matched = _rankEpub(EpubCatalog.books, query, criteria.sort);
+        final start = page * 20;
+        items = start >= matched.length
+            ? const <LKBook>[]
+            : matched.sublist(start, (start + 20).clamp(0, matched.length));
+        hasMore = start + items.length < matched.length || !EpubCatalog.done;
+      }
+      if (!mounted || request != _requestSerial) return;
+      setState(() {
+        if (append) {
+          _items.addAll(items);
+        } else {
+          _items
+            ..clear()
+            ..addAll(items);
+        }
+        _page = page;
+        _hasMore = hasMore;
+        _error = null;
+      });
+    } catch (e) {
+      if (mounted && request == _requestSerial) {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted && request == _requestSerial) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  List<LKBook> _rankEpub(List<LKBook> books, String query, String sort) {
+    final matched = books.where((book) => epubBookMatches(book, query)).toList();
+    if (sort == 'new') {
+      matched.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    } else {
+      final needle = query.toLowerCase();
+      matched.sort((a, b) {
+        final aTitle = a.title.toLowerCase().contains(needle) ? 0 : 1;
+        final bTitle = b.title.toLowerCase().contains(needle) ? 0 : 1;
+        return aTitle.compareTo(bTitle);
+      });
+    }
+    return matched;
   }
 
   Future<void> _refresh() async {

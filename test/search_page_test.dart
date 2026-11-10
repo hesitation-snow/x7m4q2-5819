@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:yomiru/api/epub_catalog.dart';
 import 'package:yomiru/api/lk_api.dart';
 import 'package:yomiru/api/lk_client.dart';
 import 'package:yomiru/api/store.dart';
@@ -61,6 +62,7 @@ void main() {
   });
   tearDown(() {
     LKApi.client = LKClient.shared;
+    EpubCatalog.reset();
     LKStore.dataSaverMode.value = false;
     LKStore.hideBraveBooks.value = false;
   });
@@ -182,6 +184,76 @@ void main() {
     expect(find.text('preset late 0'), findsNothing);
     expect(find.text('channel late 0'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('EPUB uses the catalog feed instead of the empty work-type filter',
+      (tester) async {
+    final paths = <String>[];
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      paths.add(request.url.path);
+      if (request.url.path.contains('taxonomy')) {
+        return response({
+          ...taxonomy,
+          'channels': [
+            {'code': 'original', 'label': '原创'},
+            {'code': 'epub', 'label': 'EPUB'},
+          ],
+        });
+      }
+      if (request.url.path.contains('home-epub-feed')) {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final page = body['page'];
+        final size = body['pageSize'];
+        if (page == 1 && size == 20) {
+          return response(books('目录', count: 1, startId: 31634));
+        }
+        if (page == 1) {
+          return response({
+            'list': [
+              {'book_id': 1, 'title': '普通轻小说'},
+              {'book_id': 31634, 'title': '魔法师的隐遁计划', 'author_name': 'イズシロ'},
+            ],
+          });
+        }
+        return response({'list': const []});
+      }
+      return response(books('搜索接口不该被调用'));
+    }));
+    await tester.pumpWidget(const MaterialApp(home: SearchPage()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('EPUB'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('目录 0'), findsOneWidget);
+    expect(paths.where((path) => path.contains('apk-search-result')), isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('EPUB keyword search reads the catalog instead of work_type=epub',
+      (tester) async {
+    EpubCatalog.reset();
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      expect(request.url.path, contains('home-epub-feed'));
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      if (body['page'] == 1) {
+        return response({
+          'list': [
+            {'book_id': 1, 'title': '普通轻小说'},
+            {
+              'book_id': 31634,
+              'title': '魔法师的隐遁计划',
+              'author_name': 'イズシロ'
+            },
+          ],
+        });
+      }
+      return response({'list': const []});
+    }));
+    await EpubCatalog.collect(20, (book) => epubBookMatches(book, '隐遁'));
+    final matched =
+        EpubCatalog.books.where((book) => epubBookMatches(book, '隐遁'));
+    expect(matched.map((book) => book.bookId), [31634]);
+    expect(epubBookMatches(EpubCatalog.books.first, '隐遁'), isFalse);
   });
 
   testWidgets('refresh starts immediately and cannot overwrite a newer search',
