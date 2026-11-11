@@ -27,7 +27,7 @@ void main() {
   });
 
   test('binary audio frame splits the header from the payload', () {
-    final header = 'Path:audio\r\n';
+    const header = 'Path:audio\r\n';
     final bytes = <int>[0, header.length, ...header.codeUnits, 9, 8, 7];
     final frame = EdgeSpeechClient.binaryAudio(bytes);
     expect(frame.path, 'audio');
