@@ -2313,6 +2313,9 @@ class LKDynamicItem {
   final int bookId; // 作品卡(带作品链接的动态)
   final String bookTitle;
   final String bookCover;
+
+  /// 作品卡自己带的勇者标记。目录探测确认前，未知作品保持 false。
+  final bool bookMarkedBrave;
   final List<LKDynamicMedia> media;
   final LKDynamicPoll? poll;
   String get displayContent {
@@ -2354,6 +2357,7 @@ class LKDynamicItem {
     this.bookId = 0,
     this.bookTitle = '',
     this.bookCover = '',
+    this.bookMarkedBrave = false,
     this.media = const [],
     this.poll,
   });
@@ -2368,6 +2372,10 @@ class LKDynamicItem {
     // target_brief.target_id 对纯动态指向动态内容本身，不能当作书号。
     final rawBookId = brief['book_id'] ??
         (targetType == 'book' ? brief['target_id'] : j['book_id']);
+    final bookId = _jsonInt(rawBookId);
+    final bookMarkedBrave = bookId > 0 &&
+        (classifyBookAccess(brief) == BookAccessStatus.brave ||
+            _isBraveBook(brief));
     final isWorkPost = _jsonInt(rawBookId) > 0 ||
         const {
           'book_created',
@@ -2435,9 +2443,10 @@ class LKDynamicItem {
               j['time'] ??
               '')
           .toString(),
-      bookId: _jsonInt(rawBookId),
+      bookId: bookId,
       bookTitle: (brief['title'] ?? '').toString(),
       bookCover: (brief['cover_url'] ?? '').toString(),
+      bookMarkedBrave: bookMarkedBrave,
       media: media,
       poll: LKDynamicPoll.tryParse(
           j['poll'] ?? j['vote'] ?? j['poll_json'] ?? j['extension']),

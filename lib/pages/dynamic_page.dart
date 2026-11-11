@@ -112,10 +112,17 @@ class _DynamicPageState extends State<DynamicPage> {
     return b.dynamicId.compareTo(a.dynamicId);
   }
 
+  bool _dynamicShowsBook(LKDynamicItem item) =>
+      item.bookId <= 0 ||
+      !(item.bookMarkedBrave || LKStore.isBraveBook(item.bookId));
+
   void _rebuildVisibleItems() {
-    final visible = _contentFilter == 'book'
-        ? _items.where((item) => item.isWorkPost).toList()
-        : [..._items];
+    final hideBrave = LKStore.hideBraveBooks.value;
+    final visible = _items.where((item) {
+      if (_contentFilter == 'book' && !item.isWorkPost) return false;
+      if (hideBrave && !_dynamicShowsBook(item)) return false;
+      return true;
+    }).toList();
     final indexed = visible.asMap().entries.toList();
     indexed.sort((a, b) {
       final order = _compareDynamicItems(a.value, b.value);
@@ -124,11 +131,18 @@ class _DynamicPageState extends State<DynamicPage> {
     _visibleItems = indexed.map((entry) => entry.value).toList();
   }
 
+  void _onBraveFilterChanged() {
+    if (!mounted) return;
+    setState(_rebuildVisibleItems);
+  }
+
   @override
   void initState() {
     super.initState();
     LKClient.sessionRev.addListener(_onSessionChanged);
     LKStore.dynamicFeedMode.addListener(_onFeedSourceChanged);
+    LKStore.hideBraveBooks.addListener(_onBraveFilterChanged);
+    LKStore.braveBookRevision.addListener(_onBraveFilterChanged);
     _loadGlobalMedals();
     _loadEmojis();
     _loadUnread();
@@ -139,6 +153,8 @@ class _DynamicPageState extends State<DynamicPage> {
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionChanged);
     LKStore.dynamicFeedMode.removeListener(_onFeedSourceChanged);
+    LKStore.hideBraveBooks.removeListener(_onBraveFilterChanged);
+    LKStore.braveBookRevision.removeListener(_onBraveFilterChanged);
     _topBarFrac.dispose();
     super.dispose();
   }
@@ -708,8 +724,25 @@ class _DynamicPageState extends State<DynamicPage> {
                     ],
                   )
                 : visibleItems.isEmpty && !_hasMore && !_loading
-                    ? _emptyState(
-                        _contentFilter == 'book' ? '暂无作品发布动态' : '暂无动态')
+                    ? _emptyState(_contentFilter == 'book'
+                        ? '暂无作品发布动态'
+                        : LKStore.hideBraveBooks.value && _items.isNotEmpty
+                            ? '已按设置隐藏勇者相关动态'
+                            : '暂无动态')
+                    : visibleItems.isEmpty &&
+                            LKStore.hideBraveBooks.value &&
+                            _items.isNotEmpty
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              SizedBox(
+                                height:
+                                    MediaQuery.sizeOf(context).height * 0.45,
+                                child: const Center(
+                                    child: Text('已按设置隐藏勇者相关动态')),
+                              ),
+                            ],
+                          )
                     : CustomScrollView(
                         physics: const AlwaysScrollableScrollPhysics(),
                         slivers: [
@@ -916,6 +949,11 @@ class _DynamicPageState extends State<DynamicPage> {
                                                   child: Row(children: [
                                                     CoverImage(
                                                         url: d.bookCover,
+                                                        bookId: d.bookId,
+                                                        isBrave: d
+                                                                .bookMarkedBrave ||
+                                                            LKStore.isBraveBook(
+                                                                d.bookId),
                                                         width: 40,
                                                         height: 53),
                                                     const SizedBox(width: 10),

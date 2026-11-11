@@ -80,6 +80,22 @@ void main() {
     expect(item.isWorkPost, isTrue);
     expect(item.bookTitle, '书名');
     expect(item.bookCover, 'https://example.com/cover.jpg');
+    expect(item.bookMarkedBrave, isFalse);
+  });
+
+  test('book activity brief marked brave is detected', () {
+    final item = LKDynamicItem.fromJson({
+      'dynamic_id': 1,
+      'event_type': 'book_created',
+      'target_brief': {
+        'target_type': 'book',
+        'target_id': 88,
+        'title': '勇者书',
+        'tags': ['勇者'],
+      },
+    });
+    expect(item.bookId, 88);
+    expect(item.bookMarkedBrave, isTrue);
   });
 
   test('dynamic comments preserve nested replies', () {

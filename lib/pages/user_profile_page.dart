@@ -621,7 +621,9 @@ class _UserProfilePageState extends State<UserProfilePage>
       builder: (context, hideBrave, _) {
         final visibleDynamics = hideBrave
             ? _dynamics
-                .where((d) => d.bookId <= 0 || !LKStore.isBraveBook(d.bookId))
+                .where((d) =>
+                    d.bookId <= 0 ||
+                    !(d.bookMarkedBrave || LKStore.isBraveBook(d.bookId)))
                 .toList()
             : _dynamics;
         return visibleDynamics.isEmpty
@@ -777,7 +779,8 @@ class _UserProfilePageState extends State<UserProfilePage>
                               width: 40,
                               height: 54,
                               showPeekButton: false,
-                              isBrave: LKStore.isBraveBook(item.bookId)),
+                              isBrave: item.bookMarkedBrave ||
+                                  LKStore.isBraveBook(item.bookId)),
                           const SizedBox(width: 10),
                           Expanded(
                               child: Text(item.bookTitle,

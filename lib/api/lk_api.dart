@@ -712,7 +712,11 @@ class LKApi {
     };
     final d = await client.post('/api/dynamic/get-feed-v1',
         anonymous ? payload : client.authed(payload));
-    return LKDynamicPage.fromJson(d);
+    final feed = LKDynamicPage.fromJson(d);
+    unawaited(LKStore.markBooksBrave(feed.items
+        .where((item) => item.bookMarkedBrave)
+        .map((item) => item.bookId)));
+    return feed;
   }
 
   static Future<List<LKDynamicItem>> dynamicFeed(
@@ -1096,7 +1100,11 @@ class LKApi {
         cacheKey:
             'public_dynamic_${client.session.uid}-$uid-${Uri.encodeComponent(cursor)}-$size',
         forceRefresh: forceRefresh);
-    return LKDynamicPage.fromJson(d);
+    final feed = LKDynamicPage.fromJson(d);
+    unawaited(LKStore.markBooksBrave(feed.items
+        .where((item) => item.bookMarkedBrave)
+        .map((item) => item.bookId)));
+    return feed;
   }
 
   /// 当前轻币余额
