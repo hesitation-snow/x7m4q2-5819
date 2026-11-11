@@ -15,6 +15,7 @@ import '../api/pagination.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../services/app_update_service.dart';
+import '../widgets/listening_dock.dart';
 import '../widgets/liquid_glass_bottom_bar.dart';
 import '../widgets/common.dart';
 import '../widgets/filtered_list_continuation.dart';
@@ -508,6 +509,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
+                const ListeningDock(),
               ],
             ),
             bottomNavigationBar: useLiquidGlass

@@ -39,6 +39,7 @@ import '../reader/reader_speech_session.dart';
 import '../reader/reader_tts_resume.dart';
 import '../reader/reader_speech_synthesizers.dart';
 import '../services/edge_speech.dart';
+import '../services/listening_now.dart';
 import '../services/system_tts.dart';
 import '../services/custom_ssml_tts.dart';
 import 'custom_tts_settings_page.dart';
@@ -1332,11 +1333,16 @@ class _ReaderPageState extends State<ReaderPage>
     _pageController.dispose();
     _progressN.dispose();
     _positionController.dispose();
-    unawaited(_disposeSpeechSession());
+    final keepSpeaking = _speechSession != null && !_speechSession!.isStopped;
+    if (keepSpeaking) {
+      _handSpeechToBackground();
+    } else {
+      unawaited(_disposeSpeechSession());
+      unawaited(_ttsPlatform.dispose());
+    }
     _ttsController.removeListener(_onTtsChanged);
     _ttsController.dispose();
     _ttsUiRevision.dispose();
-    unawaited(_ttsPlatform.dispose());
     WakelockPlus.disable();
     _systemUi.dispose();
     super.dispose();
@@ -2937,6 +2943,29 @@ class _ReaderPageState extends State<ReaderPage>
     ));
   }
 
+  void _handSpeechToBackground() {
+    final session = _speechSession;
+    if (session == null) return;
+    session.removeListener(_onSpeechSessionChanged);
+    _speechSession = null;
+    final client = _activeSpeechClient;
+    _activeSpeechClient = null;
+    _activeSpeechConfig = null;
+    final platform = _ttsPlatform;
+    ListeningNow.instance.adopt(
+      session: session,
+      bookTitle: widget.bookTitle,
+      chapterTitle: _title,
+      bookId: widget.bookId,
+      chapterId: widget.chapterId,
+      volumeId: widget.volumeId,
+      releaseResources: () async {
+        client?.close();
+        await platform.dispose();
+      },
+    );
+  }
+
   Future<void> _stopSpeechPlayback() async {
     ++_speechStartRevision;
     _speechStarting = false;
@@ -3073,6 +3102,9 @@ class _ReaderPageState extends State<ReaderPage>
     if (segments.isEmpty) {
       if (mounted) showFloatingPrompt(context, '本章没有可朗读内容');
       return;
+    }
+    if (ListeningNow.instance.active) {
+      await ListeningNow.instance.stop();
     }
     if (handler == null) {
       if (_ttsSourceMode == 'system') {
@@ -3588,13 +3620,8 @@ class _ReaderPageState extends State<ReaderPage>
                                   Text(_mediaServiceRetrying ? '连接中…' : '重连')),
                         )),
                       const SizedBox(height: 14),
-                      Text('语速 ${_ttsDraftRate.toStringAsFixed(2)}×'),
-                      Slider(
-                        min: .5,
-                        max: 3,
-                        divisions: 25,
-                        value: _ttsDraftRate.clamp(.5, 3),
-                        label: '${_ttsDraftRate.toStringAsFixed(2)}×',
+                      ListeningRateControl(
+                        rate: _ttsDraftRate,
                         onChanged: (value) =>
                             setSheet(() => _ttsDraftRate = value),
                         onChangeEnd: (value) {
