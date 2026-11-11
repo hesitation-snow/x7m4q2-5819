@@ -174,6 +174,11 @@ class BookCatalogVerifier {
               ids.any(cursor.chapterIds.contains)) {
             return finish(CatalogVerificationStatus.unknown);
           }
+          if (page.items.any((item) =>
+              item.braveOnly || item.accessStatus == BookAccessStatus.brave)) {
+            progress = true;
+            return finish(CatalogVerificationStatus.containsBrave);
+          }
           final count = cursor.volumeChapters + ids.length;
           final total = page.hasKnownTotal ? page.total : cursor.chapterTotal;
           if ((page.hasKnownTotal &&
@@ -190,11 +195,6 @@ class BookCatalogVerifier {
               (book.chapterCount > 0 &&
                   cursor.chapterIds.length + ids.length > book.chapterCount)) {
             return finish(CatalogVerificationStatus.unknown);
-          }
-          if (page.items.any((item) =>
-              item.braveOnly || item.accessStatus == BookAccessStatus.brave)) {
-            progress = true;
-            return finish(CatalogVerificationStatus.containsBrave);
           }
           cursor.chapterIds.addAll(ids);
           cursor.hasUnknown |= (page.items.isEmpty &&

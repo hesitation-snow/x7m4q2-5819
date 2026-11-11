@@ -198,6 +198,7 @@ class CoverImage extends StatefulWidget {
 class _CoverImageState extends State<CoverImage> {
   bool _revealed = false;
   bool _probeScheduled = false;
+  bool _probeDeferred = false;
   bool _lastBrave = false;
   int _probeEpoch = 0;
   ModalRoute<dynamic>? _route;
@@ -236,6 +237,7 @@ class _CoverImageState extends State<CoverImage> {
       _revealed = false;
       ++_probeEpoch;
       _probeScheduled = false;
+      _probeDeferred = false;
       _lastBrave = _brave;
     }
   }
@@ -245,8 +247,19 @@ class _CoverImageState extends State<CoverImage> {
         widget.bookId <= 0 ||
         _brave ||
         widget.accessStatus != BookAccessStatus.unknown ||
-        !LKStore.hideBraveBooks.value ||
         LKStore.dataSaverMode.value) {
+      return;
+    }
+    final probe = BookAccessProbe.shared;
+    if (probe.queued >= probe.maxPending) {
+      if (_probeDeferred) return;
+      _probeDeferred = true;
+      final epoch = _probeEpoch;
+      Future<void>.delayed(const Duration(milliseconds: 400), () {
+        _probeDeferred = false;
+        if (!mounted || epoch != _probeEpoch) return;
+        _scheduleAccessProbe();
+      });
       return;
     }
     _probeScheduled = true;
@@ -259,7 +272,6 @@ class _CoverImageState extends State<CoverImage> {
         id == widget.bookId &&
         account == LKClient.sessionRev.value &&
         _route?.isCurrent != false &&
-        LKStore.hideBraveBooks.value &&
         !LKStore.dataSaverMode.value;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(() async {

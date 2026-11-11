@@ -97,6 +97,7 @@ class BookAccessProbe {
   final _positive = <int>{};
   final _retryAfter = <int, DateTime>{};
   final _pending = <int, Future<bool?>>{};
+  int get queued => _pending.length;
   final _listeners = <int, Set<bool Function()>>{};
 
   Future<void> get whenIdle async {

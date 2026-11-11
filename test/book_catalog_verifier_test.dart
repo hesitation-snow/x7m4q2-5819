@@ -94,6 +94,33 @@ void main() {
     }
   });
 
+  test('first public chapter does not hide a brave second chapter', () async {
+    final f = Fixture();
+    f.book = LKBook(bookId: 33198, volumeCount: 1, chapterCount: 2);
+    f.volumes = [LKVolume(volumeId: 50856, chapterCount: 2)];
+    f.pages['50856:1'] = LKChapterPage.fromJson({
+      'list': [
+        {
+          'chapter_id': 324197,
+          'chapter_no': 1,
+          'title': '翻譯信息',
+          'access_type': 'public',
+          'brave_required': 0,
+        },
+        {
+          'chapter_id': 324198,
+          'chapter_no': 2,
+          'title': '序章',
+          'access_type': 'brave',
+          'brave_required': 1,
+        },
+      ],
+      'pagination': {'page': 1, 'page_size': 50, 'total': 2, 'has_next': 0},
+    });
+    final result = await f.verifier().verifyRound(33198, isCurrent: () => true);
+    expect(result.status, CatalogVerificationStatus.containsBrave);
+  });
+
   test('public first page does not hide last brave entry on second page',
       () async {
     final f = Fixture();
