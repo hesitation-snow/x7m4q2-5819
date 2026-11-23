@@ -106,13 +106,15 @@ void main() {
     expect(marquis.current.name, '侯爵');
     expect(marquis.next?.name, '公爵');
     expect(marquis.remainingToNext, 4226);
-    expect(marquis.nextHintText, '距公爵还差 4,226 积分');
+    expect(marquis.nextHintText, '距公爵还差 4,226 经验');
+    expect(marquis.summaryLineText, '经验 8275/12501 · 距公爵还差 4,226 经验');
+    expect(marquis.totalProgress, closeTo(8275 / 50001, 0.0001));
 
     final emperor = lkRankProgressForExp(50001);
     expect(emperor.current.name, '皇帝');
     expect(emperor.next, isNull);
     expect(emperor.isMaxRank, isTrue);
-    expect(emperor.progress, 1.0);
+    expect(emperor.totalProgress, 1.0);
   });
 
   testWidgets('my profile shows exp ratio without upgrade hint and opens rank table',
@@ -140,19 +142,20 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MyTab())));
     await tester.pumpAndSettle();
     expect(find.text('测试组'), findsOneWidget);
-    expect(find.text('经验 0/251'), findsOneWidget);
+    expect(find.text('经验 0/251 · 距骑士还差 251 经验'), findsOneWidget);
+    expect(find.text('经验 0/251'), findsNothing);
     expect(find.textContaining('升级经验参考'), findsNothing);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
-    await tester.tap(find.text('经验 0/251'));
+    await tester.tap(find.text('经验 0/251 · 距骑士还差 251 经验'));
     await tester.pumpAndSettle();
     expect(find.text('身份组升级经验'), findsOneWidget);
     expect(find.text('平民'), findsOneWidget);
-    expect(find.text('0 积分起'), findsOneWidget);
+    expect(find.text('0 经验起'), findsOneWidget);
     expect(find.text('骑士'), findsOneWidget);
-    expect(find.text('251 积分起'), findsOneWidget);
+    expect(find.text('251 经验起'), findsOneWidget);
     expect(find.text('皇帝'), findsOneWidget);
-    expect(find.text('50,001 积分起'), findsOneWidget);
+    expect(find.text('50,001 经验起'), findsOneWidget);
 
     Navigator.of(tester.element(find.text('身份组升级经验'))).pop();
     await tester.pumpAndSettle();

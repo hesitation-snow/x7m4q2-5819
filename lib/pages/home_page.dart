@@ -2364,7 +2364,7 @@ class _MyTabState extends State<MyTab> {
                                     ?.copyWith(fontWeight: FontWeight.w600)),
                             const SizedBox(height: 2),
                             Text(
-                              '当前 ${formatLKExpNumber(rank.exp)} 积分 · ${rank.nextHintText}',
+                              '当前 ${formatLKExpNumber(rank.exp)} 经验 · ${rank.nextHintText}',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: scheme.onSurfaceVariant,
                               ),
@@ -2378,7 +2378,7 @@ class _MyTabState extends State<MyTab> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: LinearProgressIndicator(
-                      value: rank.progress,
+                      value: rank.totalProgress,
                       minHeight: 6,
                       backgroundColor: scheme.surfaceContainerHighest,
                     ),
@@ -2449,7 +2449,7 @@ class _MyTabState extends State<MyTab> {
                             ],
                             const Spacer(),
                             Text(
-                              '${formatLKExpNumber(tier.minExp)} 积分起',
+                              '${formatLKExpNumber(tier.minExp)} 经验起',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: isCurrent
@@ -2491,12 +2491,6 @@ class _MyTabState extends State<MyTab> {
             children: [
               _profileChip(Icons.workspace_premium_outlined, levelText,
                   onTap: rank == null ? null : () => _showRankExpSheet(rank)),
-              if (rank != null)
-                _profileChip(
-                  Icons.auto_graph_outlined,
-                  '经验 ${rank.ratioText}',
-                  onTap: () => _showRankExpSheet(rank),
-                ),
               _profileChip(
                 Icons.monetization_on_outlined,
                 '${profile.coin} 轻币',
@@ -2528,7 +2522,7 @@ class _MyTabState extends State<MyTab> {
                       children: [
                         Expanded(
                           child: Text(
-                            rank.nextHintText,
+                            rank.summaryLineText,
                             style: TextStyle(
                               fontSize: 12,
                               color: scheme.onSurfaceVariant,
@@ -2546,7 +2540,7 @@ class _MyTabState extends State<MyTab> {
                     ClipRRect(
                       borderRadius: BorderRadius.circular(6),
                       child: LinearProgressIndicator(
-                        value: rank.progress,
+                        value: rank.totalProgress,
                         minHeight: 5,
                         backgroundColor: scheme.surfaceContainerHighest,
                       ),

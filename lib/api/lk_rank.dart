@@ -46,12 +46,24 @@ class LKRankProgress {
     return ((exp - current.minExp) / span).clamp(0.0, 1.0);
   }
 
+  /// 相对最高身份组（皇帝 50,001）的总经验进度。
+  double get totalProgress {
+    final maxExp = kLKRankTiers.last.minExp;
+    if (maxExp <= 0) return 1.0;
+    return (exp / maxExp).clamp(0.0, 1.0);
+  }
+
   /// 例如 `0/251`，满级时显示 `50001`。
   String get ratioText => next == null ? '$exp' : '$exp/${next!.minExp}';
 
   String get nextHintText => next == null
       ? '已达最高身份组 · ${current.name}'
-      : '距${next!.name}还差 ${formatLKExpNumber(remainingToNext)} 积分';
+      : '距${next!.name}还差 ${formatLKExpNumber(remainingToNext)} 经验';
+
+  /// 例如 `经验 0/251 · 距骑士还差 251 经验`。
+  String get summaryLineText => next == null
+      ? '经验 ${formatLKExpNumber(exp)} · $nextHintText'
+      : '经验 $ratioText · $nextHintText';
 }
 
 LKRankProgress lkRankProgressForExp(int exp) {
