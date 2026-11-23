@@ -272,16 +272,18 @@ class _ReaderTextColorDialogState extends State<ReaderTextColorDialog> {
                       visualDensity: VisualDensity.compact,
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                     ),
-                    onPressed: () {
-                      if (_isResetToDefault) {
-                        Navigator.of(context)
-                            .pop(const ReaderTextColorResult.reset());
-                      } else {
-                        Navigator.of(context).pop(
-                          ReaderTextColorResult.color(_currentColor),
-                        );
-                      }
-                    },
+                    onPressed: _isTextValid
+                        ? () {
+                            if (_isResetToDefault) {
+                              Navigator.of(context)
+                                  .pop(const ReaderTextColorResult.reset());
+                            } else {
+                              Navigator.of(context).pop(
+                                ReaderTextColorResult.color(_currentColor),
+                              );
+                            }
+                          }
+                        : null,
                     child: const Text('确定'),
                   ),
                 ],

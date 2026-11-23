@@ -13,8 +13,8 @@ class BookAccessProbe {
       DateTime Function()? now,
       bool Function(int)? isKnownBrave,
       bool Function()? isEnabled,
-      Future<void> Function(int)? onConfirmed,
-      void Function(int)? onLookupStarted,
+      this._onConfirmed,
+      this._onLookupStarted,
       bool Function(int)? needsContinuation,
       this.maxPending = 32,
       this.deadline = const Duration(seconds: 8),
@@ -26,8 +26,6 @@ class BookAccessProbe {
       : _now = now ?? DateTime.now,
         _isKnownBrave = isKnownBrave ?? ((_) => false),
         _isEnabled = isEnabled ?? (() => true),
-        _onConfirmed = onConfirmed,
-        _onLookupStarted = onLookupStarted,
         _needsContinuation = needsContinuation ?? ((_) => false) {
     if (maxPending < 1 ||
         maxRounds < 1 ||

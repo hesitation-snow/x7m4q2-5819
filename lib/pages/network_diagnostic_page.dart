@@ -38,6 +38,14 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
     _loadAppVersion();
   }
 
+  @override
+  void dispose() {
+    if (widget.service == null) {
+      _service.close();
+    }
+    super.dispose();
+  }
+
   Future<void> _loadAppVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();

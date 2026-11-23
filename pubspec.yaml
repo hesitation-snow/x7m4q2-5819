@@ -4,7 +4,7 @@ publish_to: 'none'
 version: 1.6.0+14
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.12.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -16,7 +16,6 @@ dependencies:
   flutter_staggered_grid_view: ^0.7.0
   flutter_cache_manager: ^3.4.2
   file: ^7.0.1
-  cupertino_icons: ^1.0.6
   wakelock_plus: ^1.2.5
   flutter_open_chinese_convert: 0.9.0
   url_launcher: ^6.3.0

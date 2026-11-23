@@ -95,4 +95,33 @@ void main() {
     expect(totalEntries,
         equals(4)); // mimetype, container.xml, ch_0001.xhtml, dummy.jpg
   });
+
+  test('EpubZipWriter streams multi-chunk uncompressed files with exact CRC32',
+      () async {
+    final targetFile = File('${tempDir.path}/streamed.epub');
+    final largeFile = File('${tempDir.path}/large.bin');
+    final payload = Uint8List.fromList(
+        List<int>.generate(200 * 1024, (i) => (i * 31 + 7) & 0xFF));
+    await largeFile.writeAsBytes(payload);
+
+    final writer = await EpubZipWriter.open(targetFile);
+    await writer.addFile('EPUB/images/large.bin', largeFile, compress: false);
+    await writer.close();
+
+    final archive = await targetFile.readAsBytes();
+    final data = ByteData.sublistView(archive);
+    const firstEntryEnd = 30 + 'mimetype'.length + 'application/epub+zip'.length;
+    expect(data.getUint32(firstEntryEnd, Endian.little), equals(0x04034b50));
+    expect(data.getUint16(firstEntryEnd + 8, Endian.little), equals(0));
+    expect(data.getUint32(firstEntryEnd + 14, Endian.little),
+        equals(Crc32.compute(payload)));
+    expect(data.getUint32(firstEntryEnd + 18, Endian.little),
+        equals(payload.length));
+    expect(data.getUint32(firstEntryEnd + 22, Endian.little),
+        equals(payload.length));
+    final nameLen = data.getUint16(firstEntryEnd + 26, Endian.little);
+    final payloadStart = firstEntryEnd + 30 + nameLen;
+    expect(archive.sublist(payloadStart, payloadStart + payload.length),
+        equals(payload));
+  });
 }

@@ -350,6 +350,10 @@ void main() {
       expect(find.textContaining('异世界'), findsNothing);
       expect(find.text('152.0万字'), findsNothing);
       expect(find.text('5 章更新'), findsOneWidget);
+      final cover = tester.widget<CoverImage>(find.byType(CoverImage));
+      expect(cover.width, closeTo(180.0, 0.1));
+      expect(cover.height,
+          closeTo(180.0 / BookGridDelegate.coverAspectRatio, 0.1));
     });
   });
 

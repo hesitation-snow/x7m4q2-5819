@@ -70,7 +70,6 @@ class LKApp extends StatelessWidget {
         LKStore.themeMode,
         LKStore.pureBlackDark,
         LKStore.themeSeedColor,
-        LKStore.dataSaverMode,
         LKStore.animationsEnabled
       ]),
       builder: (context, _) => MaterialApp(
@@ -156,19 +155,20 @@ class _SystemUIBridgeState extends State<_SystemUIBridge>
     super.didChangeDependencies();
     _updateOrientations();
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surfaceColor = Theme.of(context).colorScheme.surface;
     SystemChrome.setSystemUIOverlayStyle(isDark
         ? SystemUiOverlayStyle(
-            statusBarColor: Theme.of(context).scaffoldBackgroundColor,
+            statusBarColor: surfaceColor,
             statusBarIconBrightness: Brightness.light,
             statusBarBrightness: Brightness.dark,
-            systemNavigationBarColor: const Color(0xFF1B1C21),
+            systemNavigationBarColor: surfaceColor,
             systemNavigationBarIconBrightness: Brightness.light,
           )
         : SystemUiOverlayStyle(
-            statusBarColor: Theme.of(context).scaffoldBackgroundColor,
+            statusBarColor: surfaceColor,
             statusBarIconBrightness: Brightness.dark,
             statusBarBrightness: Brightness.light,
-            systemNavigationBarColor: Colors.white,
+            systemNavigationBarColor: surfaceColor,
             systemNavigationBarIconBrightness: Brightness.dark,
           ));
   }

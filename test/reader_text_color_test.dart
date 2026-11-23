@@ -167,11 +167,21 @@ void main() {
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
 
-      // Enter #F00 in TextField
+      // Enter invalid hex: confirm button must be disabled
       final textField = find.byType(TextField);
       expect(textField, findsOneWidget);
+      await tester.enterText(textField, '#12345');
+      await tester.pumpAndSettle();
+      final disabledConfirm = tester.widget<FilledButton>(
+          find.widgetWithText(FilledButton, '确定'));
+      expect(disabledConfirm.onPressed, isNull);
+
+      // Enter #F00 in TextField: confirm button re-enabled
       await tester.enterText(textField, '#F00');
       await tester.pumpAndSettle();
+      final enabledConfirm = tester.widget<FilledButton>(
+          find.widgetWithText(FilledButton, '确定'));
+      expect(enabledConfirm.onPressed, isNotNull);
 
       // Preview should show #FF0000
       expect(find.text('效果预览 (#FF0000)'), findsOneWidget);

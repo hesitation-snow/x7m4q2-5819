@@ -179,11 +179,12 @@ class LKApi {
 
   static List<LKBook> _bookList(Map<String, dynamic> d) {
     final list = d['list'];
-    if (list == null) {
+    if (list is! List) {
       throw LKException(-1, '接口未返回列表(字段: ${d.keys.join(', ')})');
     }
-    final books = (list as List)
-        .map((e) => LKBook.fromJson(e as Map<String, dynamic>))
+    final books = list
+        .whereType<Map>()
+        .map((e) => LKBook.fromJson(Map<String, dynamic>.from(e)))
         .toList();
     unawaited(LKStore.markBooksBrave(
         books.where((book) => book.isBrave).map((book) => book.bookId)));
@@ -232,7 +233,8 @@ class LKApi {
         forceRefresh: forceRefresh,
         requestTimeout: requestTimeout);
     return ((d['list'] as List?) ?? const [])
-        .map((e) => LKVolume.fromJson(e as Map<String, dynamic>))
+        .whereType<Map>()
+        .map((e) => LKVolume.fromJson(Map<String, dynamic>.from(e)))
         .toList();
   }
 
@@ -375,7 +377,8 @@ class LKApi {
         {'book_id': bookId, 'chapter_id': chapterId});
     final list = (d['paragraphs'] as List?) ?? (d['list'] as List?) ?? const [];
     return list
-        .map((e) => LKParagraph.fromJson(e as Map<String, dynamic>))
+        .whereType<Map>()
+        .map((e) => LKParagraph.fromJson(Map<String, dynamic>.from(e)))
         .toList();
   }
 
@@ -426,7 +429,8 @@ class LKApi {
   static Future<List<LKEmojiGroup>> commentEmojis() async {
     final d = await client.post('/api/bff/comment-emoji-list-v1', {});
     return ((d['list'] as List?) ?? const [])
-        .map((e) => LKEmojiGroup.fromJson(e as Map<String, dynamic>))
+        .whereType<Map>()
+        .map((e) => LKEmojiGroup.fromJson(Map<String, dynamic>.from(e)))
         .toList();
   }
 
@@ -567,7 +571,8 @@ class LKApi {
         client.authed(
             {'page': page, 'pageSize': LKClient.clampPageSize(pageSize)}));
     final items = ((d['list'] as List?) ?? const [])
-        .map((e) => LKHistoryItem.fromJson(e as Map<String, dynamic>))
+        .whereType<Map>()
+        .map((e) => LKHistoryItem.fromJson(Map<String, dynamic>.from(e)))
         .toList();
     unawaited(LKStore.markBooksBrave(
         items.where((book) => book.isBrave).map((book) => book.bookId)));
@@ -944,7 +949,8 @@ class LKApi {
           'pageSize': LKClient.clampPageSize(pageSize),
         }));
     return ((d['list'] as List?) ?? const [])
-        .map((e) => LKDMMessage.fromJson(e as Map<String, dynamic>))
+        .whereType<Map>()
+        .map((e) => LKDMMessage.fromJson(Map<String, dynamic>.from(e)))
         .toList();
   }
 
@@ -1275,8 +1281,16 @@ class LKApi {
       }
       throw LKException(resp.statusCode, '网络异常(HTTP ${resp.statusCode})');
     }
-    return LKRelease.fromJson(
-        jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>);
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+    } catch (_) {
+      throw LKException(-1, '更新检查响应格式错误');
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw LKException(-1, '更新检查响应格式错误');
+    }
+    return LKRelease.fromJson(decoded);
   }
 
   // ==================== 作者中心 ====================

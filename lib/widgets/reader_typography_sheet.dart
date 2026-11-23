@@ -138,7 +138,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       min: 12.0,
                       max: 28.0,
                       divisions: 16,
-                      valueText: '${_fontSize.toStringAsFixed(0)} pt',
+                      valueFormatter: (v) => '${v.toStringAsFixed(0)} pt',
                       defaultValue: 17.0,
                       onChanged: (v) {
                         setState(() => _fontSize = v);
@@ -157,7 +157,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       min: 1.20,
                       max: 2.40,
                       divisions: 24,
-                      valueText: _current.lineHeight.toStringAsFixed(2),
+                      valueFormatter: (v) => v.toStringAsFixed(2),
                       defaultValue: 1.70,
                       onChanged: (v) =>
                           _updatePreview(_current.copyWith(lineHeight: v)),
@@ -173,7 +173,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       min: 0.0,
                       max: 32.0,
                       divisions: 16,
-                      valueText: '${_current.paragraphSpacing.round()} px',
+                      valueFormatter: (v) => '${v.round()} px',
                       defaultValue: 12.0,
                       onChanged: (v) => _updatePreview(
                           _current.copyWith(paragraphSpacing: v)),
@@ -189,8 +189,8 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       min: -0.5,
                       max: 2.5,
                       divisions: 30,
-                      valueText:
-                          '${_current.letterSpacing >= 0 ? '+' : ''}${_current.letterSpacing.toStringAsFixed(1)} pt',
+                      valueFormatter: (v) =>
+                          '${v >= 0 ? '+' : ''}${v.toStringAsFixed(1)} pt',
                       defaultValue: 0.3,
                       onChanged: (v) =>
                           _updatePreview(_current.copyWith(letterSpacing: v)),
@@ -206,7 +206,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       min: 8.0,
                       max: 48.0,
                       divisions: 20,
-                      valueText: '${_current.marginHorizontal.round()} dp',
+                      valueFormatter: (v) => '${v.round()} dp',
                       defaultValue: 20.0,
                       enabled: !_current.customMargins,
                       onChanged: (v) => _updatePreview(
@@ -325,8 +325,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       min: 0.0,
                       max: 8.0,
                       divisions: 16,
-                      valueText:
-                          '${_current.wordSpacing.toStringAsFixed(1)} dp',
+                      valueFormatter: (v) => '${v.toStringAsFixed(1)} dp',
                       defaultValue: 0.0,
                       onChanged: (v) =>
                           _updatePreview(_current.copyWith(wordSpacing: v)),
@@ -384,7 +383,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                         min: 44.0,
                         max: 120.0,
                         divisions: 38,
-                        valueText: '${_current.marginTop.round()} dp',
+                        valueFormatter: (v) => '${v.round()} dp',
                         defaultValue: 56.0,
                         onChanged: (v) =>
                             _updatePreview(_current.copyWith(marginTop: v)),
@@ -398,7 +397,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                         min: 50.0,
                         max: 140.0,
                         divisions: 45,
-                        valueText: '${_current.marginBottom.round()} dp',
+                        valueFormatter: (v) => '${v.round()} dp',
                         defaultValue: 70.0,
                         onChanged: (v) =>
                             _updatePreview(_current.copyWith(marginBottom: v)),
@@ -412,7 +411,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                         min: 8.0,
                         max: 60.0,
                         divisions: 26,
-                        valueText: '${_current.marginLeft.round()} dp',
+                        valueFormatter: (v) => '${v.round()} dp',
                         defaultValue: 20.0,
                         onChanged: (v) =>
                             _updatePreview(_current.copyWith(marginLeft: v)),
@@ -426,7 +425,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                         min: 8.0,
                         max: 60.0,
                         divisions: 26,
-                        valueText: '${_current.marginRight.round()} dp',
+                        valueFormatter: (v) => '${v.round()} dp',
                         defaultValue: 20.0,
                         onChanged: (v) =>
                             _updatePreview(_current.copyWith(marginRight: v)),
@@ -684,7 +683,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
     required double min,
     required double max,
     required int divisions,
-    required String valueText,
+    required String Function(double) valueFormatter,
     required double defaultValue,
     required ValueChanged<double> onChanged,
     required ValueChanged<double> onChangeEnd,
@@ -693,6 +692,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final clampedValue = value.clamp(min, max);
+    final valueText = valueFormatter(clampedValue);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -721,7 +721,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
             max: max,
             divisions: divisions,
             label: valueText,
-            semanticFormatterCallback: (_) => valueText,
+            semanticFormatterCallback: valueFormatter,
             onChanged: enabled ? onChanged : null,
             onChangeEnd: enabled ? onChangeEnd : null,
           ),

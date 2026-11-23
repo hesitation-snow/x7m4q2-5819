@@ -485,58 +485,61 @@ class _DynamicPageState extends State<DynamicPage> {
 
   /// 与主页相同的让渡式收合:顶栏吸收手指滚动距离,内容不会突然跳动。
   Widget _scrollingHeader() {
+    final headerContent = ColoredBox(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: SingleChildScrollView(
+        physics: const NeverScrollableScrollPhysics(),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Row(children: [
+                  _dynamicTitle(),
+                  const Spacer(),
+                  if (LKClient.shared.session.isLoggedIn)
+                    IconButton(
+                      tooltip: '发布动态',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.edit_note_rounded),
+                      onPressed: () async {
+                        final published = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const DynamicPublishPage()),
+                        );
+                        if (published == true && mounted) _load();
+                      },
+                    ),
+                ]),
+              ),
+            ),
+            _feedControls(),
+          ],
+        ),
+      ),
+    );
     return ValueListenableBuilder<double>(
       valueListenable: _topBarFrac,
-      builder: (context, topBarFrac, _) => ClipRect(
-        child: SizedBox(
-          height: _topBarFlex * topBarFrac,
-          child: Stack(
-            clipBehavior: Clip.hardEdge,
-            children: [
-              Positioned(
-                top: -_topBarFlex * (1.0 - topBarFrac),
-                left: 0,
-                right: 0,
-                height: _topBarFlex,
-                child: ColoredBox(
-                  color: Theme.of(context).scaffoldBackgroundColor,
-                  child: SingleChildScrollView(
-                    physics: const NeverScrollableScrollPhysics(),
-                    child: Column(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(minHeight: 48),
-                            child: Row(children: [
-                              _dynamicTitle(),
-                              const Spacer(),
-                              if (LKClient.shared.session.isLoggedIn)
-                                IconButton(
-                                  tooltip: '发布动态',
-                                  visualDensity: VisualDensity.compact,
-                                  icon: const Icon(Icons.edit_note_rounded),
-                                  onPressed: () async {
-                                    final published =
-                                        await Navigator.push<bool>(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) =>
-                                              const DynamicPublishPage()),
-                                    );
-                                    if (published == true && mounted) _load();
-                                  },
-                                ),
-                            ]),
-                          ),
-                        ),
-                        _feedControls(),
-                      ],
-                    ),
-                  ),
+      child: headerContent,
+      builder: (context, topBarFrac, child) => ExcludeSemantics(
+        excluding: topBarFrac <= 0.01,
+        child: ClipRect(
+          child: SizedBox(
+            height: _topBarFlex * topBarFrac,
+            child: Stack(
+              clipBehavior: Clip.hardEdge,
+              children: [
+                Positioned(
+                  top: -_topBarFlex * (1.0 - topBarFrac),
+                  left: 0,
+                  right: 0,
+                  height: _topBarFlex,
+                  child: child!,
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -878,14 +881,10 @@ class _DynamicPageState extends State<DynamicPage> {
                                                                         2),
                                                             decoration:
                                                                 BoxDecoration(
-                                                              color: Theme.of(context)
-                                                                          .brightness ==
-                                                                      Brightness
-                                                                          .dark
-                                                                  ? Colors.grey
-                                                                      .shade800
-                                                                  : Colors.grey
-                                                                      .shade300,
+                                                              color: Theme.of(
+                                                                      context)
+                                                                  .colorScheme
+                                                                  .secondaryContainer,
                                                               borderRadius:
                                                                   BorderRadius
                                                                       .circular(
@@ -894,11 +893,13 @@ class _DynamicPageState extends State<DynamicPage> {
                                                             child: Text(
                                                                 _eventLabel(d
                                                                     .eventType),
-                                                                style: const TextStyle(
+                                                                style: TextStyle(
                                                                     fontSize:
                                                                         10,
-                                                                    color: Colors
-                                                                        .white)),
+                                                                    color: Theme.of(
+                                                                            context)
+                                                                        .colorScheme
+                                                                        .onSecondaryContainer)),
                                                           ),
                                                       ],
                                                     ),

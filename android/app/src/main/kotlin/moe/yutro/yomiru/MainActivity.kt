@@ -135,6 +135,10 @@ class MainActivity : AudioServiceActivity() {
             "moe.yutro.yomiru/epub_export").also { channel ->
             channel.setMethodCallHandler { call, result ->
                 if (call.method == "saveDocument") {
+                    if (pendingSaveResult != null) {
+                        result.error("SAVE_IN_PROGRESS", "Another save operation is already in progress", null)
+                        return@setMethodCallHandler
+                    }
                     val filePath = call.argument<String>("filePath")
                     val fileName = call.argument<String>("fileName") ?: "book.epub"
                     if (filePath == null || !File(filePath).exists()) {
@@ -480,18 +484,28 @@ class MainActivity : AudioServiceActivity() {
             pendingSaveResult = null
             pendingSourceFilePath = null
 
-            if (resultCode == Activity.RESULT_OK && data?.data != null && sourcePath != null) {
-                try {
-                    val destUri = data.data!!
-                    contentResolver.openOutputStream(destUri)?.use { out ->
-                        File(sourcePath).inputStream().use { input ->
-                            input.copyTo(out)
+            val destUri = data?.data
+            if (resultCode == Activity.RESULT_OK && destUri != null && sourcePath != null) {
+                val resolver = contentResolver
+                Thread {
+                    try {
+                        val out = resolver.openOutputStream(destUri)
+                        if (out == null) {
+                            mainHandler.post {
+                                result?.error("SAVE_FAILED", "Could not open destination output stream", null)
+                            }
+                            return@Thread
                         }
+                        out.use { stream ->
+                            File(sourcePath).inputStream().use { input ->
+                                input.copyTo(stream)
+                            }
+                        }
+                        mainHandler.post { result?.success(true) }
+                    } catch (e: Exception) {
+                        mainHandler.post { result?.error("SAVE_FAILED", e.message, null) }
                     }
-                    result?.success(true)
-                } catch (e: Exception) {
-                    result?.error("SAVE_FAILED", e.message, null)
-                }
+                }.start()
             } else {
                 result?.success(false)
             }
@@ -518,7 +532,15 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onPause() {
         volumePaging = false
+        capturedKeys.clear()
         super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        if (!hasFocus) {
+            capturedKeys.clear()
+        }
+        super.onWindowFocusChanged(hasFocus)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
@@ -529,6 +551,7 @@ class MainActivity : AudioServiceActivity() {
         releaseTts()
         epubChannel?.setMethodCallHandler(null)
         epubChannel = null
+        pendingSaveResult?.error("ACTIVITY_DESTROYED", "Activity engine was cleaned up before save completed", null)
         pendingSaveResult = null
         pendingSourceFilePath = null
         super.cleanUpFlutterEngine(flutterEngine)

@@ -316,7 +316,7 @@ class _SearchPageState extends State<SearchPage> {
               snap: false,
               titleSpacing: 0,
               title: Container(
-                height: 38,
+                constraints: const BoxConstraints(minHeight: 38),
                 margin: const EdgeInsets.only(right: 8),
                 child: TextField(
                   controller: _controller,
@@ -473,6 +473,7 @@ class _SearchPageState extends State<SearchPage> {
               }
               final b = visibleItems[i];
               return BookGridCard(
+                key: ValueKey(b.bookId),
                 book: b,
                 onTap: () => Navigator.push(
                   context,

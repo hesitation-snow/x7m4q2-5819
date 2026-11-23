@@ -923,9 +923,8 @@ class LKPublicBook {
     this.updatedAt = '',
     this.typeText = '',
     bool isBrave = false,
-    BookAccessStatus accessStatus = BookAccessStatus.unknown,
-  })  : _braveFlag = isBrave,
-        _accessStatus = accessStatus;
+    this._accessStatus = BookAccessStatus.unknown,
+  }) : _braveFlag = isBrave;
 
   LKPublicBook copyWith({
     int? bookId,
@@ -1152,9 +1151,8 @@ class LKBook {
     this.ratingScore = 0,
     this.updatedAt = '',
     bool isBrave = false,
-    BookAccessStatus accessStatus = BookAccessStatus.unknown,
-  })  : _braveFlag = isBrave,
-        _accessStatus = accessStatus;
+    this._accessStatus = BookAccessStatus.unknown,
+  }) : _braveFlag = isBrave;
   factory LKBook.fromJson(Map<String, dynamic> j) => LKBook(
         bookId: bookIdentityFromJson(j),
         title: (j['title'] as String?) ?? '',
@@ -1528,8 +1526,8 @@ class LKChapter {
     this.unlocked = false,
     this.accessType = '',
     this.braveRequired = false,
-    BookAccessStatus? accessStatus,
-  }) : _accessStatus = accessStatus;
+    this._accessStatus,
+  });
   factory LKChapter.fromJson(Map<String, dynamic> j) => LKChapter(
         chapterId: (j['chapter_id'] as num?)?.toInt() ?? 0,
         chapterNo: (j['chapter_no'] as num?)?.toInt() ?? 0,
@@ -1571,8 +1569,8 @@ class LKChapterPage {
     this.pageSize = 50,
     this.total = 0,
     this.hasMore = false,
-    bool? totalKnown,
-  }) : _totalKnown = totalKnown;
+    this._totalKnown,
+  });
 
   factory LKChapterPage.fromJson(Map<String, dynamic> j,
       {int fallbackPage = 1, int fallbackPageSize = 50}) {
@@ -2103,9 +2101,8 @@ class LKHistoryItem {
     this.lastReadAt = '',
     this.unreadChapters = 0,
     bool isBrave = false,
-    BookAccessStatus accessStatus = BookAccessStatus.unknown,
-  })  : _braveFlag = isBrave,
-        _accessStatus = accessStatus;
+    this._accessStatus = BookAccessStatus.unknown,
+  }) : _braveFlag = isBrave;
   factory LKHistoryItem.fromJson(Map<String, dynamic> j) {
     final h =
         (j['history'] as Map<String, dynamic>?) ?? const <String, dynamic>{};

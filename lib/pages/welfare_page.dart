@@ -102,6 +102,8 @@ class _WelfarePageState extends State<WelfarePage>
   int _selectedTreasureBoxIndex = 0;
   List<Map<String, dynamic>> _tasks = const [];
   bool _loading = true;
+  bool _networkLoaded = false;
+  bool _motionDisabled = false;
   String? _error;
   String _action = '';
   final _sleepClock = DeadlineCountdown();
@@ -170,14 +172,27 @@ class _WelfarePageState extends State<WelfarePage>
     _load();
   }
 
+  void _syncSkeletonAnimation() {
+    if (!mounted) return;
+    final animateSkeleton = _loading &&
+        _home == null &&
+        _error == null &&
+        LKClient.shared.session.isLoggedIn &&
+        !_motionDisabled;
+    if (animateSkeleton) {
+      if (!_animController.isAnimating) {
+        _animController.repeat(reverse: true);
+      }
+    } else if (_animController.isAnimating) {
+      _animController.stop();
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (AppMotion.isDisabled(context)) {
-      _animController.stop();
-    } else if (!_animController.isAnimating) {
-      _animController.repeat(reverse: true);
-    }
+    _motionDisabled = AppMotion.isDisabled(context);
+    _syncSkeletonAnimation();
   }
 
   @override
@@ -196,6 +211,7 @@ class _WelfarePageState extends State<WelfarePage>
 
   void _onSessionChanged() {
     _loadSerial++;
+    _networkLoaded = false;
     _sleepClock.stop();
     _sleepClock.value = 0;
     setState(() {
@@ -207,6 +223,7 @@ class _WelfarePageState extends State<WelfarePage>
       _error = null;
       _loading = LKClient.shared.session.isLoggedIn;
     });
+    _syncSkeletonAnimation();
     if (_loading) {
       unawaited(_restoreCache());
       unawaited(_load());
@@ -224,7 +241,9 @@ class _WelfarePageState extends State<WelfarePage>
         final decoded = jsonDecode(cachedStr);
         if (decoded is Map &&
             mounted &&
+            !_networkLoaded &&
             _home == null &&
+            _error == null &&
             key == _cacheKey &&
             revision == LKClient.sessionRev.value) {
           final map = Map<String, dynamic>.from(decoded);
@@ -241,6 +260,7 @@ class _WelfarePageState extends State<WelfarePage>
             if (homeTreasure.isNotEmpty) _treasure = homeTreasure;
             _loading = false;
           });
+          _syncSkeletonAnimation();
         }
       }
     } catch (_) {}
@@ -279,6 +299,7 @@ class _WelfarePageState extends State<WelfarePage>
         if (_home == null) _loading = true;
         _error = null;
       });
+      _syncSkeletonAnimation();
     }
     // 页面先显示缓存；阅读奖励详情等待增量确认后再查询。
     final readingSync = _checkAndSyncReadingProgress();
@@ -288,11 +309,14 @@ class _WelfarePageState extends State<WelfarePage>
       final home = await LKApi.welfareHome();
       final root = _root(home);
       if (!isCurrent()) return;
+      _networkLoaded = true;
       unawaited(_saveCache(home, key, revision));
       setState(() {
         _home = home;
         _loading = false;
+        _error = null;
       });
+      _syncSkeletonAnimation();
 
       final detailsFuture = Future.wait<Map<String, dynamic>>([
         _safeDetail(LKApi.welfareSignDetail()),
@@ -348,6 +372,7 @@ class _WelfarePageState extends State<WelfarePage>
           _loading = false;
           _error = e.toString();
         });
+        _syncSkeletonAnimation();
       }
     }
   }
@@ -2372,27 +2397,13 @@ class _WelfarePageState extends State<WelfarePage>
 
   @override
   Widget build(BuildContext context) {
-    final animateSkeleton = _loading &&
-        _home == null &&
-        _error == null &&
-        LKClient.shared.session.isLoggedIn &&
-        !AppMotion.isDisabled(context);
-    if (animateSkeleton != _animController.isAnimating) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        if (animateSkeleton && _loading && _home == null && _error == null) {
-          _animController.repeat(reverse: true);
-        } else {
-          _animController.stop();
-        }
-      });
-    }
     if (!LKClient.shared.session.isLoggedIn) {
       return Scaffold(
         appBar: AppBar(title: const Text('任务中心')),
         body: const Center(child: Text('登录后才能使用任务中心')),
       );
     }
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('任务中心')),
       body: MotionRefreshIndicator(
@@ -2406,6 +2417,39 @@ class _WelfarePageState extends State<WelfarePage>
                     padding: EdgeInsets.fromLTRB(
                         12, 12, 12, 24 + MediaQuery.paddingOf(context).bottom),
                     children: [
+                      if (_error != null) ...[
+                        Card(
+                          color: scheme.errorContainer,
+                          child: ListTile(
+                            dense: true,
+                            leading: Icon(Icons.cloud_off_rounded,
+                                color: scheme.onErrorContainer),
+                            title: Text(
+                              '刷新失败，当前展示本地缓存',
+                              style: TextStyle(
+                                color: scheme.onErrorContainer,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              _error!,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: scheme.onErrorContainer,
+                                fontSize: 12,
+                              ),
+                            ),
+                            trailing: TextButton(
+                              onPressed: () => _load(forceTaskList: true),
+                              child: Text('重试',
+                                  style:
+                                      TextStyle(color: scheme.onErrorContainer)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
                       _buildBalanceCard(_rootData),
                       const SizedBox(height: 10),
                       _buildSignCard(),

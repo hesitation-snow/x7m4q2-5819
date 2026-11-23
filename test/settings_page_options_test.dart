@@ -279,7 +279,7 @@ void main() {
 
     final glassTile = find.byKey(const ValueKey('settings-liquid-glass-tile'));
     await tester.ensureVisible(glassTile);
-    expect(find.text('调整悬浮底栏的玻璃效果并实时预览'), findsOneWidget);
+    expect(find.text('点击调整悬浮底栏详细设置'), findsOneWidget);
     await tester.tap(find.text('悬浮底栏'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));

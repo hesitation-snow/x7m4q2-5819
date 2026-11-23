@@ -99,4 +99,15 @@ void main() {
     expect(calls, [0, 1]);
     expect((result['exchange_medals'] as List).length, 2);
   });
+
+  test('rejects subsequent page with different cursor but no new items',
+      () async {
+    await expectLater(
+      loadAllMedalPages((number) async => switch (number) {
+            0 => page(1, [1, 2], total: 4),
+            _ => page(2, [1, 2], total: 4),
+          }),
+      throwsStateError,
+    );
+  });
 }

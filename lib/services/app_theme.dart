@@ -32,7 +32,6 @@ abstract final class AppTheme {
           : const PageTransitionsTheme(),
       splashFactory: AppMotion.disabled ? NoSplash.splashFactory : null,
       hoverColor: Colors.transparent,
-      focusColor: Colors.transparent,
       scaffoldBackgroundColor: scheme.surface,
       appBarTheme: AppBarTheme(
         centerTitle: true,

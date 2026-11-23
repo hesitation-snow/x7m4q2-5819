@@ -381,6 +381,7 @@ class _ReaderPageState extends State<ReaderPage>
   double _scrollLayoutWidth = 0;
   bool _scrollLayoutLockedBody = false;
   double? _immersiveHeight;
+  double? _immersiveWidth;
 
   /// 正文文字区域的指针跟踪。
   /// SelectionArea 会优先处理文字手势，这里用 Listener 旁路记录短按，
@@ -391,6 +392,25 @@ class _ReaderPageState extends State<ReaderPage>
   bool _textPointerHandled = false;
   bool _suppressNextTextTap = false;
   int _textTapSerial = 0;
+
+  static int _activeWakelockOwners = 0;
+  bool _holdingWakelock = false;
+  final Set<String> _aspectListeningUrls = {};
+  final List<(ImageStream, ImageStreamListener)> _imageAspectListeners = [];
+
+  void _syncWakelock(bool enable) {
+    if (enable && !_holdingWakelock) {
+      _holdingWakelock = true;
+      _activeWakelockOwners++;
+      WakelockPlus.enable();
+    } else if (!enable && _holdingWakelock) {
+      _holdingWakelock = false;
+      if (_activeWakelockOwners > 0) _activeWakelockOwners--;
+      if (_activeWakelockOwners == 0) {
+        WakelockPlus.disable();
+      }
+    }
+  }
 
   /// 滚动进度通知(正文指示器实时刷新,无需整页重建)
   final ValueNotifier<double> _progressN = ValueNotifier<double>(0);
@@ -735,6 +755,15 @@ class _ReaderPageState extends State<ReaderPage>
     return (contentWidth * 1.35).clamp(180.0, 720.0).toDouble();
   }
 
+  /// 仅包含影响几何排版的样式指纹（不含 color），避免改文字颜色或主题触发全章重排。
+  String get _bodyLayoutStyleKey {
+    final s = _bodyTextStyle;
+    final boldText = MediaQuery.boldTextOf(context);
+    return '${s.fontFamily ?? ''}|${s.fontWeight?.value ?? ''}|'
+        '${s.fontStyle?.index ?? ''}|${s.fontSize}|${s.height}|'
+        '${s.letterSpacing}|${s.wordSpacing}|$boldText';
+  }
+
   String _scrollLayoutKey(double viewportWidth, bool lockedBody) {
     final scale = MediaQuery.textScalerOf(context).scale(_fontSize);
     final pad = _bodyPadding;
@@ -744,7 +773,7 @@ class _ReaderPageState extends State<ReaderPage>
         '${_typography.wordSpacing.toStringAsFixed(2)}|${_typography.firstLineIndentChars.toStringAsFixed(2)}|'
         '${_typography.justify}|'
         '${pad.left}|${pad.top}|${pad.right}|${pad.bottom}|$lockedBody|'
-        '$scale|${_bodyTextStyle.hashCode}';
+        '$scale|$_bodyLayoutStyleKey';
   }
 
   void _ensureScrollLayoutIndex(double viewportWidth, bool lockedBody) {
@@ -923,6 +952,7 @@ class _ReaderPageState extends State<ReaderPage>
       }
     }
     if (needsLayoutRefresh) {
+      _scrollLayouts.clear();
       _scrollLayoutIndexKey = '';
     }
 
@@ -931,6 +961,7 @@ class _ReaderPageState extends State<ReaderPage>
       final cached = await YomiruIllustrationCache.filterCached(urls);
       if (!mounted) return;
       var updated = false;
+      var aspectUpdated = false;
       if (cached.isNotEmpty) {
         _diskCachedImages.addAll(cached);
         updated = true;
@@ -942,9 +973,13 @@ class _ReaderPageState extends State<ReaderPage>
           if (aspect != null && b.aspect == null) {
             b.aspect = aspect;
             updated = true;
-            _scrollLayoutIndexKey = '';
+            aspectUpdated = true;
           }
         }
+      }
+      if (aspectUpdated) {
+        _scrollLayouts.clear();
+        _scrollLayoutIndexKey = '';
       }
       if (updated && mounted) {
         setState(() {});
@@ -1340,10 +1375,15 @@ class _ReaderPageState extends State<ReaderPage>
       unawaited(_disposeSpeechSession());
       unawaited(_ttsPlatform.dispose());
     }
+    for (final (stream, listener) in _imageAspectListeners) {
+      stream.removeListener(listener);
+    }
+    _imageAspectListeners.clear();
+    _aspectListeningUrls.clear();
     _ttsController.removeListener(_onTtsChanged);
     _ttsController.dispose();
     _ttsUiRevision.dispose();
-    WakelockPlus.disable();
+    _syncWakelock(false);
     _systemUi.dispose();
     super.dispose();
   }
@@ -1402,10 +1442,10 @@ class _ReaderPageState extends State<ReaderPage>
   Future<void> _reportReadingProgress({bool force = false}) async {
     try {
       await ReadingProgressReporter.shared.flush(force: force);
-    } catch (_) {
+    } catch (e) {
       // 阅读上报失败不打断阅读；下一次心跳或离开阅读器时重试。
       assert(() {
-        debugPrint('[Yomiru reading] report failed: $_');
+        debugPrint('[Yomiru reading] report failed: $e');
         return true;
       }());
     }
@@ -1424,6 +1464,7 @@ class _ReaderPageState extends State<ReaderPage>
         _isEditingIndicators = false;
         _indicatorPosition = _savedIndicatorPosition;
       });
+      _applyImmersive();
       return;
     }
     if (_exitInFlight || ModalRoute.of(context)?.isCurrent != true) return;
@@ -1502,7 +1543,7 @@ class _ReaderPageState extends State<ReaderPage>
     if (tradChanged && _detail != null) {
       await _reparseCurrentDetail();
     }
-    WakelockPlus.toggle(enable: _keepOn);
+    _syncWakelock(_keepOn);
     _applyImmersive();
   }
 
@@ -1523,6 +1564,7 @@ class _ReaderPageState extends State<ReaderPage>
         transitionId: transitionId, persist: false, syncUi: false);
 
     final oldIndent = _typography.firstLineIndentChars;
+    final willReparse = oldIndent != t.firstLineIndentChars && _detail != null;
 
     setState(() {
       _typography = t;
@@ -1530,11 +1572,13 @@ class _ReaderPageState extends State<ReaderPage>
       _pendingPagedAnchor = _paged ? anchor : null;
       _pendingPositionTransitionId = _paged ? transitionId : null;
       _restoringPagedProgress = _paged;
-      _pageLayouts.clear();
-      _scrollLayouts.clear();
-      _scrollLayoutIndexKey = '';
-      _scrollLayoutIndex = null;
-      _pagedKey = null;
+      if (!willReparse) {
+        _pageLayouts.clear();
+        _scrollLayouts.clear();
+        _scrollLayoutIndexKey = '';
+        _scrollLayoutIndex = null;
+        _pagedKey = null;
+      }
     });
 
     if (persist) {
@@ -1542,7 +1586,7 @@ class _ReaderPageState extends State<ReaderPage>
       if (fontSize != null) ReaderPrefs.setFontSize(fontSize);
     }
 
-    if (oldIndent != t.firstLineIndentChars && _detail != null) {
+    if (willReparse) {
       _parsedDetail = null;
       _parsedBlocks = null;
       _parsedIndent = null;
@@ -1604,7 +1648,11 @@ class _ReaderPageState extends State<ReaderPage>
         (_lastViewport != size || _lastTextScale != scale);
     _lastViewport = size;
     _lastTextScale = scale;
-    if (changed && _blocks.isNotEmpty) {
+    if (changed &&
+        !_loading &&
+        _loadError == null &&
+        _positionRestored &&
+        _blocks.isNotEmpty) {
       final anchor = _logicalAnchor ?? _anchorForProgress(_progress);
       final transition = _positionController.beginTransition();
       _positionRestoreSerial++;
@@ -1680,7 +1728,6 @@ class _ReaderPageState extends State<ReaderPage>
                   : _sc.offset <= 1))) {
         final id = forward ? _nextId : _prevId;
         if (id != null && !_chapterSwitching) {
-          _chapterSwitching = true;
           await _open(id, (forward ? _nextTitle : _prevTitle) ?? '',
               volumeId: forward ? _nextVolumeId : _prevVolumeId);
         }
@@ -2467,6 +2514,8 @@ class _ReaderPageState extends State<ReaderPage>
     bool autoTts = false,
     String ttsSource = 'system',
   }) async {
+    if (_chapterSwitching) return;
+    _chapterSwitching = true;
     _resetExitConfirmation();
     _ttsContentRevision++;
     _refreshTtsSheet();
@@ -2475,21 +2524,29 @@ class _ReaderPageState extends State<ReaderPage>
         _ttsController.status == TtsPlaybackStatus.paused) {
       unawaited(_ttsController.stop());
     }
-    await _finishReadingSession();
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-          builder: (_) => ReaderPage(
-                bookId: widget.bookId,
-                bookTitle: widget.bookTitle,
-                chapterId: chapterId,
-                chapterTitle: title,
-                volumeId: volumeId ?? _effectiveVolumeId,
-                autoStartTts: autoTts,
-                initialTtsSource: ttsSource,
-              )),
-    );
+    try {
+      await _finishReadingSession();
+      if (!mounted || ModalRoute.of(context)?.isCurrent == false) {
+        _chapterSwitching = false;
+        return;
+      }
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+            builder: (_) => ReaderPage(
+                  bookId: widget.bookId,
+                  bookTitle: widget.bookTitle,
+                  chapterId: chapterId,
+                  chapterTitle: title,
+                  volumeId: volumeId ?? _effectiveVolumeId,
+                  autoStartTts: autoTts,
+                  initialTtsSource: ttsSource,
+                )),
+      );
+    } catch (_) {
+      _chapterSwitching = false;
+      rethrow;
+    }
   }
 
   /// 付费解锁:试读内容下方的解锁卡片直接调用,不再弹窗确认
@@ -4547,7 +4604,7 @@ class _ReaderPageState extends State<ReaderPage>
                                     },
                                   ),
                                   const SizedBox(height: 8),
-                                  _textColorTile(scheme, setSheet),
+                                  _textColorTile(scheme, sheetCtx, setSheet),
                                 ]),
                                 ReaderSettingsSection(title: '显示', children: [
                                   _switchTile(
@@ -4558,7 +4615,7 @@ class _ReaderPageState extends State<ReaderPage>
                                     setState(() => _keepOn = v);
                                     setSheet(() {});
                                     ReaderPrefs.setKeepScreenOn(v);
-                                    WakelockPlus.toggle(enable: v);
+                                    _syncWakelock(v);
                                   }),
                                   _switchTile(scheme, Icons.hide_image_outlined,
                                       '隐藏系统状态栏', _hideBar, (v) {
@@ -4591,6 +4648,7 @@ class _ReaderPageState extends State<ReaderPage>
                                             _indicatorPosition;
                                         _isEditingIndicators = true;
                                       });
+                                      _applyImmersive();
                                     },
                                   ),
                                 ]),
@@ -4643,13 +4701,17 @@ class _ReaderPageState extends State<ReaderPage>
                                 );
                                 if (result == null) return;
                                 if (result.resetToDefault) {
-                                  setState(() => _customTextColorValue = null);
-                                  setSheet(() {});
+                                  if (mounted) {
+                                    setState(() => _customTextColorValue = null);
+                                  }
+                                  if (sheetCtx.mounted) setSheet(() {});
                                   await ReaderPrefs.setTextColor(null);
                                 } else if (result.color != null) {
                                   final argb = result.color!.toARGB32();
-                                  setState(() => _customTextColorValue = argb);
-                                  setSheet(() {});
+                                  if (mounted) {
+                                    setState(() => _customTextColorValue = argb);
+                                  }
+                                  if (sheetCtx.mounted) setSheet(() {});
                                   await ReaderPrefs.setTextColor(argb);
                                 }
                               },
@@ -4739,7 +4801,8 @@ class _ReaderPageState extends State<ReaderPage>
     );
   }
 
-  Widget _textColorTile(ColorScheme scheme, StateSetter setSheet) {
+  Widget _textColorTile(
+      ColorScheme scheme, BuildContext sheetCtx, StateSetter setSheet) {
     final isCustom = _customTextColorValue != null;
     final hex = formatHexColor(_textColor);
     return ListTile(
@@ -4762,8 +4825,10 @@ class _ReaderPageState extends State<ReaderPage>
                 padding: const EdgeInsets.symmetric(horizontal: 8),
               ),
               onPressed: () async {
-                setState(() => _customTextColorValue = null);
-                setSheet(() {});
+                if (mounted) {
+                  setState(() => _customTextColorValue = null);
+                }
+                if (sheetCtx.mounted) setSheet(() {});
                 await ReaderPrefs.setTextColor(null);
               },
               child: const Text('恢复默认', style: TextStyle(fontSize: 12)),
@@ -4789,13 +4854,17 @@ class _ReaderPageState extends State<ReaderPage>
         );
         if (result == null) return;
         if (result.resetToDefault) {
-          setState(() => _customTextColorValue = null);
-          setSheet(() {});
+          if (mounted) {
+            setState(() => _customTextColorValue = null);
+          }
+          if (sheetCtx.mounted) setSheet(() {});
           await ReaderPrefs.setTextColor(null);
         } else if (result.color != null) {
           final argb = result.color!.toARGB32();
-          setState(() => _customTextColorValue = argb);
-          setSheet(() {});
+          if (mounted) {
+            setState(() => _customTextColorValue = argb);
+          }
+          if (sheetCtx.mounted) setSheet(() {});
           await ReaderPrefs.setTextColor(argb);
         }
       },
@@ -5009,26 +5078,46 @@ class _ReaderPageState extends State<ReaderPage>
       block.aspect = cached;
       return;
     }
+    if (!_aspectListeningUrls.add(imageUrl)) return;
     final provider = YomiruIllustrationCache.provider(imageUrl);
     final stream = provider.resolve(ImageConfiguration.empty);
     late ImageStreamListener listener;
-    listener = ImageStreamListener((info, _) {
+    late (ImageStream, ImageStreamListener) entry;
+    void cleanup() {
+      stream.removeListener(listener);
+      _aspectListeningUrls.remove(imageUrl);
+      _imageAspectListeners.remove(entry);
+    }
+
+    listener = ImageStreamListener((info, synchronousCall) {
       final w = info.image.width;
       final h = info.image.height;
+      cleanup();
       if (w > 0 && h > 0) {
         final aspect = w / h;
         YomiruIllustrationCache.setAspect(imageUrl, aspect);
         if (block.aspect == null && mounted) {
-          setState(() {
-            block.aspect = aspect;
-            _scrollLayoutIndexKey = '';
-          });
+          void applyAspect() {
+            if (!mounted || block.aspect != null) return;
+            setState(() {
+              block.aspect = aspect;
+              _scrollLayouts.clear();
+              _scrollLayoutIndexKey = '';
+            });
+          }
+
+          if (synchronousCall) {
+            WidgetsBinding.instance.addPostFrameCallback((_) => applyAspect());
+          } else {
+            applyAspect();
+          }
         }
       }
-      stream.removeListener(listener);
     }, onError: (_, __) {
-      stream.removeListener(listener);
+      cleanup();
     });
+    entry = (stream, listener);
+    _imageAspectListeners.add(entry);
     stream.addListener(listener);
   }
 
@@ -5036,10 +5125,12 @@ class _ReaderPageState extends State<ReaderPage>
     final block = _blocks[index];
     if (block.image != null) {
       final imageUrl = block.image!;
-      _attachImageAspectListener(imageUrl, block);
       final isDataSaver = LKStore.dataSaverMode.value &&
           !_manuallyLoadedImages.contains(imageUrl) &&
           !_diskCachedImages.contains(imageUrl);
+      if (!isDataSaver) {
+        _attachImageAspectListener(imageUrl, block);
+      }
       final imageHeight = _scrollImageHeight(block, _scrollContentWidth());
       return SizedBox(
         height: imageHeight + 20,
@@ -5278,7 +5369,6 @@ class _ReaderPageState extends State<ReaderPage>
         if (forward ? _pageIndex >= _pages.length - 1 : _pageIndex <= 0) {
           final id = forward ? _nextId : _prevId;
           if (id != null && !_chapterSwitching) {
-            _chapterSwitching = true;
             _open(id, (forward ? _nextTitle : _prevTitle) ?? '',
                 volumeId: forward ? _nextVolumeId : _prevVolumeId);
           }
@@ -5294,12 +5384,10 @@ class _ReaderPageState extends State<ReaderPage>
               if (_pageIndex >= _pages.length - 1 &&
                   _nextId != null &&
                   !_chapterSwitching) {
-                _chapterSwitching = true;
                 _open(_nextId!, _nextTitle ?? '', volumeId: _nextVolumeId);
               }
             } else if (n.overscroll < 0) {
               if (_pageIndex <= 0 && _prevId != null && !_chapterSwitching) {
-                _chapterSwitching = true;
                 _open(_prevId!, _prevTitle ?? '', volumeId: _prevVolumeId);
               }
             }
@@ -5312,7 +5400,9 @@ class _ReaderPageState extends State<ReaderPage>
                 ? const NeverScrollableScrollPhysics()
                 : const ClampingScrollPhysics(),
             onPageChanged: (i) {
-              if (_chrome) {
+              if (!_restoringPagedProgress &&
+                  _pendingPagedAnchor == null &&
+                  _chrome) {
                 setState(() => _chrome = false);
                 _applyImmersive();
               }
@@ -6351,13 +6441,20 @@ class _ReaderPageState extends State<ReaderPage>
                             : LayoutBuilder(builder: (ctx, cons) {
                                 final vw = cons.maxWidth;
                                 final vh = cons.maxHeight;
+                                _scrollLayoutWidth = vw;
+                                if (_immersiveWidth != null &&
+                                    _immersiveWidth != vw) {
+                                  _immersiveHeight = null;
+                                  _immersiveWidth = null;
+                                }
                                 if (!_chrome && _hideBar) {
                                   _immersiveHeight = vh;
+                                  _immersiveWidth = vw;
                                 }
                                 final effectiveVh = (_hideBar &&
                                         _chrome &&
                                         _immersiveHeight != null &&
-                                        _scrollLayoutWidth == vw)
+                                        _immersiveWidth == vw)
                                     ? _immersiveHeight!
                                     : vh;
                                 // 翻页模式:内容/排版/尺寸变化时重建分页
@@ -6380,7 +6477,7 @@ class _ReaderPageState extends State<ReaderPage>
                                         '${pad.left}|${pad.top}|${pad.right}|${pad.bottom}|'
                                         '$isDouble|$vw|$effectiveVh|'
                                         '$viewTopPadding|$viewBottomPadding|'
-                                        '$textScale|$locale|$_locked|$_unlocked|${_bodyTextStyle.hashCode}',
+                                        '$textScale|$locale|$_locked|$_unlocked|$_bodyLayoutStyleKey',
                                   );
                                   if (key != _pagedKey) {
                                     _pagedKey = key;
@@ -6497,6 +6594,7 @@ class _ReaderPageState extends State<ReaderPage>
                           setState(() => _indicatorPosition = pos),
                       onSave: () {
                         setState(() => _isEditingIndicators = false);
+                        _applyImmersive();
                         unawaited(ReaderPrefs.saveIndicatorPosition(
                             _indicatorPosition));
                         showFloatingPrompt(context, '指示器位置已保存');
@@ -6506,6 +6604,7 @@ class _ReaderPageState extends State<ReaderPage>
                           _isEditingIndicators = false;
                           _indicatorPosition = _savedIndicatorPosition;
                         });
+                        _applyImmersive();
                       },
                       onReset: () {
                         setState(() =>

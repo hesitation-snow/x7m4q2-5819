@@ -27,7 +27,9 @@ void main() {
   vec4 original = sampleBackdrop(p);
   // Root-pass contract: never refract an unknown offscreen input. The outer
   // native Gaussian stage still blurs this entire output (not only the lens).
-  if (any(greaterThan(abs(u_size - u_view_size_px), vec2(2.0)))) {
+  if (u_fraction <= 0.0 ||
+      u_refraction <= 0.0 ||
+      any(greaterThan(abs(u_size - u_view_size_px), vec2(2.0)))) {
     frag_color = original;
     return;
   }
@@ -39,23 +41,34 @@ void main() {
   vec2 q = abs(delta) - (halfSize - radius);
   vec2 outside = max(q, vec2(0.0));
   float sd = length(outside) + min(max(q.x, q.y), 0.0) - min(radius.x, radius.y);
+  // Outside the capsule lens, skip gradient and extra backdrop fetches.
+  if (sd >= 0.0) {
+    frag_color = original;
+    return;
+  }
+  // Refract only in a thin inward edge band; the central input is unchanged.
+  float edgeBand = max(min(halfSize.x, halfSize.y) * 0.34, 1.0);
+  float edge = smoothstep(-edgeBand, 0.0, sd);
+  if (edge <= 0.0) {
+    frag_color = original;
+    return;
+  }
   vec2 grad = outside / max(length(outside), 0.0001);
   if (length(outside) < 0.0001) {
     grad = q.x > q.y ? vec2(sign(delta.x), 0.0) : vec2(0.0, sign(delta.y));
   } else {
     grad *= sign(delta);
   }
-  // Refract only in a thin inward edge band; the central input is unchanged.
-  float edgeBand = max(min(halfSize.x, halfSize.y) * 0.34, 1.0);
-  float edge = sd <= 0.0 ? smoothstep(-edgeBand, 0.0, sd) : 0.0;
   float power = u_refraction * (1.0 + u_pressed * (0.035 / 0.135));
   vec2 source = p - grad * power * min(halfSize.x, halfSize.y) * edge;
   vec4 refracted = sampleBackdrop(source);
   // Keep channel separation subpixel and confined to the same refracting edge
   // band. A zero slider value, zero edge weight, or zero refraction is neutral.
   float separation = clamp(u_dispersion_px, 0.0, 0.72) * edge;
-  vec2 chroma = grad * separation;
-  refracted.r = sampleBackdrop(source + chroma).r;
-  refracted.b = sampleBackdrop(source - chroma).b;
+  if (separation > 0.0) {
+    vec2 chroma = grad * separation;
+    refracted.r = sampleBackdrop(source + chroma).r;
+    refracted.b = sampleBackdrop(source - chroma).b;
+  }
   frag_color = mix(original, refracted, u_fraction);
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/painting.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
+import '../api/epub_catalog.dart';
 import '../api/lk_client.dart';
 import '../api/reader_cache.dart';
 import '../api/store.dart';
@@ -14,6 +15,7 @@ class YomiruAppCache {
 
   static Future<void> clearAll() async {
     try {
+      EpubCatalog.reset();
       await clearGroups({
         '小说正文': ReaderContentCache.clear,
         '网络响应': LKClient.shared.clearResponseCache,

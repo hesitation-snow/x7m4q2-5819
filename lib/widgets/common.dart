@@ -198,13 +198,16 @@ class CoverImage extends StatefulWidget {
 class _CoverImageState extends State<CoverImage> {
   bool _revealed = false;
   bool _probeScheduled = false;
-  bool _probeDeferred = false;
+  Timer? _probeDeferTimer;
   bool _lastBrave = false;
   int _probeEpoch = 0;
   ModalRoute<dynamic>? _route;
   bool get _brave =>
       widget.isBrave ||
       (widget.bookId > 0 && LKStore.isBraveBook(widget.bookId));
+  bool get _needsBraveProbe =>
+      LKStore.hideBraveBooks.value ||
+      LKStore.coverBlurMode.value == CoverBlurMode.brave;
 
   @override
   void initState() {
@@ -237,7 +240,8 @@ class _CoverImageState extends State<CoverImage> {
       _revealed = false;
       ++_probeEpoch;
       _probeScheduled = false;
-      _probeDeferred = false;
+      _probeDeferTimer?.cancel();
+      _probeDeferTimer = null;
       _lastBrave = _brave;
     }
   }
@@ -247,16 +251,16 @@ class _CoverImageState extends State<CoverImage> {
         widget.bookId <= 0 ||
         _brave ||
         widget.accessStatus != BookAccessStatus.unknown ||
+        !_needsBraveProbe ||
         LKStore.dataSaverMode.value) {
       return;
     }
     final probe = BookAccessProbe.shared;
     if (probe.queued >= probe.maxPending) {
-      if (_probeDeferred) return;
-      _probeDeferred = true;
+      if (_probeDeferTimer != null) return;
       final epoch = _probeEpoch;
-      Future<void>.delayed(const Duration(milliseconds: 400), () {
-        _probeDeferred = false;
+      _probeDeferTimer = Timer(const Duration(milliseconds: 400), () {
+        _probeDeferTimer = null;
         if (!mounted || epoch != _probeEpoch) return;
         _scheduleAccessProbe();
       });
@@ -272,6 +276,7 @@ class _CoverImageState extends State<CoverImage> {
         id == widget.bookId &&
         account == LKClient.sessionRev.value &&
         _route?.isCurrent != false &&
+        _needsBraveProbe &&
         !LKStore.dataSaverMode.value;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(() async {
@@ -289,6 +294,8 @@ class _CoverImageState extends State<CoverImage> {
   @override
   void dispose() {
     ++_probeEpoch;
+    _probeDeferTimer?.cancel();
+    _probeDeferTimer = null;
     LKStore.braveBookRevision.removeListener(_onBraveChanged);
     super.dispose();
   }
@@ -397,9 +404,11 @@ class _CoverImageState extends State<CoverImage> {
             );
 
             if (shouldBlur) {
-              image = ImageFiltered(
-                imageFilter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                child: image,
+              image = RepaintBoundary(
+                child: ImageFiltered(
+                  imageFilter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                  child: image,
+                ),
               );
             }
 
@@ -565,7 +574,9 @@ class BookCard extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 6),
-                        Row(
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          runSpacing: 4,
                           children: [
                             // 过长的 tag(如整段书名式 tag)不展示,避免 RIGHT OVERFLOW
                             ..._shortTags(book.tags)
@@ -578,9 +589,7 @@ class BookCard extends StatelessWidget {
                                   _fmtWord(book.wordCount),
                                   style: TextStyle(
                                       fontSize: 11,
-                                      color: isDark
-                                          ? Colors.grey.shade500
-                                          : Colors.grey.shade500),
+                                      color: scheme.onSurfaceVariant),
                                 ),
                               ),
                           ],
@@ -605,18 +614,17 @@ class BookCard extends StatelessWidget {
                           const SizedBox(height: 5),
                           Row(children: [
                             Icon(Icons.schedule_rounded,
-                                size: 12,
-                                color: isDark
-                                    ? Colors.grey.shade500
-                                    : Colors.grey.shade500),
+                                size: 12, color: scheme.onSurfaceVariant),
                             const SizedBox(width: 4),
-                            Text(
-                              '更新于 ${book.updatedAt.length > 16 ? book.updatedAt.substring(0, 16) : book.updatedAt}',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: isDark
-                                      ? Colors.grey.shade500
-                                      : Colors.grey.shade500),
+                            Flexible(
+                              child: Text(
+                                '更新于 ${book.updatedAt.length > 16 ? book.updatedAt.substring(0, 16) : book.updatedAt}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: scheme.onSurfaceVariant),
+                              ),
                             ),
                           ]),
                         ],
@@ -645,7 +653,7 @@ class BookCard extends StatelessWidget {
     } else if (r == 3) {
       color = const Color(0xFFBF6B4A);
     } else {
-      color = Colors.grey.shade400;
+      color = Colors.grey.shade700;
     }
     return Container(
       width: 26,
@@ -1002,9 +1010,7 @@ class BookGridCard extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
         );
 
-        final isBlurActive = LKStore.coverBlurMode.value == CoverBlurMode.all ||
-            (LKStore.coverBlurMode.value == CoverBlurMode.brave &&
-                book.isBrave);
+        final coverHeight = cardWidth / BookGridDelegate.coverAspectRatio;
 
         return RepaintBoundary(
           child: InkWell(
@@ -1023,8 +1029,8 @@ class BookGridCard extends StatelessWidget {
                         child: CoverImage(
                           key: ValueKey(book.bookId),
                           url: book.coverUrl,
-                          width: double.infinity,
-                          height: double.infinity,
+                          width: cardWidth,
+                          height: coverHeight,
                           radius: isDense ? 8 : 12,
                           isBrave: book.isBrave,
                           bookId: book.bookId,
@@ -1080,61 +1086,69 @@ class BookGridCard extends StatelessWidget {
                       // 小封面（isDense/isCompact）或右上角有高斯模糊睁眼按钮时，置于左下角，彻底避免与左上角和右上角撞车挤压；
                       // 仅在宽敞的标准封面且无模糊按钮遮挡时置于右上角。
                       if (book.unreadChapterCount > 0)
-                        (isDense || isCompact || isBlurActive)
-                            ? Positioned(
-                                bottom: isDense ? 4 : 6,
-                                left: isDense ? 4 : 6,
-                                child: Container(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: isDense ? 4 : 6,
-                                    vertical: isDense ? 1.5 : 2.5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: scheme.primaryContainer
-                                        .withValues(alpha: 0.94),
-                                    borderRadius:
-                                        BorderRadius.circular(isDense ? 5 : 7),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black
-                                            .withValues(alpha: 0.25),
-                                        blurRadius: 2,
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: ListenableBuilder(
+                              listenable: Listenable.merge([
+                                LKStore.coverBlurMode,
+                                LKStore.braveBookRevision,
+                              ]),
+                              builder: (context, _) {
+                                final isBraveNow = book.isBrave ||
+                                    LKStore.isBraveBook(book.bookId);
+                                final isBlurActive =
+                                    LKStore.coverBlurMode.value ==
+                                            CoverBlurMode.all ||
+                                        (LKStore.coverBlurMode.value ==
+                                                CoverBlurMode.brave &&
+                                            isBraveNow);
+                                final placeBottomLeft =
+                                    isDense || isCompact || isBlurActive;
+                                return Align(
+                                  alignment: placeBottomLeft
+                                      ? Alignment.bottomLeft
+                                      : Alignment.topRight,
+                                  child: Padding(
+                                    padding: EdgeInsets.all(isDense ? 4 : 6),
+                                    child: Container(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: isDense ? 4 : 6,
+                                        vertical: placeBottomLeft
+                                            ? (isDense ? 1.5 : 2.5)
+                                            : 3,
                                       ),
-                                    ],
-                                  ),
-                                  child: Text(
-                                    isDense
-                                        ? '+${book.unreadChapterCount}'
-                                        : '${book.unreadChapterCount} 章更新',
-                                    style: TextStyle(
-                                      fontSize: isDense ? 8.5 : 10,
-                                      fontWeight: FontWeight.w600,
-                                      color: scheme.onPrimaryContainer,
+                                      decoration: BoxDecoration(
+                                        color: scheme.primaryContainer
+                                            .withValues(alpha: 0.94),
+                                        borderRadius: BorderRadius.circular(
+                                            isDense ? 5 : 7),
+                                        boxShadow: placeBottomLeft
+                                            ? [
+                                                BoxShadow(
+                                                  color: Colors.black
+                                                      .withValues(alpha: 0.25),
+                                                  blurRadius: 2,
+                                                ),
+                                              ]
+                                            : null,
+                                      ),
+                                      child: Text(
+                                        isDense
+                                            ? '+${book.unreadChapterCount}'
+                                            : '${book.unreadChapterCount} 章更新',
+                                        style: TextStyle(
+                                          fontSize: isDense ? 8.5 : 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: scheme.onPrimaryContainer,
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              )
-                            : Positioned(
-                                top: 6,
-                                right: 6,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: scheme.primaryContainer
-                                        .withValues(alpha: 0.94),
-                                    borderRadius: BorderRadius.circular(7),
-                                  ),
-                                  child: Text(
-                                    '${book.unreadChapterCount} 章更新',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w600,
-                                      color: scheme.onPrimaryContainer,
-                                    ),
-                                  ),
-                                ),
-                              ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
                       // 4. 连载/完结状态角标（右下角）
                       Positioned(
                         bottom: isDense ? 4 : 6,

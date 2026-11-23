@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Build tag, for example v1.4.0'
+        description: 'Build tag, for example v1.6.0'
         required: true
-        default: v1.4.0
+        default: v1.6.0
       publish_release:
         description: 'Publish a GitHub Release after building'
         type: boolean
@@ -17,7 +17,7 @@ on:
         default: true
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
@@ -105,6 +105,10 @@ jobs:
           path: yomiru-android-universal-${{ env.RELEASE_TAG }}.apk
           if-no-files-found: error
           retention-days: 90
+
+      - name: Clean up Android signing material
+        if: always()
+        run: rm -f android/key.properties android/app/yomiru-release.jks
 
   build-ios:
     name: Build iOS IPA (unsigned)
@@ -200,8 +204,10 @@ jobs:
         run: python3 .github/scripts/send_telegram.py telegram-dist
 
   publish-release:
-    if: github.event_name == 'push' || inputs.publish_release
+    if: inputs.publish_release
     name: Publish GitHub Release
+    permissions:
+      contents: write
     needs:
       - build-android
       - build-ios

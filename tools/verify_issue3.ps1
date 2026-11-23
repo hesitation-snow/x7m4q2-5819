@@ -58,7 +58,7 @@ try {
         }
         $count = 0
         foreach ($line in $output) {
-            if ("$line" -match '\+(\d+): All tests passed!') { $count = [int]$Matches[1] }
+            if ("$line" -match '\+(\d+)(?: ~\d+)?: All tests passed!') { $count = [int]$Matches[1] }
         }
         $results += [pscustomobject]@{ test = $testPath; initialExitCode = $initialCode; exitCode = $code; attempts = $attempts; testCount = $count }
     }

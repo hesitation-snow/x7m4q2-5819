@@ -34,7 +34,11 @@ String _identity(dynamic value) {
   return jsonEncode(value);
 }
 
-dynamic _merge(dynamic first, dynamic next) {
+class _MergeTracker {
+  bool changed = false;
+}
+
+dynamic _merge(dynamic first, dynamic next, _MergeTracker tracker) {
   if (first is List && next is List) {
     final result = List<dynamic>.of(first);
     final indices = <String, int>{
@@ -46,8 +50,9 @@ dynamic _merge(dynamic first, dynamic next) {
       if (index == null) {
         indices[key] = result.length;
         result.add(item);
+        tracker.changed = true;
       } else {
-        result[index] = _merge(result[index], item);
+        result[index] = _merge(result[index], item, tracker);
       }
     }
     return result;
@@ -58,9 +63,12 @@ dynamic _merge(dynamic first, dynamic next) {
       final key = entry.key.toString();
       // Preserve the first response's account state and pagination metadata.
       if (key == 'page_info' || key == 'pagination') continue;
-      result[key] = result.containsKey(key)
-          ? _merge(result[key], entry.value)
-          : entry.value;
+      if (result.containsKey(key)) {
+        result[key] = _merge(result[key], entry.value, tracker);
+      } else {
+        result[key] = entry.value;
+        tracker.changed = true;
+      }
     }
     return result;
   }
@@ -100,8 +108,10 @@ Future<Map<String, dynamic>> loadAllMedalPages(MedalPageLoader load) async {
       throw StateError('勋章接口重复返回同一页，未加载完整');
     }
     final next = await load(requestedPage);
-    final merged = Map<String, dynamic>.from(_merge(result, next) as Map);
-    if (jsonEncode(merged) == jsonEncode(result)) {
+    final tracker = _MergeTracker();
+    final merged =
+        Map<String, dynamic>.from(_merge(result, next, tracker) as Map);
+    if (!tracker.changed) {
       throw StateError('勋章后续分页未返回新条目，未加载完整');
     }
     result = merged;

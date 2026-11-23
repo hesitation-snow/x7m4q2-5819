@@ -76,6 +76,7 @@ android/app/*.der
 **/.dev.vars.*
 
 # Local model exports and generated test/build artifacts
+__pycache__/
 *.ckpt
 *.pth
 *.onnx
@@ -84,7 +85,11 @@ android/app/*.der
 *.apk
 *.aab
 *.ipa
+*.hprof
 /onnx_ookura_resona/
 /_tmp_models/
+**/_tmp_models/
 /test_baseline_output/
 /dist/
+/telegram-dist/
+/Payload/

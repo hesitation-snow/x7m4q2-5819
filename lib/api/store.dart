@@ -1069,7 +1069,10 @@ class LKStore {
     }
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! Map) return {};
+      if (decoded is! Map) {
+        _globalMedalsMemory = <int, List<LKMedal>>{};
+        return {};
+      }
       final result = <int, List<LKMedal>>{};
       for (final entry in decoded.entries) {
         final uid = int.tryParse(entry.key.toString());

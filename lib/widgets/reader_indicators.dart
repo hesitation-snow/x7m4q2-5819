@@ -146,6 +146,7 @@ class IndicatorEditOverlay extends StatefulWidget {
 class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
   // 当前微调选择的目标：0 = 顶部, 1 = 底部
   int _selectedTarget = 0;
+  double? _rawTitleDragAlign;
 
   void _stepDistance(int delta) {
     final current = widget.position;
@@ -232,23 +233,34 @@ class _IndicatorEditOverlayState extends State<IndicatorEditOverlay> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => setState(() => _selectedTarget = 0),
-              onPanUpdate: (details) {
+              onPanStart: (_) {
                 setState(() => _selectedTarget = 0);
+                _rawTitleDragAlign = position.titleAlignment;
+              },
+              onPanUpdate: (details) {
+                if (_selectedTarget != 0) {
+                  setState(() => _selectedTarget = 0);
+                }
                 final dy = details.delta.dy;
                 final dx = details.delta.dx;
                 final newTop = (position.top + dy).clamp(0.0, 96.0);
-                var newAlign =
-                    (position.titleAlignment + dx / 120.0).clamp(-1.0, 1.0);
-                if (newAlign.abs() < 0.12) {
-                  newAlign = 0.0;
-                } else if (newAlign < -0.85) {
-                  newAlign = -1.0;
-                } else if (newAlign > 0.85) {
-                  newAlign = 1.0;
+                final rawAlign = ((_rawTitleDragAlign ?? position.titleAlignment) +
+                        dx / 120.0)
+                    .clamp(-1.0, 1.0);
+                _rawTitleDragAlign = rawAlign;
+                var snappedAlign = rawAlign;
+                if (snappedAlign.abs() < 0.12) {
+                  snappedAlign = 0.0;
+                } else if (snappedAlign < -0.85) {
+                  snappedAlign = -1.0;
+                } else if (snappedAlign > 0.85) {
+                  snappedAlign = 1.0;
                 }
-                widget.onChanged(
-                    position.copyWith(top: newTop, titleAlignment: newAlign));
+                widget.onChanged(position.copyWith(
+                    top: newTop, titleAlignment: snappedAlign));
               },
+              onPanEnd: (_) => _rawTitleDragAlign = null,
+              onPanCancel: () => _rawTitleDragAlign = null,
               child: Align(
                 alignment: Alignment(
                   IndicatorPosition.bounded(position.titleAlignment, 1, -1),

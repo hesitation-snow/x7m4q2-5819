@@ -18,13 +18,14 @@ class Crc32 {
     return table;
   }
 
-  static int compute(List<int> bytes) {
-    var crc = 0xFFFFFFFF;
+  static int update(int crc, List<int> bytes) {
     for (var i = 0; i < bytes.length; i++) {
       crc = _table[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
     }
-    return crc ^ 0xFFFFFFFF;
+    return crc;
   }
+
+  static int compute(List<int> bytes) => update(0xFFFFFFFF, bytes) ^ 0xFFFFFFFF;
 }
 
 class _ZipEntryMeta {
@@ -194,8 +195,70 @@ class EpubZipWriter {
     bool compress = true,
   }) async {
     _checkOpen();
-    final bytes = await sourceFile.readAsBytes();
-    await addBytes(entryName, bytes, compress: compress);
+    if (compress) {
+      final bytes = await sourceFile.readAsBytes();
+      await addBytes(entryName, bytes, compress: true);
+      return;
+    }
+
+    final cleanName =
+        entryName.replaceAll('\\', '/').replaceFirst(RegExp(r'^/+'), '');
+    if (cleanName.isEmpty || cleanName == 'mimetype') return;
+
+    final nameBytes = utf8.encode(cleanName);
+    final (dosTime, dosDate) = _dosDateTime(DateTime.now());
+    final localOffset = _currentOffset;
+
+    final header = ByteData(30);
+    header.setUint32(0, 0x04034b50, Endian.little);
+    header.setUint16(4, 20, Endian.little);
+    header.setUint16(6, 1 << 11, Endian.little);
+    header.setUint16(8, 0, Endian.little); // STORED
+    header.setUint16(10, dosTime, Endian.little);
+    header.setUint16(12, dosDate, Endian.little);
+    header.setUint32(14, 0, Endian.little); // CRC patched after streaming
+    header.setUint32(18, 0, Endian.little); // Compressed size patched
+    header.setUint32(22, 0, Endian.little); // Uncompressed size patched
+    header.setUint16(26, nameBytes.length, Endian.little);
+    header.setUint16(28, 0, Endian.little);
+
+    await _raf.writeFrom(header.buffer.asUint8List());
+    await _raf.writeFrom(nameBytes);
+
+    var runningCrc = 0xFFFFFFFF;
+    var totalBytes = 0;
+    await for (final chunk in sourceFile.openRead()) {
+      if (chunk.isEmpty) continue;
+      runningCrc = Crc32.update(runningCrc, chunk);
+      totalBytes += chunk.length;
+      await _raf.writeFrom(chunk);
+    }
+
+    final crc = runningCrc ^ 0xFFFFFFFF;
+    final endOffset = localOffset + 30 + nameBytes.length + totalBytes;
+
+    // Backpatch CRC-32 and sizes directly in the local file header.
+    final patch = ByteData(12);
+    patch.setUint32(0, crc, Endian.little);
+    patch.setUint32(4, totalBytes, Endian.little);
+    patch.setUint32(8, totalBytes, Endian.little);
+    await _raf.setPosition(localOffset + 14);
+    await _raf.writeFrom(patch.buffer.asUint8List());
+    await _raf.setPosition(endOffset);
+
+    _entries.add(_ZipEntryMeta(
+      name: cleanName,
+      crc32: crc,
+      compressedSize: totalBytes,
+      uncompressedSize: totalBytes,
+      localHeaderOffset: localOffset,
+      method: 0,
+      modTime: dosTime,
+      modDate: dosDate,
+      isUtf8: true,
+    ));
+
+    _currentOffset = endOffset;
   }
 
   /// 写入 Central Directory 和 EOCD，完成归档并关闭文件句柄

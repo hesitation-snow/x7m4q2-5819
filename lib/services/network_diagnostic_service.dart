@@ -88,10 +88,18 @@ class NetworkDiagnosticService {
     http.Client? httpClient,
     Future<List<String>> Function(String host)? dnsLookup,
   })  : _client = httpClient ?? http.Client(),
+        _ownsClient = httpClient == null,
         _dnsLookup = dnsLookup ?? _defaultDnsLookup;
 
   final http.Client _client;
+  final bool _ownsClient;
   final Future<List<String>> Function(String host) _dnsLookup;
+
+  void close() {
+    if (_ownsClient) {
+      _client.close();
+    }
+  }
 
   static Future<List<String>> _defaultDnsLookup(String host) async {
     final addresses =

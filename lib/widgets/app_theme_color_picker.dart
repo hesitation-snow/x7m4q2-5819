@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -61,6 +62,9 @@ class _AppThemeColorSectionState extends State<AppThemeColorSection> {
   bool _isCustomColor = false;
   bool _wheelExpanded = false;
   late HSVColor _hsv;
+  Timer? _commitTimer;
+  int? _pendingSeedColor;
+  bool _draggingWheel = false;
 
   @override
   void initState() {
@@ -73,16 +77,37 @@ class _AppThemeColorSectionState extends State<AppThemeColorSection> {
 
   @override
   void dispose() {
+    _commitTimer?.cancel();
+    _flushPendingSeedColor();
     LKStore.themeSeedColor.removeListener(_onStoreColorChanged);
     super.dispose();
   }
 
-  void _onStoreColorChanged() {
-    if (mounted) {
-      setState(() {
-        _syncFromStore();
-      });
+  void _flushPendingSeedColor() {
+    final pending = _pendingSeedColor;
+    if (pending == null) return;
+    _pendingSeedColor = null;
+    if (LKStore.themeSeedColor.value != pending) {
+      unawaited(LKStore.setThemeSeedColor(pending));
     }
+  }
+
+  void _scheduleCommitSeedColor(int argb) {
+    _pendingSeedColor = argb;
+    _commitTimer?.cancel();
+    _commitTimer = Timer(const Duration(milliseconds: 180), () {
+      _commitTimer = null;
+      _flushPendingSeedColor();
+    });
+  }
+
+  void _onStoreColorChanged() {
+    if (!mounted || _draggingWheel) return;
+    final saved = LKStore.themeSeedColor.value;
+    if (saved != null && saved == _currentColor.toARGB32()) return;
+    setState(() {
+      _syncFromStore();
+    });
   }
 
   void _syncFromStore() {
@@ -99,13 +124,15 @@ class _AppThemeColorSectionState extends State<AppThemeColorSection> {
   }
 
   void _selectPreset(Color color, bool isDefault) {
+    _commitTimer?.cancel();
+    _pendingSeedColor = null;
     setState(() {
       _currentColor = color;
       _isCustomColor = false;
       _wheelExpanded = false; // Collapse wheel on preset selection
       _hsv = HSVColor.fromColor(color);
     });
-    LKStore.setThemeSeedColor(isDefault ? null : color.toARGB32());
+    unawaited(LKStore.setThemeSeedColor(isDefault ? null : color.toARGB32()));
   }
 
   void _toggleCustomPicker() {
@@ -113,12 +140,13 @@ class _AppThemeColorSectionState extends State<AppThemeColorSection> {
       _wheelExpanded = !_wheelExpanded;
       if (_wheelExpanded) {
         _isCustomColor = true;
-        LKStore.setThemeSeedColor(_currentColor.toARGB32());
+        unawaited(LKStore.setThemeSeedColor(_currentColor.toARGB32()));
       }
     });
   }
 
-  void _updateWheelColor(Offset localPos, double radius) {
+  void _updateWheelColor(Offset localPos, double radius,
+      {bool commitImmediately = false}) {
     final dx = localPos.dx - radius;
     final dy = localPos.dy - radius;
     final dist = math.sqrt(dx * dx + dy * dy);
@@ -127,12 +155,20 @@ class _AppThemeColorSectionState extends State<AppThemeColorSection> {
     if (hue < 0) hue += 360;
 
     final newHsv = HSVColor.fromAHSV(1.0, hue, sat, 0.95);
+    final newColor = newHsv.toColor();
     setState(() {
       _hsv = newHsv;
-      _currentColor = newHsv.toColor();
+      _currentColor = newColor;
       _isCustomColor = true;
     });
-    LKStore.setThemeSeedColor(_currentColor.toARGB32());
+    final argb = newColor.toARGB32();
+    if (commitImmediately) {
+      _commitTimer?.cancel();
+      _pendingSeedColor = null;
+      unawaited(LKStore.setThemeSeedColor(argb));
+    } else {
+      _scheduleCommitSeedColor(argb);
+    }
   }
 
   List<Color> _generateTonalPalette(Color seed) {
@@ -171,22 +207,26 @@ class _AppThemeColorSectionState extends State<AppThemeColorSection> {
             children: [
               // Default sparkle
               _buildColorCircle(
+                label: kAppThemeColorPresets[0].$1,
                 color: kAppThemeColorPresets[0].$2,
+                scheme: scheme,
                 isSelected: !_isCustomColor && savedColorValue == null,
                 isSparkle: true,
                 onTap: () => _selectPreset(kAppThemeColorPresets[0].$2, true),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 4),
               // Presets
               for (var i = 1; i < kAppThemeColorPresets.length; i++) ...[
                 _buildColorCircle(
+                  label: kAppThemeColorPresets[i].$1,
                   color: kAppThemeColorPresets[i].$2,
+                  scheme: scheme,
                   isSelected: !_isCustomColor &&
                       savedColorValue == kAppThemeColorPresets[i].$2.toARGB32(),
                   onTap: () =>
                       _selectPreset(kAppThemeColorPresets[i].$2, false),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
               ],
               // Eyedropper custom
               _buildCustomPickerCircle(
@@ -224,16 +264,28 @@ class _AppThemeColorSectionState extends State<AppThemeColorSection> {
                                     (_EagerPanGestureRecognizer instance) {
                                       instance
                                         ..onDown = (d) {
+                                          _draggingWheel = true;
                                           _updateWheelColor(
                                               d.localPosition, radius);
                                         }
                                         ..onStart = (d) {
+                                          _draggingWheel = true;
                                           _updateWheelColor(
                                               d.localPosition, radius);
                                         }
                                         ..onUpdate = (d) {
                                           _updateWheelColor(
                                               d.localPosition, radius);
+                                        }
+                                        ..onEnd = (_) {
+                                          _draggingWheel = false;
+                                          _commitTimer?.cancel();
+                                          _flushPendingSeedColor();
+                                        }
+                                        ..onCancel = () {
+                                          _draggingWheel = false;
+                                          _commitTimer?.cancel();
+                                          _flushPendingSeedColor();
                                         };
                                     },
                                   ),
@@ -272,36 +324,54 @@ class _AppThemeColorSectionState extends State<AppThemeColorSection> {
   }
 
   Widget _buildColorCircle({
+    required String label,
     required Color color,
+    required ColorScheme scheme,
     required bool isSelected,
     bool isSparkle = false,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
-          border: isSelected
-              ? Border.all(color: Colors.white, width: 2.5)
-              : Border.all(color: Colors.black12, width: 1),
-          boxShadow: [
-            if (isSelected)
-              BoxShadow(
-                color: color.withValues(alpha: 0.5),
-                blurRadius: 6,
-                spreadRadius: 2,
+    final iconColor =
+        color.computeLuminance() > 0.55 ? Colors.black87 : Colors.white;
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: label,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Center(
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: isSelected
+                    ? Border.all(color: scheme.onSurface, width: 2.5)
+                    : Border.all(
+                        color: scheme.outlineVariant.withValues(alpha: 0.7),
+                        width: 1),
+                boxShadow: [
+                  if (isSelected)
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.45),
+                      blurRadius: 6,
+                      spreadRadius: 1,
+                    ),
+                ],
               ),
-          ],
+              child: isSparkle
+                  ? Icon(Icons.auto_awesome, color: iconColor, size: 18)
+                  : isSelected
+                      ? Icon(Icons.check, color: iconColor, size: 20)
+                      : null,
+            ),
+          ),
         ),
-        child: isSparkle
-            ? const Icon(Icons.auto_awesome, color: Colors.white, size: 18)
-            : isSelected
-                ? const Icon(Icons.check, color: Colors.white, size: 20)
-                : null,
       ),
     );
   }
@@ -311,22 +381,36 @@ class _AppThemeColorSectionState extends State<AppThemeColorSection> {
     required ColorScheme scheme,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest,
-          shape: BoxShape.circle,
-          border: isSelected
-              ? Border.all(color: scheme.primary, width: 2.5)
-              : Border.all(color: Colors.black12, width: 1),
-        ),
-        child: Icon(
-          Icons.colorize_rounded,
-          color: isSelected ? scheme.primary : scheme.onSurfaceVariant,
-          size: 18,
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: '自定义主题色',
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Center(
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest,
+                shape: BoxShape.circle,
+                border: isSelected
+                    ? Border.all(color: scheme.primary, width: 2.5)
+                    : Border.all(
+                        color: scheme.outlineVariant.withValues(alpha: 0.7),
+                        width: 1),
+              ),
+              child: Icon(
+                Icons.colorize_rounded,
+                color: isSelected ? scheme.primary : scheme.onSurfaceVariant,
+                size: 18,
+              ),
+            ),
+          ),
         ),
       ),
     );

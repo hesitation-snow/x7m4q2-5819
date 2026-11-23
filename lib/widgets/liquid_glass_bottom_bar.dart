@@ -95,6 +95,16 @@ class _RenderRootGlass extends RenderProxyBox {
   _RenderRootGlass(this._configuration);
   _RootGlassBackdrop _configuration;
   set configuration(_RootGlassBackdrop value) {
+    final prev = _configuration;
+    if (prev.optics == value.optics &&
+        identical(prev.shader, value.shader) &&
+        prev.lens == value.lens &&
+        prev.pressed == value.pressed &&
+        prev.deformation == value.deformation &&
+        prev.fraction == value.fraction &&
+        identical(prev.view, value.view)) {
+      return;
+    }
     _configuration = value;
     markNeedsPaint();
   }
@@ -104,6 +114,7 @@ class _RenderRootGlass extends RenderProxyBox {
   @override
   void paint(PaintingContext context, Offset offset) {
     final c = _configuration;
+    final sigma = c.optics.blur * c.fraction;
     final dpr = c.view.devicePixelRatio;
     final transform = getTransformTo(null);
     final center = MatrixUtils.transformPoint(transform, c.lens.center) * dpr;
@@ -125,33 +136,43 @@ class _RenderRootGlass extends RenderProxyBox {
         transform.storage[4].abs() > 0.0001) {
       rootPass = false;
     }
-    final shader = c.shader
-      ..setFloat(2, center.dx)
-      ..setFloat(3, center.dy)
-      ..setFloat(4, bounds.width * dpr / 2)
-      ..setFloat(5, bounds.height * dpr / 2)
-      ..setFloat(6, c.pressed ? 1 : 0)
-      ..setFloat(7, c.fraction)
-      ..setFloat(8, c.view.physicalSize.width)
-      ..setFloat(9, c.view.physicalSize.height)
-      ..setFloat(10, c.optics.refraction)
-      ..setFloat(11, math.min(bounds.width, bounds.height) * dpr / 2)
-      ..setFloat(12, math.min(bounds.width, bounds.height) * dpr / 2)
-      ..setFloat(
-          13,
-          chromaticDispersionMaxPx(
-            refraction: c.optics.refraction,
-            pressed: c.pressed,
-            deformation: c.deformation,
-          ));
-    final blur = ui.ImageFilter.blur(
-        sigmaX: c.optics.blur * c.fraction, sigmaY: c.optics.blur * c.fraction);
-    // Inner shader reads the original root-pass backdrop. Only its OUTPUT is
-    // blurred: reversing these stages would invalidate root texture coordinates.
-    final filter = rootPass
-        ? ui.ImageFilter.compose(
-            outer: blur, inner: ui.ImageFilter.shader(shader))
-        : blur;
+    final useRefraction = rootPass && c.optics.refraction > 0 && c.fraction > 0;
+    if (sigma <= 0 && !useRefraction) {
+      super.paint(context, offset);
+      return;
+    }
+    final ui.ImageFilter filter;
+    if (useRefraction) {
+      final shader = c.shader
+        ..setFloat(2, center.dx)
+        ..setFloat(3, center.dy)
+        ..setFloat(4, bounds.width * dpr / 2)
+        ..setFloat(5, bounds.height * dpr / 2)
+        ..setFloat(6, c.pressed ? 1 : 0)
+        ..setFloat(7, c.fraction)
+        ..setFloat(8, c.view.physicalSize.width)
+        ..setFloat(9, c.view.physicalSize.height)
+        ..setFloat(10, c.optics.refraction)
+        ..setFloat(11, math.min(bounds.width, bounds.height) * dpr / 2)
+        ..setFloat(12, math.min(bounds.width, bounds.height) * dpr / 2)
+        ..setFloat(
+            13,
+            chromaticDispersionMaxPx(
+              refraction: c.optics.refraction,
+              pressed: c.pressed,
+              deformation: c.deformation,
+            ));
+      final shaderFilter = ui.ImageFilter.shader(shader);
+      // Inner shader reads the original root-pass backdrop. Only its OUTPUT is
+      // blurred: reversing these stages would invalidate root texture coordinates.
+      filter = sigma > 0
+          ? ui.ImageFilter.compose(
+              outer: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+              inner: shaderFilter)
+          : shaderFilter;
+    } else {
+      filter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma);
+    }
     final backdropLayer =
         (layer ??= BackdropFilterLayer()) as BackdropFilterLayer;
     backdropLayer.filter = filter;
@@ -224,9 +245,9 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
       duration: const Duration(milliseconds: 280),
     )..addListener(_tick);
     _springX = AnimationController.unbounded(vsync: this, value: 0)
-      ..addListener(() => setState(() => _stretch = _springX.value));
+      ..addListener(() => _stretch = _springX.value);
     _springY = AnimationController.unbounded(vsync: this, value: 0)
-      ..addListener(() => setState(() => _stretchY = _springY.value));
+      ..addListener(() => _stretchY = _springY.value);
     LKStore.animationsEnabled.addListener(_motionChanged);
     if (ui.ImageFilter.isShaderFilterSupported) _loadShader();
   }
@@ -244,10 +265,8 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
   }
 
   void _tick() {
-    setState(() {
-      _position = ui.lerpDouble(
-          _from, _to, Curves.easeOutCubic.transform(_controller.value))!;
-    });
+    _position = ui.lerpDouble(
+        _from, _to, Curves.easeOutCubic.transform(_controller.value))!;
   }
 
   void _motionChanged() {
@@ -435,13 +454,6 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
               final base = math.min(
                   62.0 * barScale, math.max(0.0, itemWidth - 6 * barScale));
               final raised = _pressed && !_reduceMotion;
-              final lensWidth = math.min(
-                  width, base + (raised ? 7 * barScale : 0) + _stretch);
-              final lensHeight =
-                  (raised ? 48.0 * barScale : 40.0 * barScale) + _stretchY;
-              final left = (_position * width - lensWidth / 2)
-                  .clamp(0.0, math.max(0.0, width - lensWidth))
-                  .toDouble();
               final shader = _shader;
               final refracting =
                   shader != null && ui.ImageFilter.isShaderFilterSupported;
@@ -497,114 +509,129 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
                     }
                   },
                   onHorizontalDragCancel: _cancel,
-                  child: Stack(
-                    key: const ValueKey('liquid-glass-surface'),
-                    children: [
-                      if (refracting)
-                        Positioned.fill(
-                          child: ClipPath(
-                            key: const ValueKey('liquid-glass-sampling-ghost'),
-                            clipper: _GlassSamplingClipper(
-                              Rect.fromLTWH(
-                                left,
-                                (barHeight - lensHeight) / 2,
-                                lensWidth,
-                                lensHeight,
-                              ),
-                              lensHeight / 2,
-                            ),
-                            // This deliberately paints the selected glyph at
-                            // low alpha BEFORE BackdropFilter so its pixels are
-                            // part of the root-pass input. The normal foreground
-                            // row remains the only visible/interactive item.
-                            child: IgnorePointer(
-                              child: ExcludeSemantics(
-                                child: _samplingGhost(
-                                  context,
-                                  count: count,
-                                  selectedIndex: widget.selectedIndex,
-                                  width: width,
-                                  height: barHeight,
-                                  visualScale: barScale,
-                                  fraction: fraction,
+                  child: AnimatedBuilder(
+                    animation:
+                        Listenable.merge([_controller, _springX, _springY]),
+                    builder: (context, _) {
+                      final lensWidth = math.min(
+                          width, base + (raised ? 7 * barScale : 0) + _stretch);
+                      final lensHeight =
+                          (raised ? 48.0 * barScale : 40.0 * barScale) +
+                              _stretchY;
+                      final left = (_position * width - lensWidth / 2)
+                          .clamp(0.0, math.max(0.0, width - lensWidth))
+                          .toDouble();
+                      return Stack(
+                        key: const ValueKey('liquid-glass-surface'),
+                        children: [
+                          if (refracting)
+                            Positioned.fill(
+                              child: ClipPath(
+                                key: const ValueKey(
+                                    'liquid-glass-sampling-ghost'),
+                                clipper: _GlassSamplingClipper(
+                                  Rect.fromLTWH(
+                                    left,
+                                    (barHeight - lensHeight) / 2,
+                                    lensWidth,
+                                    lensHeight,
+                                  ),
+                                  lensHeight / 2,
+                                ),
+                                // This deliberately paints the selected glyph at
+                                // low alpha BEFORE BackdropFilter so its pixels are
+                                // part of the root-pass input. The normal foreground
+                                // row remains the only visible/interactive item.
+                                child: IgnorePointer(
+                                  child: ExcludeSemantics(
+                                    child: _samplingGhost(
+                                      context,
+                                      count: count,
+                                      selectedIndex: widget.selectedIndex,
+                                      width: width,
+                                      height: barHeight,
+                                      visualScale: barScale,
+                                      fraction: fraction,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-                      Positioned.fill(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(barHeight / 2),
-                          child: refracting
-                              ? _RootGlassBackdrop(
-                                  key:
-                                      const ValueKey('liquid-glass-refraction'),
-                                  shader: shader,
-                                  optics: optics,
-                                  lens: Rect.fromLTWH(
-                                      left,
-                                      (barHeight - lensHeight) / 2,
-                                      lensWidth,
-                                      lensHeight),
-                                  pressed: raised,
-                                  fraction: fraction,
-                                  deformation: _stretch + _stretchY,
-                                  view: View.of(context),
-                                  child: tint,
-                                )
-                              : BackdropFilter(
-                                  key: const ValueKey(
-                                      'liquid-glass-blur-fallback'),
-                                  filter: ui.ImageFilter.blur(
-                                      sigmaX: sigma * fraction,
-                                      sigmaY: sigma * fraction),
-                                  child: tint,
-                                ),
-                        ),
-                      ),
-                      Positioned(
-                        key: const ValueKey('liquid-glass-lens'),
-                        left: left,
-                        top: (barHeight - lensHeight) / 2,
-                        width: lensWidth,
-                        height: lensHeight,
-                        child: IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
+                          Positioned.fill(
+                            child: ClipRRect(
                               borderRadius:
-                                  BorderRadius.circular(lensHeight / 2),
-                              color: Colors.white.withValues(
-                                  alpha:
-                                      (dark ? 0.09 : 0.23) * optics.highlight),
-                              boxShadow: [
-                                BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.09),
-                                    blurRadius: raised ? 9 : 4,
-                                    offset: const Offset(0, 2))
-                              ],
+                                  BorderRadius.circular(barHeight / 2),
+                              child: refracting
+                                  ? _RootGlassBackdrop(
+                                      key: const ValueKey(
+                                          'liquid-glass-refraction'),
+                                      shader: shader,
+                                      optics: optics,
+                                      lens: Rect.fromLTWH(
+                                          left,
+                                          (barHeight - lensHeight) / 2,
+                                          lensWidth,
+                                          lensHeight),
+                                      pressed: raised,
+                                      fraction: fraction,
+                                      deformation: _stretch + _stretchY,
+                                      view: View.of(context),
+                                      child: tint,
+                                    )
+                                  : BackdropFilter(
+                                      key: const ValueKey(
+                                          'liquid-glass-blur-fallback'),
+                                      filter: ui.ImageFilter.blur(
+                                          sigmaX: sigma * fraction,
+                                          sigmaY: sigma * fraction),
+                                      child: tint,
+                                    ),
                             ),
-                            child: CustomPaint(
-                              painter: _GlassGlint(
-                                dark,
-                                highlightStrength(
-                                  configured: optics.highlight,
-                                  pressed: raised,
-                                  deformation: _stretch + _stretchY,
+                          ),
+                          Positioned(
+                            key: const ValueKey('liquid-glass-lens'),
+                            left: left,
+                            top: (barHeight - lensHeight) / 2,
+                            width: lensWidth,
+                            height: lensHeight,
+                            child: IgnorePointer(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  borderRadius:
+                                      BorderRadius.circular(lensHeight / 2),
+                                  color: Colors.white.withValues(
+                                      alpha: (dark ? 0.09 : 0.23) *
+                                          optics.highlight),
+                                  boxShadow: [
+                                    BoxShadow(
+                                        color: Colors.black
+                                            .withValues(alpha: 0.09),
+                                        blurRadius: raised ? 9 : 4,
+                                        offset: const Offset(0, 2))
+                                  ],
+                                ),
+                                child: CustomPaint(
+                                  painter: _GlassGlint(
+                                    dark,
+                                    highlightStrength(
+                                      configured: optics.highlight,
+                                      pressed: raised,
+                                      deformation: _stretch + _stretchY,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                      Opacity(
-                          opacity: fraction,
-                          child: Row(children: [
+                          Row(children: [
                             for (var i = 0; i < count; i++)
                               Expanded(
-                                  child:
-                                      _item(context, i, barHeight, barScale)),
-                          ])),
-                    ],
+                                  child: _item(context, i, barHeight, barScale,
+                                      fraction)),
+                          ]),
+                        ],
+                      );
+                    },
                   ),
                 ),
               );
@@ -669,15 +696,17 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
     );
   }
 
-  Widget _item(BuildContext context, int index, double height, double scale) {
+  Widget _item(BuildContext context, int index, double height, double scale,
+      double fraction) {
     final dest = widget.destinations[index];
     final selected = index == widget.selectedIndex;
     final scheme = Theme.of(context).colorScheme;
     final proximity =
         (1 - ((_position * widget.destinations.length) - index - 0.5).abs())
             .clamp(0.0, 1.0);
-    final color =
-        Color.lerp(scheme.onSurface, scheme.onPrimaryContainer, proximity);
+    final baseColor =
+        Color.lerp(scheme.onSurface, scheme.onPrimaryContainer, proximity)!;
+    final color = baseColor.withValues(alpha: baseColor.a * fraction);
     return Semantics(
       button: true,
       selected: selected,
@@ -708,7 +737,10 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
               border: _focusHighlight == index
-                  ? Border.all(color: scheme.primary, width: 2)
+                  ? Border.all(
+                      color: scheme.primary
+                          .withValues(alpha: scheme.primary.a * fraction),
+                      width: 2)
                   : null,
             ),
             child: Center(

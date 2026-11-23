@@ -1000,36 +1000,38 @@ class _BookDetailPageState extends State<BookDetailPage> {
                               _bookHeader(b),
                               if (b.tags.isNotEmpty) ...[
                                 const SizedBox(height: 14),
-                                SizedBox(
-                                  height: 30,
-                                  child: ListView.separated(
-                                    scrollDirection: Axis.horizontal,
-                                    itemCount: b.tags.length,
-                                    separatorBuilder: (_, __) =>
-                                        const SizedBox(width: 8),
-                                    itemBuilder: (_, i) => GestureDetector(
-                                      onTap: () => Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                            builder: (_) => SearchPage(
-                                                initialTag: b.tags[i])),
-                                      ),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 12, vertical: 5),
-                                        alignment: Alignment.center,
-                                        decoration: BoxDecoration(
-                                          color: scheme.surfaceContainerHighest
-                                              .withValues(alpha: 0.6),
-                                          borderRadius:
-                                              BorderRadius.circular(16),
+                                SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: Row(
+                                    children: [
+                                      for (var i = 0; i < b.tags.length; i++) ...[
+                                        if (i > 0) const SizedBox(width: 8),
+                                        GestureDetector(
+                                          onTap: () => Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                                builder: (_) => SearchPage(
+                                                    initialTag: b.tags[i])),
+                                          ),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 12, vertical: 5),
+                                            alignment: Alignment.center,
+                                            decoration: BoxDecoration(
+                                              color: scheme
+                                                  .surfaceContainerHighest
+                                                  .withValues(alpha: 0.6),
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
+                                            ),
+                                            child: Text(b.tags[i],
+                                                style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: scheme.primary)),
+                                          ),
                                         ),
-                                        child: Text(b.tags[i],
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: scheme.primary)),
-                                      ),
-                                    ),
+                                      ],
+                                    ],
                                   ),
                                 ),
                               ],
@@ -1144,7 +1146,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                 _volumes.length + (_volumesHasMore ? 1 : 0),
                             itemBuilder: (context, index) {
                               if (index < _volumes.length) {
-                                return _volumeCard(_volumes[index]);
+                                final v = _volumes[index];
+                                return KeyedSubtree(
+                                  key: ValueKey(v.volumeId),
+                                  child: _volumeCard(v),
+                                );
                               }
                               if (_volumesError != null) {
                                 return Padding(

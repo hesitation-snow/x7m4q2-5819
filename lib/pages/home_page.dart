@@ -271,48 +271,54 @@ class _HomePageState extends State<HomePage> {
                 ),
                 ValueListenableBuilder<double>(
                   valueListenable: _barFrac,
-                  builder: (context, barFrac, _) => SizedBox(
-                    height: _tab == 0 ? _barFlex * barFrac : 0.0,
-                    child: Stack(
-                      clipBehavior: Clip.hardEdge,
-                      children: [
-                        Positioned(
-                          top: _tab == 0 ? -_barFlex * (1.0 - barFrac) : 0.0,
-                          left: 0,
-                          right: 0,
-                          height: _barFlex,
-                          child: ColoredBox(
-                            color: pageColor,
-                            // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告
-                            child: SingleChildScrollView(
-                              physics: const NeverScrollableScrollPhysics(),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 8),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: InkWell(
-                                            borderRadius:
-                                                BorderRadius.circular(20),
-                                            onTap: () => Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                    builder: (_) =>
-                                                        const SearchPage())),
-                                            child: Container(
-                                              height: 40,
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 14),
-                                              alignment: Alignment.centerLeft,
-                                              decoration: BoxDecoration(
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .surfaceContainerHigh,
+                  builder: (context, barFrac, topBarChild) => ExcludeSemantics(
+                    excluding: _tab != 0 || barFrac <= 0.01,
+                    child: SizedBox(
+                      height: _tab == 0 ? _barFlex * barFrac : 0.0,
+                      child: Stack(
+                        clipBehavior: Clip.hardEdge,
+                        children: [
+                          Positioned(
+                            top: _tab == 0 ? -_barFlex * (1.0 - barFrac) : 0.0,
+                            left: 0,
+                            right: 0,
+                            height: _barFlex,
+                            child: topBarChild!,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  child: ColoredBox(
+                    color: pageColor,
+                    // 用不可滚动的 ScrollView 吸收高度变化中间帧的约束,避免溢出警告
+                    child: SingleChildScrollView(
+                      physics: const NeverScrollableScrollPhysics(),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(20),
+                                    onTap: () => Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                            builder: (_) =>
+                                                const SearchPage())),
+                                    child: Container(
+                                      height: 40,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 14),
+                                      alignment: Alignment.centerLeft,
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .surfaceContainerHigh,
                                                 borderRadius:
                                                     BorderRadius.circular(16),
                                                 border: Border.all(
@@ -491,10 +497,6 @@ class _HomePageState extends State<HomePage> {
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ),
                 Expanded(
                   child: NotificationListener<ScrollNotification>(
@@ -541,37 +543,42 @@ class _HomePageState extends State<HomePage> {
                   )
                 : ValueListenableBuilder<double>(
                     valueListenable: _barFrac,
-                    builder: (context, barFrac, _) => ClipRect(
-                      // 底栏随顶栏一起 1:1 伸缩；只重建底栏，不再重建四个页面。
-                      child: SizedBox(
-                        height: (64 + MediaQuery.of(context).padding.bottom) *
-                            barFrac,
-                        child: SingleChildScrollView(
-                          physics: const NeverScrollableScrollPhysics(),
-                          child: NavigationBar(
-                            animationDuration: AppMotion.duration(context, 500),
-                            selectedIndex: _tab,
-                            onDestinationSelected: _selectTab,
-                            destinations: const [
-                              NavigationDestination(
-                                  icon: Icon(Icons.home_outlined),
-                                  selectedIcon: Icon(Icons.home),
-                                  label: '首页'),
-                              NavigationDestination(
-                                  icon: Icon(Icons.bookmark_border_rounded),
-                                  selectedIcon: Icon(Icons.bookmark_rounded),
-                                  label: '书架'),
-                              NavigationDestination(
-                                  icon: Icon(Icons.dynamic_feed_outlined),
-                                  selectedIcon: Icon(Icons.dynamic_feed),
-                                  label: '动态'),
-                              NavigationDestination(
-                                  icon: Icon(Icons.person_outline),
-                                  selectedIcon: Icon(Icons.person),
-                                  label: '我的'),
-                            ],
-                          ),
+                    builder: (context, barFrac, navChild) => ExcludeSemantics(
+                      excluding: barFrac <= 0.01,
+                      child: ClipRect(
+                        // 底栏随顶栏一起 1:1 伸缩；只重建底栏，不再重建四个页面。
+                        child: SizedBox(
+                          height:
+                              (64 + MediaQuery.of(context).padding.bottom) *
+                                  barFrac,
+                          child: navChild,
                         ),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      physics: const NeverScrollableScrollPhysics(),
+                      child: NavigationBar(
+                        animationDuration: AppMotion.duration(context, 500),
+                        selectedIndex: _tab,
+                        onDestinationSelected: _selectTab,
+                        destinations: const [
+                          NavigationDestination(
+                              icon: Icon(Icons.home_outlined),
+                              selectedIcon: Icon(Icons.home),
+                              label: '首页'),
+                          NavigationDestination(
+                              icon: Icon(Icons.bookmark_border_rounded),
+                              selectedIcon: Icon(Icons.bookmark_rounded),
+                              label: '书架'),
+                          NavigationDestination(
+                              icon: Icon(Icons.dynamic_feed_outlined),
+                              selectedIcon: Icon(Icons.dynamic_feed),
+                              label: '动态'),
+                          NavigationDestination(
+                              icon: Icon(Icons.person_outline),
+                              selectedIcon: Icon(Icons.person),
+                              label: '我的'),
+                        ],
                       ),
                     ),
                   ),
@@ -936,25 +943,24 @@ class _FeedTabState extends State<FeedTab>
   }
 
   Widget _rankSelector() {
-    return SizedBox(
-      height: _rankSelectorHeight,
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: _rankSelectorHeight),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
-        child: Row(
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 6,
           children: [
             for (final (label, icon, value) in [
               ('综合热度', Icons.local_fire_department_rounded, 'weekly_hot'),
               ('新书', Icons.auto_stories_rounded, 'daily_fresh'),
-            ]) ...[
+            ])
               M3ChoiceChip(
                 icon: icon,
                 label: label,
                 selected: _rankScene == value,
                 onSelected: (_) => _selectRankScene(value),
               ),
-              const SizedBox(width: 8),
-            ],
-            const Spacer(),
           ],
         ),
       ),
@@ -1054,6 +1060,7 @@ class _FeedTabState extends State<FeedTab>
                 }
                 final book = visibleItems[i];
                 return BookCard(
+                  key: ValueKey(book.bookId),
                   book: book,
                   rank: _rankOf(i),
                   onLongPress: () => showHomeBookActions(context, book),
@@ -1071,18 +1078,7 @@ class _FeedTabState extends State<FeedTab>
       ],
     );
 
-    final gridView = NotificationListener<ScrollNotification>(
-      onNotification: (n) {
-        if (n is ScrollUpdateNotification) {
-          _updateGridAnchor(
-            visibleItems: visibleItems,
-            showRecommend: showRecommend,
-            showRankSelector: showRankSelector,
-          );
-        }
-        return false;
-      },
-      child: CustomScrollView(
+    final gridView = CustomScrollView(
         controller: _gridScrollController,
         scrollCacheExtent: const ScrollCacheExtent.viewport(1.0),
         physics: const AlwaysScrollableScrollPhysics(),
@@ -1104,6 +1100,7 @@ class _FeedTabState extends State<FeedTab>
                   }
                   final book = visibleItems[i];
                   return BookGridCard(
+                    key: ValueKey(book.bookId),
                     book: book,
                     rank: _rankOf(i),
                     onLongPress: () => showHomeBookActions(context, book),
@@ -1119,7 +1116,6 @@ class _FeedTabState extends State<FeedTab>
             ),
           ),
         ],
-      ),
     );
 
     return MotionRefreshIndicator(
@@ -1217,13 +1213,17 @@ class _HomeRecommendCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final itemWidth = _coverWidthFor(MediaQuery.sizeOf(context).width);
     final coverHeight = itemWidth * (4 / 3);
+    final titleHeight =
+        (MediaQuery.textScalerOf(context).scale(12.5) * 1.35 * 2 + 8)
+            .ceilToDouble()
+            .clamp(36.0, 96.0);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            height: 22,
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 22),
             child: Row(
               children: [
                 Container(
@@ -1253,7 +1253,7 @@ class _HomeRecommendCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           SizedBox(
-            height: coverHeight + 36,
+            height: coverHeight + titleHeight,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: EdgeInsets.zero,

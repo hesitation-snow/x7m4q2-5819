@@ -559,19 +559,25 @@ class LKClient {
     req.fields['md5'] = md5Hex;
     req.files.add(await http.MultipartFile.fromPath('file', filePath));
     final resp = await _http.send(req).timeout(const Duration(seconds: 40));
-    final bytes = await resp.stream.toBytes();
+    final bytes =
+        await resp.stream.toBytes().timeout(const Duration(seconds: 40));
     if (resp.statusCode >= 400) {
       if (resp.statusCode == 401) await expireSessionIfCurrent(key);
       throw LKException(resp.statusCode, '网络异常(HTTP ${resp.statusCode})');
     }
-    final obj = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    final code = (obj['code'] as num?)?.toInt() ?? -1;
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! Map<String, dynamic>) throw LKException(-1, '响应格式错误');
+    final code = (decoded['code'] as num?)?.toInt() ?? -1;
     if (code != 0) {
       if (code == 8) await expireSessionIfCurrent(key);
-      final message = _extractMessage(obj['data']);
+      final dataMsg = _extractMessage(decoded['data']);
+      final topMsg = _extractMessage(decoded['message'] ?? decoded['msg']);
+      final message = dataMsg.isNotEmpty ? dataMsg : topMsg;
       throw LKException(code, message.isEmpty ? _codeHint(code) : message);
     }
-    final d = (obj['data'] as Map<String, dynamic>?) ?? {};
+    final d = decoded['data'] is Map<String, dynamic>
+        ? decoded['data'] as Map<String, dynamic>
+        : const <String, dynamic>{};
     return (d['url'] as String?) ?? (d['avatar'] as String?) ?? '';
   }
 
@@ -591,7 +597,8 @@ class LKClient {
     req.fields.addAll(fields);
     req.files.add(await http.MultipartFile.fromPath('file', filePath));
     final resp = await _http.send(req).timeout(const Duration(seconds: 40));
-    final bytes = await resp.stream.toBytes();
+    final bytes =
+        await resp.stream.toBytes().timeout(const Duration(seconds: 40));
     if (resp.statusCode >= 400) {
       if (resp.statusCode == 401) await expireSessionIfCurrent(key);
       throw LKException(resp.statusCode, '网络异常(HTTP ${resp.statusCode})');
@@ -600,7 +607,9 @@ class LKClient {
     if (obj is! Map<String, dynamic>) throw LKException(-1, '响应格式错误');
     final code = (obj['code'] as num?)?.toInt() ?? -1;
     if (code != 0) {
-      final message = _extractMessage(obj['data']);
+      final dataMsg = _extractMessage(obj['data']);
+      final topMsg = _extractMessage(obj['message'] ?? obj['msg']);
+      final message = dataMsg.isNotEmpty ? dataMsg : topMsg;
       if (code == 8) await expireSessionIfCurrent(key);
       throw LKException(code, message.isEmpty ? _codeHint(code) : message);
     }

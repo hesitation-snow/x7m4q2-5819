@@ -122,11 +122,10 @@ class EpubDownloadService {
     required Future<Directory> Function(int) taskDirectory,
     required Future<LKChapterDetail> Function(int, int) chapterDetail,
     Future<void> Function(EpubDownloadTask)? beforeCheckpoint,
-    Duration chapterTimeout = const Duration(seconds: 40),
+    this._chapterTimeout = const Duration(seconds: 40),
   })  : _testTaskDirectory = taskDirectory,
         _testChapterDetail = chapterDetail,
-        _testBeforeCheckpoint = beforeCheckpoint,
-        _chapterTimeout = chapterTimeout;
+        _testBeforeCheckpoint = beforeCheckpoint;
 
   final Future<Directory> Function(int)? _testTaskDirectory;
   final Future<LKChapterDetail> Function(int, int)? _testChapterDetail;
@@ -161,6 +160,7 @@ class EpubDownloadService {
     currentTask.value = task;
     _isPausedFlag = false;
     _isCanceledFlag = false;
+    _resetImageTaskState();
     _launch(() => _runDownloadPhase(task));
   }
 
@@ -176,6 +176,56 @@ class EpubDownloadService {
   int _boundUid = 0;
   bool _isPausedFlag = false;
   bool _isCanceledFlag = false;
+  http.Client? _downloadHttpClient;
+  final Map<String, String> _imageMap = {};
+  String? _imageMapPath;
+  Future<void> _imageMapWriteTail = Future<void>.value();
+  final Map<String, Future<bool>> _inFlightImageDownloads = {};
+
+  http.Client _acquireDownloadClient() => _downloadHttpClient ??= http.Client();
+
+  void _closeDownloadClient() {
+    final client = _downloadHttpClient;
+    _downloadHttpClient = null;
+    client?.close();
+  }
+
+  void _resetImageTaskState() {
+    _imageMap.clear();
+    _imageMapPath = null;
+    _inFlightImageDownloads.clear();
+  }
+
+  Future<void> _ensureImageMapLoaded(File mapFile) async {
+    if (_imageMapPath == mapFile.path) return;
+    _imageMap.clear();
+    _imageMapPath = mapFile.path;
+    if (await mapFile.exists()) {
+      try {
+        final decoded = jsonDecode(await mapFile.readAsString());
+        if (decoded is Map) {
+          for (final entry in decoded.entries) {
+            if (entry.key is String && entry.value is String) {
+              _imageMap[entry.key as String] = entry.value as String;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _persistImageMap(File mapFile, int generation) {
+    final snapshot = Map<String, String>.from(_imageMap);
+    final next = _imageMapWriteTail.then((_) async {
+      if (_taskGeneration != generation || _isCanceledFlag) return;
+      try {
+        if (!await mapFile.parent.exists()) return;
+        await mapFile.writeAsString(jsonEncode(snapshot));
+      } catch (_) {}
+    });
+    _imageMapWriteTail = next;
+    return next;
+  }
 
   void _onSessionRevChanged() {
     final task = currentTask.value;
@@ -195,10 +245,22 @@ class EpubDownloadService {
     _taskGeneration++;
     _isPausedFlag = false;
     _isCanceledFlag = true;
+    _closeDownloadClient();
+    _resetImageTaskState();
     currentTask.value = task.copyWith(
       phase: EpubTaskPhase.failed,
       statusMessage: reason,
     );
+    unawaited(_cleanupTaskDirectoryAfterStop(task));
+  }
+
+  Future<void> _cleanupTaskDirectoryAfterStop(EpubDownloadTask task) async {
+    try {
+      await _activeRun;
+      await _imageMapWriteTail;
+      await _checkpointTail;
+      await _deleteTaskDirectory(task.bookId, ownerUid: task.ownerUid);
+    } catch (_) {}
   }
 
   /// 检查当前是否有正在进行的任务
@@ -224,6 +286,8 @@ class EpubDownloadService {
     _taskGeneration++;
     _isPausedFlag = false;
     _isCanceledFlag = false;
+    _closeDownloadClient();
+    _resetImageTaskState();
     _boundUid = LKClient.shared.session.uid;
 
     final task = EpubDownloadTask(
@@ -326,7 +390,8 @@ class EpubDownloadService {
   }
 
   Future<void> _resumeDownload(EpubDownloadTask task) async {
-    final taskDir = await _getTaskDirectory(task.bookId);
+    final taskDir =
+        await _getTaskDirectory(task.bookId, ownerUid: task.ownerUid);
     if (_isCanceledFlag || _isPausedFlag) return;
     await _downloadCover(task, taskDir);
     if (_isCanceledFlag || _isPausedFlag) return;
@@ -343,6 +408,8 @@ class EpubDownloadService {
     _isCanceledFlag = true;
     _isPausedFlag = false;
     _speedTracker.reset();
+    _closeDownloadClient();
+    _resetImageTaskState();
 
     currentTask.value = task.copyWith(
       phase: EpubTaskPhase.canceled,
@@ -356,8 +423,9 @@ class EpubDownloadService {
       await _pauseCheckpoint;
       await _metadataPreparation;
       await _activeRun;
+      await _imageMapWriteTail;
       await _checkpointTail;
-      await _deleteTaskDirectory(task.bookId);
+      await _deleteTaskDirectory(task.bookId, ownerUid: task.ownerUid);
     } finally {
       _canceling = false;
     }
@@ -451,7 +519,8 @@ class EpubDownloadService {
     final task = currentTask.value;
     if (task == null || task.phase != EpubTaskPhase.editingMetadata) return;
 
-    final taskDir = await _getTaskDirectory(task.bookId);
+    final taskDir =
+        await _getTaskDirectory(task.bookId, ownerUid: task.ownerUid);
     if (_isCanceledFlag ||
         _isPausedFlag ||
         !identical(currentTask.value, task)) {
@@ -518,8 +587,16 @@ class EpubDownloadService {
   /// 完整调度管线：阶段 1 -> 阶段 2 -> 阶段 3 -> 阶段 4
   Future<void> _runPipeline(EpubDownloadTask initialTask) async {
     try {
-      // 1. 获取任务目录并准备结构
-      final taskDir = await _getTaskDirectory(initialTask.bookId);
+      // 1. 获取任务目录并准备结构（新任务先清理上次同书残留，防止串用旧章节/插画）
+      final taskDir = await _getTaskDirectory(initialTask.bookId,
+          ownerUid: initialTask.ownerUid);
+      if (initialTask.completedChapterIds.isEmpty &&
+          initialTask.chapters.isEmpty &&
+          await taskDir.exists()) {
+        try {
+          await taskDir.delete(recursive: true);
+        } catch (_) {}
+      }
       await taskDir.create(recursive: true);
       await Directory('${taskDir.path}/chapters').create(recursive: true);
       await Directory('${taskDir.path}/images').create(recursive: true);
@@ -610,7 +687,7 @@ class EpubDownloadService {
     File destFile, {
     void Function(int chunkBytes)? onBytes,
   }) async {
-    final client = http.Client();
+    final client = _acquireDownloadClient();
     IOSink? sink;
     try {
       final request = http.Request('GET', Uri.parse(url));
@@ -623,7 +700,7 @@ class EpubDownloadService {
 
       final activeSink = destFile.openWrite();
       sink = activeSink;
-      final bytes = <int>[];
+      var wroteBytes = 0;
       await for (final chunk
           in response.stream.timeout(const Duration(seconds: 25))) {
         if (_isCanceledFlag || _isPausedFlag) {
@@ -633,19 +710,28 @@ class EpubDownloadService {
           return false;
         }
         activeSink.add(chunk);
-        bytes.addAll(chunk);
+        wroteBytes += chunk.length;
         onBytes?.call(chunk.length);
       }
       await activeSink.flush();
       await activeSink.close();
       sink = null;
 
-      if (bytes.isNotEmpty) {
+      if (wroteBytes > 0) {
         try {
-          await YomiruIllustrationCache.manager
-              .putFile(url, Uint8List.fromList(bytes));
+          final fileBytes = await destFile.readAsBytes();
+          await YomiruIllustrationCache.manager.putFile(
+            url,
+            fileBytes,
+            key: YomiruIllustrationCache.keyFor(url),
+          );
         } catch (_) {}
         return true;
+      }
+      if (await destFile.exists()) {
+        try {
+          await destFile.delete();
+        } catch (_) {}
       }
       return false;
     } catch (_) {
@@ -659,8 +745,6 @@ class EpubDownloadService {
         } catch (_) {}
       }
       return false;
-    } finally {
-      client.close();
     }
   }
 
@@ -687,12 +771,13 @@ class EpubDownloadService {
 
   /// 阶段 2: 逐章流式下载正文与插画
   Future<void> _runDownloadPhase(EpubDownloadTask task) async {
-    final taskDir = await _getTaskDirectory(task.bookId);
+    final taskDir =
+        await _getTaskDirectory(task.bookId, ownerUid: task.ownerUid);
     final completed = Set<int>.from(task.completedChapterIds);
     final failed = Map<int, String>.from(task.failedChapters);
     final imagesDir = Directory('${taskDir.path}/images');
-    _downloadedIllustrationsCount = imagesDir.existsSync()
-        ? imagesDir.listSync().whereType<File>().length
+    _downloadedIllustrationsCount = await imagesDir.exists()
+        ? (await imagesDir.list().where((e) => e is File).toList()).length
         : 0;
 
     Future<void> downloadSingleChapter(EpubChapterItem ch) async {
@@ -776,8 +861,8 @@ class EpubDownloadService {
         failed.remove(ch.chapterId);
 
         currentTask.value = currentTask.value?.copyWith(
-          completedChapterIds: completed,
-          failedChapters: failed,
+          completedChapterIds: Set<int>.of(completed),
+          failedChapters: Map<int, String>.of(failed),
           illustrationDownloadedCount: _downloadedIllustrationsCount,
           speedText: _speedTracker.speedText,
         );
@@ -787,7 +872,7 @@ class EpubDownloadService {
         failed[ch.chapterId] = errorMsg;
 
         currentTask.value = currentTask.value?.copyWith(
-          failedChapters: failed,
+          failedChapters: Map<int, String>.of(failed),
           illustrationDownloadedCount: _downloadedIllustrationsCount,
           speedText: _speedTracker.speedText,
         );
@@ -829,10 +914,15 @@ class EpubDownloadService {
     final workerCount = pendingChapters.isEmpty
         ? 0
         : maxConcurrentChapters.clamp(1, pendingChapters.length);
-    if (workerCount > 0) {
-      await Future.wait([
-        for (int i = 0; i < workerCount; i++) chapterWorker(),
-      ]);
+    try {
+      if (workerCount > 0) {
+        await Future.wait([
+          for (int i = 0; i < workerCount; i++) chapterWorker(),
+        ]);
+      }
+      await _imageMapWriteTail;
+    } finally {
+      _closeDownloadClient();
     }
 
     if (_isCanceledFlag || _isPausedFlag) return;
@@ -905,20 +995,53 @@ class EpubDownloadService {
     if (!await imagesDir.exists()) {
       await imagesDir.create(recursive: true);
     }
+    final generation = _taskGeneration;
     final mapFile = File('${taskDir.path}/image_map.json');
-    final map = <String, String>{};
-    if (await mapFile.exists()) {
-      try {
-        map.addAll(
-            Map<String, String>.from(jsonDecode(await mapFile.readAsString())));
-      } catch (_) {}
-    }
+    await _ensureImageMapLoaded(mapFile);
 
     final urlList = urls.toList();
     final totalInChapter = urlList.length;
     DateTime lastThrottledUpdate = DateTime.now();
     int nextImageIdx = 0;
     int processedCount = 0;
+
+    Future<bool> fetchIllustrationFile(String cleanUrl, File destFile) async {
+      if (await destFile.exists()) return false;
+      try {
+        // 1. 优先尝试从本地已有插画缓存管理器复制文件（离线秒开）
+        final cached =
+            await YomiruIllustrationCache.manager.cachedFile(cleanUrl);
+        if (cached != null && await File(cached.file.path).exists()) {
+          await File(cached.file.path).copy(destFile.path);
+          return true;
+        }
+      } catch (_) {}
+
+      if (await destFile.exists()) return false;
+      // 2. 带流式测速与 25s 超时的下载
+      return _downloadImageToDisk(
+        cleanUrl,
+        destFile,
+        onBytes: (chunkBytes) {
+          _speedTracker.addBytes(chunkBytes);
+          final now = DateTime.now();
+          if (now.difference(lastThrottledUpdate).inMilliseconds >= 300) {
+            lastThrottledUpdate = now;
+            final liveSpeed = _speedTracker.speedText;
+            currentTask.value = currentTask.value?.copyWith(
+              currentIllustrationIndex:
+                  (processedCount + 1).clamp(1, totalInChapter),
+              currentIllustrationTotal: totalInChapter,
+              illustrationDownloadedCount: _downloadedIllustrationsCount,
+              speedText: liveSpeed,
+              statusMessage: liveSpeed.isNotEmpty
+                  ? '正在下载插画 (${processedCount + 1}/$totalInChapter): ${detail.title} · $liveSpeed'
+                  : '正在下载插画 (${processedCount + 1}/$totalInChapter): ${detail.title}',
+            );
+          }
+        },
+      );
+    }
 
     Future<void> illustrationWorker() async {
       while (nextImageIdx < totalInChapter) {
@@ -943,43 +1066,18 @@ class EpubDownloadService {
         );
 
         bool isNewDownload = false;
-        if (!await destFile.exists()) {
+        final dedupKey = '${taskDir.path}/$fileName';
+        final existingFlight = _inFlightImageDownloads[dedupKey];
+        if (existingFlight != null) {
+          await existingFlight;
+        } else if (!await destFile.exists()) {
+          final flight = fetchIllustrationFile(cleanUrl, destFile);
+          _inFlightImageDownloads[dedupKey] = flight;
           try {
-            // 1. 优先尝试从本地已有插画缓存管理器复制文件（离线秒开）
-            final cached =
-                await YomiruIllustrationCache.manager.cachedFile(cleanUrl);
-            if (cached != null && await File(cached.file.path).exists()) {
-              await File(cached.file.path).copy(destFile.path);
-              isNewDownload = true;
-            }
-          } catch (_) {}
-
-          if (!await destFile.exists()) {
-            // 2. 带流式测速与 25s 超时的下载
-            final downloaded = await _downloadImageToDisk(
-              cleanUrl,
-              destFile,
-              onBytes: (chunkBytes) {
-                _speedTracker.addBytes(chunkBytes);
-                final now = DateTime.now();
-                if (now.difference(lastThrottledUpdate).inMilliseconds >= 300) {
-                  lastThrottledUpdate = now;
-                  final liveSpeed = _speedTracker.speedText;
-                  currentTask.value = currentTask.value?.copyWith(
-                    currentIllustrationIndex:
-                        (processedCount + 1).clamp(1, totalInChapter),
-                    currentIllustrationTotal: totalInChapter,
-                    illustrationDownloadedCount: _downloadedIllustrationsCount,
-                    speedText: liveSpeed,
-                    statusMessage: liveSpeed.isNotEmpty
-                        ? '正在下载插画 (${processedCount + 1}/$totalInChapter): ${detail.title} · $liveSpeed'
-                        : '正在下载插画 (${processedCount + 1}/$totalInChapter): ${detail.title}',
-                  );
-                }
-              },
-            );
-            if (downloaded) {
-              isNewDownload = true;
+            isNewDownload = await flight;
+          } finally {
+            if (identical(_inFlightImageDownloads[dedupKey], flight)) {
+              _inFlightImageDownloads.remove(dedupKey);
             }
           }
         }
@@ -990,10 +1088,10 @@ class EpubDownloadService {
           if (isNewDownload) {
             _downloadedIllustrationsCount++;
           }
-          map[rawUrl] = fileName;
-          map[cleanUrl] = fileName;
-          map[illustrationCacheKey(cleanUrl)] = fileName;
-          map[fileName] = fileName;
+          _imageMap[rawUrl] = fileName;
+          _imageMap[cleanUrl] = fileName;
+          _imageMap[illustrationCacheKey(cleanUrl)] = fileName;
+          _imageMap[fileName] = fileName;
           processedCount++;
 
           currentTask.value = currentTask.value?.copyWith(
@@ -1013,7 +1111,7 @@ class EpubDownloadService {
     ]);
 
     if (_isCanceledFlag || _isPausedFlag) return;
-    await mapFile.writeAsString(jsonEncode(map));
+    await _persistImageMap(mapFile, generation);
     if (_isCanceledFlag || _isPausedFlag) return;
 
     // 本章插画处理完毕，重置当前章节插画状态
@@ -1038,7 +1136,8 @@ class EpubDownloadService {
         currentTask.value?.bookId == task.bookId;
     if (!stillCurrent()) return;
     _speedTracker.reset();
-    final taskDir = await _getTaskDirectory(task.bookId);
+    final taskDir =
+        await _getTaskDirectory(task.bookId, ownerUid: task.ownerUid);
     if (!stillCurrent()) return;
 
     // 收集所有已落盘的插画文件路径
@@ -1047,7 +1146,10 @@ class EpubDownloadService {
     final imagesExist = await imagesDir.exists();
     if (!stillCurrent()) return;
     if (imagesExist) {
-      final entries = imagesDir.listSync().whereType<File>().toList();
+      final entries =
+          (await imagesDir.list().where((e) => e is File).toList())
+              .cast<File>();
+      if (!stillCurrent()) return;
       entries.sort((a, b) => a.path.compareTo(b.path));
       for (final f in entries) {
         illustrationPaths.add(f.path);
@@ -1089,7 +1191,8 @@ class EpubDownloadService {
   Future<void> _runPackagingPhase(EpubDownloadTask task) async {
     try {
       _speedTracker.reset();
-      final taskDir = await _getTaskDirectory(task.bookId);
+      final taskDir =
+          await _getTaskDirectory(task.bookId, ownerUid: task.ownerUid);
       if (_isCanceledFlag || _isPausedFlag) return;
       final exportsDir = await _getExportsDirectory();
       if (_isCanceledFlag || _isPausedFlag) return;
@@ -1126,7 +1229,9 @@ class EpubDownloadService {
           outputSizeBytes: sizeBytes,
         );
 
-        await _saveTaskCheckpoint(currentTask.value!);
+        await _checkpointTail;
+        _resetImageTaskState();
+        await _deleteTaskDirectory(task.bookId, ownerUid: task.ownerUid);
         return;
       }
 
@@ -1166,7 +1271,9 @@ class EpubDownloadService {
         outputSizeBytes: sizeBytes,
       );
 
-      await _saveTaskCheckpoint(currentTask.value!);
+      await _checkpointTail;
+      _resetImageTaskState();
+      await _deleteTaskDirectory(task.bookId, ownerUid: task.ownerUid);
     } catch (e) {
       if (_isCanceledFlag || _isPausedFlag) return;
       currentTask.value = currentTask.value?.copyWith(
@@ -1264,10 +1371,11 @@ class EpubDownloadService {
     return e.toString();
   }
 
-  Future<Directory> _getTaskDirectory(int bookId) async {
-    if (_testTaskDirectory != null) return _testTaskDirectory!(bookId);
+  Future<Directory> _getTaskDirectory(int bookId, {int? ownerUid}) async {
+    if (_testTaskDirectory != null) return _testTaskDirectory(bookId);
     final temp = await getTemporaryDirectory();
-    return Directory('${temp.path}/epub_maker/tasks/$bookId');
+    final uid = ownerUid ?? currentTask.value?.ownerUid ?? _boundUid;
+    return Directory('${temp.path}/epub_maker/tasks/${uid}_$bookId');
   }
 
   Future<Directory> _getExportsDirectory() async {
@@ -1275,9 +1383,9 @@ class EpubDownloadService {
     return Directory('${temp.path}/epub_maker/exports');
   }
 
-  Future<void> _deleteTaskDirectory(int bookId) async {
+  Future<void> _deleteTaskDirectory(int bookId, {int? ownerUid}) async {
     try {
-      final taskDir = await _getTaskDirectory(bookId);
+      final taskDir = await _getTaskDirectory(bookId, ownerUid: ownerUid);
       if (await taskDir.exists()) {
         await taskDir.delete(recursive: true);
       }
@@ -1290,7 +1398,8 @@ class EpubDownloadService {
     final next = _checkpointTail.then((_) async {
       try {
         await _testBeforeCheckpoint?.call(task);
-        final taskDir = await _getTaskDirectory(task.bookId);
+        final taskDir =
+            await _getTaskDirectory(task.bookId, ownerUid: task.ownerUid);
         if (!await taskDir.exists()) return;
         final file = File('${taskDir.path}/meta.json');
         await file.writeAsString(jsonEncode(task.toJson()));

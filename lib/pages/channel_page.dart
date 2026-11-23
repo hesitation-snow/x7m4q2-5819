@@ -162,6 +162,7 @@ class _ChannelPageState extends State<ChannelPage> {
                               }
                               final book = visibleItems[i];
                               return BookCard(
+                                key: ValueKey(book.bookId),
                                 book: book,
                                 onTap: () => Navigator.push(
                                   context,
@@ -188,6 +189,7 @@ class _ChannelPageState extends State<ChannelPage> {
                               }
                               final book = visibleItems[i];
                               return BookGridCard(
+                                key: ValueKey(book.bookId),
                                 book: book,
                                 onTap: () => Navigator.push(
                                   context,

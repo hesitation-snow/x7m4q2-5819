@@ -38,21 +38,31 @@ class YomiruIllustrationCache {
   static int get generation => manager.generation;
   static String keyFor(String url) => illustrationCacheKey(url);
 
+  static const int _maxAspectCacheEntries = 512;
   static final Map<String, double> _aspectRatios = {};
 
   /// 获取指定插画的已知宽高比 (width / height)
   static double? getAspect(String url) {
     final clean = url.trim();
     if (clean.isEmpty) return null;
-    return _aspectRatios[clean] ?? _aspectRatios[keyFor(clean)];
+    final key = keyFor(clean);
+    final value = _aspectRatios.remove(key);
+    if (value != null) {
+      _aspectRatios[key] = value;
+    }
+    return value;
   }
 
   /// 缓存指定插画的已知宽高比
   static void setAspect(String url, double aspect) {
     final clean = url.trim();
     if (clean.isEmpty || aspect <= 0 || !aspect.isFinite) return;
-    _aspectRatios[clean] = aspect;
-    _aspectRatios[keyFor(clean)] = aspect;
+    final key = keyFor(clean);
+    _aspectRatios.remove(key);
+    _aspectRatios[key] = aspect;
+    while (_aspectRatios.length > _maxAspectCacheEntries) {
+      _aspectRatios.remove(_aspectRatios.keys.first);
+    }
   }
 
   /// 从图片二进制数据头极速解析原始宽高比 (width / height)
@@ -212,6 +222,7 @@ class YomiruIllustrationCache {
 
   /// 清空内存状态与磁盘缓存
   static Future<void> clear() async {
+    _aspectRatios.clear();
     await manager.emptyCache();
   }
 

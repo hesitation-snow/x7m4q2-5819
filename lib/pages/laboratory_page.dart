@@ -150,9 +150,15 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
     final supported = ui.ImageFilter.isShaderFilterSupported;
     return Scaffold(
       appBar: AppBar(title: const Text('悬浮底栏')),
-      bottomNavigationBar: SizedBox(
-          height: (MediaQuery.sizeOf(context).height * .25).clamp(110.0, 220.0),
-          child: Stack(children: [
+      bottomNavigationBar: ValueListenableBuilder<GlassConfiguration>(
+        valueListenable: LKStore.glassConfiguration,
+        builder: (context, config, previewChild) {
+          final minPreviewHeight = config.barHeight + config.floatingHeight + 36;
+          final targetHeight = (MediaQuery.sizeOf(context).height * .25)
+              .clamp(minPreviewHeight, 240.0);
+          return SizedBox(height: targetHeight, child: previewChild);
+        },
+        child: Stack(children: [
             Positioned.fill(
                 child: ListView.builder(
                     primary: false,

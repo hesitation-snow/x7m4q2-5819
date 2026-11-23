@@ -193,7 +193,6 @@ class _ShelfPageState extends State<ShelfPage> {
       return false;
     }
     if (notification is ScrollUpdateNotification) {
-      if (!_listMode) _updateGridAnchor();
       if (notification.dragDetails != null) {
         final delta = notification.scrollDelta ?? 0;
         if (delta.abs() < 0.5) return false;
@@ -448,8 +447,26 @@ class _ShelfPageState extends State<ShelfPage> {
     }
   }
 
+  List<LKBook>? _cachedVisibleItems;
+  List<LKBook>? _cachedItemsSource;
+  int _cachedItemsLength = -1;
+  _ShelfFilter? _cachedFilter;
+  _ShelfSort? _cachedSort;
+  bool? _cachedHideBrave;
+  int _cachedBraveRev = -1;
+
   List<LKBook> get _visibleItems {
     final hideBrave = LKStore.hideBraveBooks.value;
+    final braveRev = LKStore.braveBookRevision.value;
+    if (_cachedVisibleItems != null &&
+        identical(_cachedItemsSource, _items) &&
+        _cachedItemsLength == _items.length &&
+        _cachedFilter == _filter &&
+        _cachedSort == _sort &&
+        _cachedHideBrave == hideBrave &&
+        _cachedBraveRev == braveRev) {
+      return _cachedVisibleItems!;
+    }
     final filtered = _items.where((book) {
       if (hideBrave && book.isBrave) return false;
       return switch (_filter) {
@@ -473,6 +490,13 @@ class _ShelfPageState extends State<ShelfPage> {
             (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
         break;
     }
+    _cachedItemsSource = _items;
+    _cachedItemsLength = _items.length;
+    _cachedFilter = _filter;
+    _cachedSort = _sort;
+    _cachedHideBrave = hideBrave;
+    _cachedBraveRev = braveRev;
+    _cachedVisibleItems = filtered;
     return filtered;
   }
 
@@ -993,6 +1017,7 @@ class _ShelfPageState extends State<ShelfPage> {
                             return _withShelfActions(
                                 b,
                                 BookGridCard(
+                                  key: ValueKey(b.bookId),
                                   book: b,
                                   isShelf: true,
                                   onTap: () => Navigator.push(
@@ -1011,17 +1036,7 @@ class _ShelfPageState extends State<ShelfPage> {
         appBar: AppBar(title: const Text('书架')),
         body: Column(children: [
           toolbar,
-          Expanded(
-            child: NotificationListener<ScrollNotification>(
-              onNotification: (n) {
-                if (n is ScrollUpdateNotification && !_listMode) {
-                  _updateGridAnchor();
-                }
-                return false;
-              },
-              child: body,
-            ),
-          ),
+          Expanded(child: body),
         ]),
       );
     }
