@@ -28,11 +28,13 @@ class CatalogRoundResult {
   final CatalogVerificationStatus status;
   final int requests;
   final bool madeProgress;
+  final String? fingerprint;
 
   const CatalogRoundResult({
     required this.status,
     required this.requests,
     required this.madeProgress,
+    this.fingerprint,
   });
 }
 
@@ -47,6 +49,8 @@ class BookCatalogVerifier {
       loadChapters;
   final DateTime Function() now;
   final int maxEntries;
+  final bool latestVolumeFirst;
+  final bool Function(int id, String fingerprint)? isVerifiedNoBrave;
   final _states = <int, _Checkpoint>{};
 
   BookCatalogVerifier({
@@ -55,6 +59,8 @@ class BookCatalogVerifier {
     required this.loadChapters,
     DateTime Function()? now,
     this.maxEntries = 128,
+    this.latestVolumeFirst = true,
+    this.isVerifiedNoBrave,
   }) : now = now ?? DateTime.now {
     if (maxEntries < 1) throw ArgumentError.value(maxEntries, 'maxEntries');
   }
@@ -85,9 +91,13 @@ class BookCatalogVerifier {
   }) async {
     var requests = 0;
     var progress = false;
+    String? currentFingerprint;
     CatalogRoundResult result(CatalogVerificationStatus status) =>
         CatalogRoundResult(
-            status: status, requests: requests, madeProgress: progress);
+            status: status,
+            requests: requests,
+            madeProgress: progress,
+            fingerprint: currentFingerprint);
     if (!isCurrent()) return result(CatalogVerificationStatus.cancelled);
     if (id <= 0 || maxRequests < 1 || budget <= Duration.zero) {
       return result(CatalogVerificationStatus.unknown);
@@ -135,11 +145,16 @@ class BookCatalogVerifier {
       }
       final fingerprint =
           '${book.updatedAt}|${book.volumeCount}|${book.chapterCount}';
+      currentFingerprint = fingerprint;
       if (cursor.fingerprint != fingerprint) cursor.reset(fingerprint);
       if (book.isBrave) return finish(CatalogVerificationStatus.containsBrave);
       if (cursor.status == CatalogVerificationStatus.containsBrave ||
           cursor.status == CatalogVerificationStatus.noBrave) {
         return result(cursor.status);
+      }
+      if (book.updatedAt.isNotEmpty &&
+          (isVerifiedNoBrave?.call(id, fingerprint) ?? false)) {
+        return finish(CatalogVerificationStatus.noBrave);
       }
       while (true) {
         if (!isCurrent()) return finish(CatalogVerificationStatus.cancelled);
@@ -160,8 +175,17 @@ class BookCatalogVerifier {
               ? CatalogVerificationStatus.partial
               : CatalogVerificationStatus.unknown);
         }
-        if (cursor.volumeIndex < cursor.volumes.length) {
-          final volume = cursor.volumes[cursor.volumeIndex];
+        // When latestVolumeFirst is enabled, fetch all volume pages first (usually
+        // 1 request for <=50 volumes), then inspect volumes from newest to oldest
+        // so books whose later volumes add brave access are caught immediately.
+        final shouldLoadVolumesFirst =
+            latestVolumeFirst && !cursor.volumesDone;
+        if (!shouldLoadVolumesFirst &&
+            cursor.volumeIndex < cursor.volumes.length) {
+          final actualIndex = latestVolumeFirst
+              ? cursor.volumes.length - 1 - cursor.volumeIndex
+              : cursor.volumeIndex;
+          final volume = cursor.volumes[actualIndex];
           final page = await request((left) =>
               loadChapters(id, volume.volumeId, cursor.chapterPage, 50, left));
           final ids = page.items.map((item) => item.chapterId).toSet();
@@ -188,17 +212,20 @@ class BookCatalogVerifier {
               (total != null &&
                   (total < count ||
                       (page.hasMore && count >= total) ||
-                      (!page.hasMore && count != total))) ||
-              (volume.chapterCount > 0 &&
+                      (!page.hasMore && count != total)))) {
+            return finish(CatalogVerificationStatus.unknown);
+          }
+          // Metadata chapter counts frequently drift when chapters are hidden or
+          // deleted. Mark hasUnknown (never assert noBrave), but keep scanning
+          // remaining volumes so later brave volumes are still discovered.
+          final countDrift = (volume.chapterCount > 0 &&
                   (count > volume.chapterCount ||
                       (!page.hasMore && count != volume.chapterCount))) ||
               (book.chapterCount > 0 &&
-                  cursor.chapterIds.length + ids.length > book.chapterCount)) {
-            return finish(CatalogVerificationStatus.unknown);
-          }
+                  cursor.chapterIds.length + ids.length > book.chapterCount);
           cursor.chapterIds.addAll(ids);
-          cursor.hasUnknown |= (page.items.isEmpty &&
-                  cursor.volumeChapters == 0) ||
+          cursor.hasUnknown |= countDrift ||
+              (page.items.isEmpty && cursor.volumeChapters == 0) ||
               page.items
                   .any((item) => item.accessStatus != BookAccessStatus.public);
           cursor.volumeChapters = count;
@@ -230,11 +257,13 @@ class BookCatalogVerifier {
               (total != null &&
                   (total < count ||
                       (batch.hasMore && count >= total) ||
-                      (!batch.hasMore && count != total))) ||
-              (book.volumeCount > 0 &&
-                  (count > book.volumeCount ||
-                      (!batch.hasMore && count != book.volumeCount)))) {
+                      (!batch.hasMore && count != total)))) {
             return finish(CatalogVerificationStatus.unknown);
+          }
+          if (book.volumeCount > 0 &&
+              (count > book.volumeCount ||
+                  (!batch.hasMore && count != book.volumeCount))) {
+            cursor.hasUnknown = true;
           }
           cursor.volumes.addAll(batch.items);
           cursor.volumeIds.addAll(ids);

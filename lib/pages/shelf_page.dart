@@ -1,6 +1,7 @@
 import '../widgets/m3_menu_sheet.dart';
 import '../services/app_motion.dart';
 import '../services/background_work_queue.dart';
+import '../services/book_access_probe.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -40,6 +41,7 @@ class _ShelfPageState extends State<ShelfPage> {
   bool _localMode = false;
   bool _reloadAfterCurrent = false;
   int _statusVerificationGeneration = 0;
+  int _braveProbeGeneration = 0;
   static final _statusQueue = BackgroundWorkQueue(concurrency: 3);
   final _verifiedStatuses = <int, LKBook>{};
   _ShelfSort _sort = _ShelfSort.serverOrder;
@@ -71,6 +73,7 @@ class _ShelfPageState extends State<ShelfPage> {
 
   @override
   void dispose() {
+    _braveProbeGeneration++;
     LKClient.sessionRev.removeListener(_onSessionRev);
     LKStore.localShelfRev.removeListener(_onLocalShelfRev);
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
@@ -153,6 +156,7 @@ class _ShelfPageState extends State<ShelfPage> {
     if (!mounted) return;
     _loadSerial++;
     _statusVerificationGeneration++;
+    _braveProbeGeneration++;
     _verifiedStatuses.clear();
     setState(() {
       _localMode = !LKClient.shared.session.isLoggedIn;
@@ -243,6 +247,7 @@ class _ShelfPageState extends State<ShelfPage> {
       });
       if (items.isNotEmpty) {
         unawaited(_verifyServerBookStatuses(items));
+        unawaited(_probeShelfBraveBooks(items));
       }
       return;
     }
@@ -305,6 +310,7 @@ class _ShelfPageState extends State<ShelfPage> {
         if (items.isNotEmpty) {
           unawaited(
               _verifyServerBookStatuses(items, forceRefresh: forceRefresh));
+          unawaited(_probeShelfBraveBooks(items));
         }
         return;
       }
@@ -341,6 +347,7 @@ class _ShelfPageState extends State<ShelfPage> {
       unawaited(LKStore.cacheBooksPage(cacheKey, _items));
       unawaited(
           _verifyServerBookStatuses(result.items, forceRefresh: forceRefresh));
+      unawaited(_probeShelfBraveBooks(result.items));
     } catch (e) {
       if (mounted && requestSerial == _loadSerial) {
         if (!silent || _items.isEmpty) {
@@ -369,6 +376,43 @@ class _ShelfPageState extends State<ShelfPage> {
       if (!mounted || _items.isEmpty) return;
       showFloatingPrompt(context, '连接失败，请检查网络连接');
     });
+  }
+
+  Future<void> _probeShelfBraveBooks(List<LKBook> books) async {
+    if (LKStore.dataSaverMode.value || books.isEmpty) return;
+    final generation = ++_braveProbeGeneration;
+    final account = LKClient.sessionRev.value;
+    bool current() =>
+        mounted &&
+        generation == _braveProbeGeneration &&
+        account == LKClient.sessionRev.value &&
+        !LKStore.dataSaverMode.value;
+    final candidates = books
+        .where((book) =>
+            book.bookId > 0 &&
+            !book.isBrave &&
+            !LKStore.isBraveBook(book.bookId) &&
+            book.accessStatus == BookAccessStatus.unknown)
+        .toList(growable: false);
+    if (candidates.isEmpty) return;
+    // Probe shelf books in small batches on the dedicated shelf queue so Home
+    // feed traffic cannot starve bookshelf brave detection.
+    const batchSize = 4;
+    for (var offset = 0; offset < candidates.length; offset += batchSize) {
+      if (!current()) return;
+      final end = (offset + batchSize).clamp(0, candidates.length);
+      final batch = candidates.sublist(offset, end);
+      await Future.wait(batch.map((book) {
+        final fp = '${book.updatedAt}|${book.volumeCount}|${book.chapterCount}';
+        if (book.updatedAt.isNotEmpty &&
+            LKStore.isVerifiedNoBrave(book.bookId, fp)) {
+          return Future<void>.value();
+        }
+        return BookAccessProbe.shelf
+            .lookup(book.bookId, isCurrent: current)
+            .catchError((Object _) => null);
+      }));
+    }
   }
 
   Future<void> _verifyServerBookStatuses(List<LKBook> books,

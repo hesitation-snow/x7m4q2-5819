@@ -36,6 +36,7 @@ class BookAccessProbe {
   }
 
   static final _catalog = BookCatalogVerifier(
+    isVerifiedNoBrave: LKStore.isVerifiedNoBrave,
     loadBook: (id, remaining) => LKApi.bookDetail(id,
         forceRefresh: true,
         forAccessVerification: true,
@@ -66,15 +67,34 @@ class BookAccessProbe {
       needsContinuation: _catalog.hasPending,
       roundDelay: const Duration(milliseconds: 150));
 
+  /// Dedicated higher-capacity queue for Shelf & BookDetail so Home feed
+  /// cards cannot starve bookshelf brave detection.
+  static final shelf = BookAccessProbe(
+      query: _queryApi,
+      isKnownBrave: LKStore.isBraveBook,
+      isEnabled: () => !LKStore.dataSaverMode.value,
+      onConfirmed: LKStore.markBookBrave,
+      onLookupStarted: _catalog.beginLookup,
+      needsContinuation: _catalog.hasPending,
+      maxPending: 64,
+      roundDelay: const Duration(milliseconds: 100));
+
   static Future<bool?> _queryApi(int id, bool Function() current) async {
     if (LKStore.isBraveBook(id)) return true;
     final result = await _catalog.verifyRound(id,
         isCurrent: () => current() && !LKStore.dataSaverMode.value,
-        maxRequests: 4,
+        maxRequests: 6,
         budget: const Duration(seconds: 8));
-    return result.status == CatalogVerificationStatus.containsBrave
-        ? true
-        : null;
+    if (result.status == CatalogVerificationStatus.containsBrave) {
+      return true;
+    }
+    if (result.status == CatalogVerificationStatus.noBrave &&
+        result.fingerprint != null &&
+        result.fingerprint!.isNotEmpty &&
+        !result.fingerprint!.startsWith('|')) {
+      unawaited(LKStore.markBookVerifiedNoBrave(id, result.fingerprint!));
+    }
+    return null;
   }
 
   final Future<bool?> Function(int, bool Function()) query;

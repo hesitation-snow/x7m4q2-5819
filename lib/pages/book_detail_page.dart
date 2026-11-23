@@ -10,6 +10,7 @@ import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
+import '../services/book_access_probe.dart';
 import '../widgets/common.dart';
 import 'catalog_paging.dart';
 import 'login_page.dart';
@@ -263,6 +264,20 @@ class _BookDetailPageState extends State<BookDetailPage> {
     ]);
     if (!mounted || request != _bookRequestSerial) return;
     await _loadCatalogPreview(forceRefresh: forceRefresh);
+    if (mounted &&
+        request == _bookRequestSerial &&
+        !LKStore.dataSaverMode.value &&
+        _book != null &&
+        !_book!.isBrave &&
+        !LKStore.isBraveBook(widget.bookId)) {
+      unawaited(BookAccessProbe.shelf.lookup(
+        widget.bookId,
+        isCurrent: () =>
+            mounted &&
+            request == _bookRequestSerial &&
+            !LKStore.dataSaverMode.value,
+      ));
+    }
     if (forceRefresh && mounted) {
       final expanded = _volumes
           .where((volume) => _expandedVolumeIds.contains(volume.volumeId))

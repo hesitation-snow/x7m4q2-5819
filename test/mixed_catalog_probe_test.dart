@@ -160,9 +160,9 @@ void main() {
     });
     expect(
         await BookAccessProbe.shared.lookup(id, isCurrent: () => true), isTrue);
-    expect(bookLoads, 2,
-        reason: 'A second bounded round refreshes the catalog fingerprint.');
-    expect(requests, hasLength(6));
+    expect(bookLoads, 1,
+        reason: 'Latest-volume-first finds brave in volume 3 on round 1.');
+    expect(requests, hasLength(3));
     expect(LKStore.isBraveBook(id), isTrue);
   });
 

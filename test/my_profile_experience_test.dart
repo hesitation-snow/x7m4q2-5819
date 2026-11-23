@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/lk_api.dart';
 import 'package:yomiru/api/lk_client.dart';
+import 'package:yomiru/api/lk_rank.dart';
 import 'package:yomiru/api/models.dart';
 import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/home_page.dart';
@@ -94,7 +95,28 @@ void main() {
     expect(cached?.levelName, '测试组');
   });
 
-  testWidgets('my profile shows only known experience values', (tester) async {
+  test('LK rank table calculates current tier, remaining exp, and ratio', () {
+    final zero = lkRankProgressForExp(0);
+    expect(zero.current.name, '平民');
+    expect(zero.next?.name, '骑士');
+    expect(zero.ratioText, '0/251');
+    expect(zero.remainingToNext, 251);
+
+    final marquis = lkRankProgressForExp(8275);
+    expect(marquis.current.name, '侯爵');
+    expect(marquis.next?.name, '公爵');
+    expect(marquis.remainingToNext, 4226);
+    expect(marquis.nextHintText, '距公爵还差 4,226 积分');
+
+    final emperor = lkRankProgressForExp(50001);
+    expect(emperor.current.name, '皇帝');
+    expect(emperor.next, isNull);
+    expect(emperor.isMaxRank, isTrue);
+    expect(emperor.progress, 1.0);
+  });
+
+  testWidgets('my profile shows exp ratio without upgrade hint and opens rank table',
+      (tester) async {
     LKClient.shared.session
       ..securityKey = 'test-session'
       ..uid = 42;
@@ -118,8 +140,23 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MyTab())));
     await tester.pumpAndSettle();
     expect(find.text('测试组'), findsOneWidget);
-    expect(find.text('经验 0'), findsOneWidget);
-    expect(find.text('升级经验参考 12'), findsOneWidget);
+    expect(find.text('经验 0/251'), findsOneWidget);
+    expect(find.textContaining('升级经验参考'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+    await tester.tap(find.text('经验 0/251'));
+    await tester.pumpAndSettle();
+    expect(find.text('身份组升级经验'), findsOneWidget);
+    expect(find.text('平民'), findsOneWidget);
+    expect(find.text('0 积分起'), findsOneWidget);
+    expect(find.text('骑士'), findsOneWidget);
+    expect(find.text('251 积分起'), findsOneWidget);
+    expect(find.text('皇帝'), findsOneWidget);
+    expect(find.text('50,001 积分起'), findsOneWidget);
+
+    Navigator.of(tester.element(find.text('身份组升级经验'))).pop();
+    await tester.pumpAndSettle();
+
     data = {'uid': 42, 'exp': 'invalid'};
     LKClient.sessionRev.value++;
     await tester.pumpAndSettle();

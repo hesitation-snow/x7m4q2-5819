@@ -85,7 +85,7 @@ void main() {
     });
     expect(
         await BookAccessProbe.shared.lookup(id, isCurrent: () => true), isTrue);
-    expect(requests, hasLength(4));
+    expect(requests, hasLength(3));
     expect(existing.isBrave, isTrue);
     expect(LKStore.isBraveBook(id), isTrue);
   });

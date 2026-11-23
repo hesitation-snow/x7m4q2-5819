@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
+import '../api/lk_rank.dart';
 import '../api/home_channels.dart';
 import '../api/models.dart';
 import '../api/pagination.dart';
@@ -2323,7 +2324,155 @@ class _MyTabState extends State<MyTab> {
     }
   }
 
+  Future<void> _showRankExpSheet(LKRankProgress rank) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      sheetAnimationStyle: AppMotion.style(context),
+      builder: (sheetCtx) {
+        final theme = Theme.of(sheetCtx);
+        final scheme = theme.colorScheme;
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetCtx).height * 0.78,
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const AppSettingIcon(Icons.workspace_premium_outlined),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('身份组升级经验',
+                                style: theme.textTheme.titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 2),
+                            Text(
+                              '当前 ${formatLKExpNumber(rank.exp)} 积分 · ${rank.nextHintText}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: rank.progress,
+                      minHeight: 6,
+                      backgroundColor: scheme.surfaceContainerHighest,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  for (final tier in kLKRankTiers) ...[
+                    Builder(builder: (_) {
+                      final isCurrent = tier.name == rank.current.name;
+                      final reached = rank.exp >= tier.minExp;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 11),
+                        decoration: BoxDecoration(
+                          color: isCurrent
+                              ? scheme.primaryContainer.withValues(alpha: 0.75)
+                              : scheme.surfaceContainerLow,
+                          borderRadius: BorderRadius.circular(12),
+                          border: isCurrent
+                              ? Border.all(
+                                  color: scheme.primary.withValues(alpha: 0.5))
+                              : null,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              reached
+                                  ? Icons.check_circle_rounded
+                                  : Icons.radio_button_unchecked_rounded,
+                              size: 18,
+                              color: isCurrent
+                                  ? scheme.primary
+                                  : (reached
+                                      ? scheme.primary.withValues(alpha: 0.7)
+                                      : scheme.outline),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              tier.name,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: isCurrent
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: isCurrent
+                                    ? scheme.onPrimaryContainer
+                                    : scheme.onSurface,
+                              ),
+                            ),
+                            if (isCurrent) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 1.5),
+                                decoration: BoxDecoration(
+                                  color: scheme.primary,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '当前',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    color: scheme.onPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            const Spacer(),
+                            Text(
+                              '${formatLKExpNumber(tier.minExp)} 积分起',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: isCurrent
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                                color: isCurrent
+                                    ? scheme.onPrimaryContainer
+                                    : scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _profileSummary(LKMyProfile profile) {
+    final rank = profile.exp != null ? lkRankProgressForExp(profile.exp!) : null;
+    final levelText = profile.levelName.isNotEmpty
+        ? profile.levelName
+        : (rank?.current.name ?? '等级未知');
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       child: Column(
@@ -2333,12 +2482,14 @@ class _MyTabState extends State<MyTab> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _profileChip(Icons.workspace_premium_outlined,
-                  profile.levelName.isEmpty ? '等级未知' : profile.levelName),
-              if (profile.exp != null)
-                _profileChip(Icons.auto_graph_outlined, '经验 ${profile.exp}'),
-              if (profile.nextExp != null)
-                _profileChip(Icons.trending_up, '升级经验参考 ${profile.nextExp}'),
+              _profileChip(Icons.workspace_premium_outlined, levelText,
+                  onTap: rank == null ? null : () => _showRankExpSheet(rank)),
+              if (rank != null)
+                _profileChip(
+                  Icons.auto_graph_outlined,
+                  '经验 ${rank.ratioText}',
+                  onTap: () => _showRankExpSheet(rank),
+                ),
               _profileChip(
                 Icons.monetization_on_outlined,
                 '${profile.coin} 轻币',
@@ -2356,6 +2507,48 @@ class _MyTabState extends State<MyTab> {
               ),
             ],
           ),
+          if (rank != null) ...[
+            const SizedBox(height: 10),
+            InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => _showRankExpSheet(rank),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            rank.nextHintText,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          Icons.help_outline_rounded,
+                          size: 15,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(
+                        value: rank.progress,
+                        minHeight: 5,
+                        backgroundColor: scheme.surfaceContainerHighest,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(
             children: [

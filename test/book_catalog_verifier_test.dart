@@ -232,7 +232,66 @@ void main() {
     f.pages['2:1'] = page([chapter(2, access: 'brave')]);
     expect((await f.verifier().verifyRound(7, isCurrent: () => true)).status,
         CatalogVerificationStatus.containsBrave);
-    expect(f.calls, ['book:7', 'volumes:1', 'chapters:1:1', 'chapters:2:1']);
+    expect(f.calls, ['book:7', 'volumes:1', 'chapters:2:1']);
+  });
+
+  test('chapter count drift in one volume does not block finding brave in another',
+      () async {
+    final f = Fixture();
+    f.book = LKBook(bookId: 7, volumeCount: 2, chapterCount: 4);
+    f.volumes = [
+      LKVolume(volumeId: 1, chapterCount: 2),
+      LKVolume(volumeId: 2, chapterCount: 2),
+    ];
+    // Volume 2 metadata claims 2 chapters, but API returns 1 (drift).
+    f.pages['2:1'] = page([chapter(20, access: 'public')], total: 1);
+    f.pages['1:1'] = page([chapter(10, access: 'brave')], total: 1);
+    final result = await f.verifier().verifyRound(7, isCurrent: () => true);
+    expect(result.status, CatalogVerificationStatus.containsBrave);
+    expect(f.calls, ['book:7', 'volumes:1', 'chapters:2:1', 'chapters:1:1']);
+  });
+
+  test('verified-no-brave fingerprint skips chapter requests until book updates',
+      () async {
+    final f = Fixture();
+    f.book = LKBook(
+        bookId: 7, volumeCount: 1, chapterCount: 1, updatedAt: '2026-11-01');
+    final verified = <int, String>{};
+    final verifier = BookCatalogVerifier(
+      now: () => f.time,
+      isVerifiedNoBrave: (id, fp) => verified[id] == fp,
+      loadBook: (id, remaining) async {
+        f.calls.add('book:$id');
+        return f.book;
+      },
+      loadVolumes: (id, number, size, remaining) async {
+        f.calls.add('volumes:$number');
+        return CatalogVolumeBatch(
+            items: f.volumes, hasMore: false, page: number, total: 1);
+      },
+      loadChapters: (id, volume, number, size, remaining) async {
+        f.calls.add('chapters:$volume:$number');
+        return f.pages['$volume:$number']!;
+      },
+    );
+    final first = await verifier.verifyRound(7, isCurrent: () => true);
+    expect(first.status, CatalogVerificationStatus.noBrave);
+    verified[7] = first.fingerprint!;
+    f.calls.clear();
+    verifier.beginLookup(7);
+    final cached = await verifier.verifyRound(7, isCurrent: () => true);
+    expect(cached.status, CatalogVerificationStatus.noBrave);
+    expect(f.calls, ['book:7']);
+    // Book updates with a new brave chapter -> fingerprint changes -> rescans.
+    f.book = LKBook(
+        bookId: 7, volumeCount: 1, chapterCount: 2, updatedAt: '2026-11-02');
+    f.volumes = [LKVolume(volumeId: 1, chapterCount: 2)];
+    f.pages['1:1'] = page([chapter(1), chapter(2, access: 'brave')]);
+    f.calls.clear();
+    verifier.beginLookup(7);
+    final updated = await verifier.verifyRound(7, isCurrent: () => true);
+    expect(updated.status, CatalogVerificationStatus.containsBrave);
+    expect(f.calls, ['book:7', 'volumes:1', 'chapters:1:1']);
   });
 
   test('only complete explicitly public metadata is a negative', () async {
@@ -269,12 +328,12 @@ void main() {
     expect(f.calls, [
       'book:7',
       'volumes:1',
-      'chapters:1:1',
       'volumes:2',
-      'book:7',
-      'chapters:2:1',
       'volumes:3',
-      'chapters:3:1'
+      'book:7',
+      'chapters:3:1',
+      'chapters:2:1',
+      'chapters:1:1'
     ]);
   });
 

@@ -348,17 +348,72 @@ class LKStore {
   static final ValueNotifier<int> braveBookRevision = ValueNotifier(0);
   static Future<void> _braveBookWrites = Future<void>.value();
   static int _braveBookWriteEpoch = 0;
+  static const _verifiedNoBraveKey = 'verified_no_brave_fingerprints_v1';
+  static const _maxVerifiedNoBraveEntries = 512;
+  static final Map<int, String> _verifiedNoBraveFingerprints = {};
+  static Future<void> _verifiedNoBraveWrites = Future<void>.value();
+  static int _verifiedNoBraveWriteEpoch = 0;
 
   static bool isBraveBook(int bookId) => _braveBookIds.contains(bookId);
+
+  static bool isVerifiedNoBrave(int bookId, String fingerprint) {
+    if (bookId <= 0 || fingerprint.isEmpty) return false;
+    final stored = _verifiedNoBraveFingerprints[bookId];
+    return stored != null && stored == fingerprint;
+  }
+
+  static Future<void> markBookVerifiedNoBrave(
+      int bookId, String fingerprint) async {
+    if (bookId <= 0 || fingerprint.isEmpty || _braveBookIds.contains(bookId)) {
+      return;
+    }
+    if (_verifiedNoBraveFingerprints[bookId] == fingerprint) return;
+    _verifiedNoBraveFingerprints.remove(bookId);
+    _verifiedNoBraveFingerprints[bookId] = fingerprint;
+    while (_verifiedNoBraveFingerprints.length > _maxVerifiedNoBraveEntries) {
+      _verifiedNoBraveFingerprints
+          .remove(_verifiedNoBraveFingerprints.keys.first);
+    }
+    final epoch = _verifiedNoBraveWriteEpoch;
+    final snapshot = {
+      for (final e in _verifiedNoBraveFingerprints.entries)
+        e.key.toString(): e.value,
+    };
+    final write = _verifiedNoBraveWrites.then((_) async {
+      if (epoch != _verifiedNoBraveWriteEpoch) return;
+      final preferences = await SharedPreferences.getInstance();
+      if (epoch != _verifiedNoBraveWriteEpoch) return;
+      await preferences.setString(_verifiedNoBraveKey, jsonEncode(snapshot));
+    });
+    _verifiedNoBraveWrites = write.catchError((Object _) {});
+    await _verifiedNoBraveWrites;
+  }
 
   static Future<void> markBookBrave(int bookId) => markBooksBrave([bookId]);
 
   static Future<void> markBooksBrave(Iterable<int> bookIds) async {
     var changed = false;
+    var removedVerified = false;
     for (final id in bookIds) {
       if (id > 0 && _braveBookIds.add(id)) changed = true;
+      if (id > 0 && _verifiedNoBraveFingerprints.remove(id) != null) {
+        removedVerified = true;
+      }
     }
     setBraveBookChecker(isBraveBook);
+    if (removedVerified) {
+      final epoch = _verifiedNoBraveWriteEpoch;
+      final snapshot = {
+        for (final e in _verifiedNoBraveFingerprints.entries)
+          e.key.toString(): e.value,
+      };
+      _verifiedNoBraveWrites = _verifiedNoBraveWrites.then((_) async {
+        if (epoch != _verifiedNoBraveWriteEpoch) return;
+        final preferences = await SharedPreferences.getInstance();
+        if (epoch != _verifiedNoBraveWriteEpoch) return;
+        await preferences.setString(_verifiedNoBraveKey, jsonEncode(snapshot));
+      }).catchError((Object _) {});
+    }
     if (!changed) return;
     braveBookRevision.value++;
     final epoch = _braveBookWriteEpoch;
@@ -377,6 +432,8 @@ class LKStore {
   @visibleForTesting
   static void resetBraveBookIdsForTesting([Set<int>? seed]) {
     ++_braveBookWriteEpoch;
+    ++_verifiedNoBraveWriteEpoch;
+    _verifiedNoBraveFingerprints.clear();
     _braveBookIds
       ..clear()
       ..addAll((seed ?? {14162}).where((id) => id > 0));
@@ -506,6 +563,24 @@ class LKStore {
           .whereType<int>()
           .where((id) => id > 0));
       if (_braveBookIds.length != before) braveBookRevision.value++;
+    }
+    final storedVerified = p.getString(_verifiedNoBraveKey);
+    if (storedVerified != null && storedVerified.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(storedVerified);
+        if (decoded is Map) {
+          for (final entry in decoded.entries) {
+            final id = int.tryParse(entry.key.toString());
+            final fp = entry.value is String ? entry.value as String : '';
+            if (id != null &&
+                id > 0 &&
+                fp.isNotEmpty &&
+                !_braveBookIds.contains(id)) {
+              _verifiedNoBraveFingerprints[id] = fp;
+            }
+          }
+        }
+      } catch (_) {}
     }
     unawaited(LKClient.shared.trimResponseCache());
   }
@@ -696,11 +771,14 @@ class LKStore {
     _globalMedalsWriteTimer = null;
     _globalMedalsMemory = null;
     _globalMedalsLoad = null;
+    ++_verifiedNoBraveWriteEpoch;
+    _verifiedNoBraveFingerprints.clear();
     final prefs = await SharedPreferences.getInstance();
     final keys = prefs
         .getKeys()
         .where((key) =>
             key == _globalMedalsKey ||
+            key == _verifiedNoBraveKey ||
             key.startsWith('home_recommend_v2') ||
             key.startsWith('section_latest_') ||
             key.startsWith('my_profile_cache_') ||
