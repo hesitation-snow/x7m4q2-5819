@@ -16,6 +16,7 @@ import '../api/pagination.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../services/app_update_service.dart';
+import '../services/listening_now.dart';
 import '../widgets/listening_dock.dart';
 import '../widgets/liquid_glass_bottom_bar.dart';
 import '../widgets/common.dart';
@@ -514,10 +515,16 @@ class _HomePageState extends State<HomePage> {
                 ),
                 if (useLiquidGlass)
                   ListenableBuilder(
-                    listenable: Listenable.merge(
-                        [_barFrac, LKStore.glassConfiguration]),
+                    listenable: Listenable.merge([
+                      ListeningNow.instance,
+                      _barFrac,
+                      LKStore.glassConfiguration,
+                    ]),
                     child: const ListeningDock(),
                     builder: (context, child) {
+                      if (!ListeningNow.instance.active) {
+                        return const SizedBox.shrink();
+                      }
                       final cfg = LKStore.glassConfiguration.value;
                       final frac = cfg.keepVisibleOnScroll ? 1.0 : _barFrac.value;
                       final bottomSafe = MediaQuery.paddingOf(context).bottom;
