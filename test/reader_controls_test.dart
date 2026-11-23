@@ -60,7 +60,12 @@ void main() {
         run: (calls, key) async {
           await tester.tap(find.byTooltip('系统朗读'));
           await tester.pumpAndSettle();
-          expect(find.text('听书与音色'), findsOneWidget);
+          expect(find.text('听书'), findsOneWidget);
+          await tester.ensureVisible(
+              find.byKey(const ValueKey('listening-source-system')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('listening-source-system')));
+          await tester.pumpAndSettle();
           expect(find.text('系统未提供可用语音，请检查设备语音设置'), findsNothing);
           await tester.ensureVisible(find.byTooltip('从当前位置朗读'));
           await tester.pumpAndSettle();
@@ -109,7 +114,7 @@ void main() {
               of: find.byType(BottomSheet), matching: find.byType(Slider));
           tester.widget<Slider>(slider).onChanged!(1.5);
           await tester.pump();
-          expect(find.text('语速 1.50×'), findsOneWidget);
+          expect(find.text('1.50×'), findsOneWidget);
         },
       );
     } finally {
@@ -142,6 +147,11 @@ void main() {
       await withReader(tester, paged: false, platform: TargetPlatform.android,
           run: (calls, key) async {
         await tester.tap(find.byTooltip('系统朗读'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(
+            find.byKey(const ValueKey('listening-source-system')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('listening-source-system')));
         await tester.pumpAndSettle();
         expect(find.text('系统语音引擎初始化失败'), findsOneWidget);
         await tester.ensureVisible(find.byTooltip('重新检测语音'));
@@ -202,7 +212,7 @@ void main() {
           }
           await tester.tap(entry);
           await tester.pumpAndSettle();
-          expect(find.text('听书与音色'), findsOneWidget);
+          expect(find.text('听书'), findsOneWidget);
           await tester.ensureVisible(find.byTooltip('从当前位置朗读'));
           await tester.pumpAndSettle();
           expect(find.byTooltip('从当前位置朗读').hitTestable(), findsOneWidget);

@@ -68,6 +68,8 @@ class ReaderAudioHandler extends BaseAudioHandler
   final Future<Directory> Function() _temporaryDirectory;
   final bool _configureSession;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
+  bool _sessionConfigured = false;
+  bool _sessionActive = false;
   List<File> _files = const [];
   List<MediaItem> _items = const [];
   bool _disposed = false;
@@ -149,6 +151,8 @@ class ReaderAudioHandler extends BaseAudioHandler
     if (_ttsOwnerKey != ownerKey) return false;
     _ttsOwnerKey = null;
     _ttsOwnerCallbacks = null;
+    _reportedPosition = Duration.zero;
+    _reportedDuration = null;
     mediaItem.add(null);
     queue.add(const []);
     queueTitle.add('');
@@ -201,9 +205,6 @@ class ReaderAudioHandler extends BaseAudioHandler
     required FutureOr<void> Function() onCompleted,
   }) async {
     _ensureAlive();
-    final generation = ++_sourceGeneration;
-    final controlRevision = ++_controlRevision;
-    _loadingSource = true;
     if (files.isEmpty) throw ArgumentError.value(files, 'files');
     if (startIndex < 0 || startIndex >= files.length) {
       throw RangeError.index(startIndex, files);
@@ -213,7 +214,13 @@ class ReaderAudioHandler extends BaseAudioHandler
         throw ArgumentError.value(file.path, 'files', 'Audio file is missing');
       }
     }
-    if (_disposed || generation != _sourceGeneration) return;
+    final generation = ++_sourceGeneration;
+    final controlRevision = ++_controlRevision;
+    _loadingSource = true;
+    if (_disposed || generation != _sourceGeneration) {
+      _loadingSource = false;
+      return;
+    }
     _ttsOwnerKey = null;
     _ttsOwnerCallbacks = null;
     _reportedPosition = Duration.zero;
@@ -333,14 +340,35 @@ class ReaderAudioHandler extends BaseAudioHandler
   }
 
   Future<void> _activateSession() async {
-    if (!_configureSession) return;
+    if (!_configureSession || _disposed) return;
     final session = await AudioSession.instance;
-    await session.configure(const AudioSessionConfiguration.speech());
-    await session.setActive(true);
+    if (!_sessionConfigured) {
+      await session.configure(const AudioSessionConfiguration.speech());
+      if (_disposed) return;
+      _sessionConfigured = true;
+      _subscriptions.add(
+        session.interruptionEventStream.listen((event) {
+          if (event.begin && !_disposed) {
+            unawaited(pause());
+          }
+        }),
+      );
+      _subscriptions.add(
+        session.becomingNoisyEventStream.listen((_) {
+          if (!_disposed) {
+            unawaited(pause());
+          }
+        }),
+      );
+    }
+    if (!_sessionActive) {
+      _sessionActive = await session.setActive(true);
+    }
   }
 
   Future<void> _deactivateSession() async {
     if (!_configureSession) return;
+    _sessionActive = false;
     try {
       final session = await AudioSession.instance;
       await session.setActive(false);
@@ -416,11 +444,15 @@ class ReaderAudioHandler extends BaseAudioHandler
       if (_disposed || generation != _sourceGeneration) return;
       await _player.setSource(ja.AudioSource.file(file.path));
       if (_disposed || generation != _sourceGeneration) return;
+      await _player.setSpeed(1.0);
       _loadingSource = false;
       _status = '已就绪';
       _publishState(processingState: AudioProcessingState.ready);
       if (autoplay && controlRevision == _controlRevision) await play();
     } finally {
+      if (!_disposed && generation == _sourceGeneration) {
+        _loadingSource = false;
+      }
       if (previous != null && await previous.exists()) await previous.delete();
       if (_disposed || generation != _sourceGeneration) {
         if (await file.exists()) await file.delete();
@@ -580,8 +612,11 @@ class ReaderAudioHandler extends BaseAudioHandler
 
   @override
   Future<void> onTaskRemoved() async {
-    // Let the Android media foreground service outlive the reader Activity; the
-    // user can still stop playback from the system media surface.
+    // Keep the foreground service alive only while actively playing;
+    // release it when paused/idle so swiping the app away leaves no zombie notification.
+    if (!playbackState.value.playing) {
+      await stop();
+    }
   }
 
   /// Cancel all event subscriptions, release player/session and close streams.

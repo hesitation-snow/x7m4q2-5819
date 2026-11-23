@@ -3225,6 +3225,7 @@ class _ReaderPageState extends State<ReaderPage>
         availableVoices: _ttsVoices,
         voiceByLanguage: _ttsVoiceByLanguage,
       );
+      await handler.setPlaybackRate(1.0);
     } else if (_ttsSourceMode == 'online') {
       synthesizer = EdgeFileSpeechSynthesizer();
       config = edgeSpeechConfig(voiceByLanguage: _edgeVoiceByLanguage);
@@ -3254,6 +3255,7 @@ class _ReaderPageState extends State<ReaderPage>
       );
       _activeSpeechClient = client;
       synthesizer = ConfiguredCustomSpeechSynthesizer(client: client);
+      await handler.setPlaybackRate(1.0);
     }
 
     if (!current()) return;

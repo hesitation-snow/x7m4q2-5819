@@ -110,115 +110,139 @@ class ListeningMenu extends StatelessWidget {
           );
         }
         final sentence = session.currentSegment?.text ?? '正在准备下一段';
+        final error = session.error;
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(now.bookTitle,
-                    style: theme.textTheme.titleLarge,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
-                if (now.chapterTitle.isNotEmpty)
-                  Text(now.chapterTitle,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      )),
-                const SizedBox(height: 16),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerLow,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: theme.colorScheme.outlineVariant
-                          .withValues(alpha: .35),
-                    ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(sentence, style: theme.textTheme.bodyLarge),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  session.isLoading
-                      ? '正在准备语音'
-                      : session.isPaused
-                          ? '已暂停'
-                          : '正在播放 · 第 ${session.position + 1}/${session.segmentCount} 段',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.labelLarge,
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    IconButton.filledTonal(
-                      tooltip: '上一段',
-                      onPressed: session.position > 0
-                          ? () => unawaited(now.previous())
-                          : null,
-                      icon: const Icon(Icons.skip_previous_rounded),
-                    ),
-                    IconButton.filled(
-                      tooltip: session.isPaused ? '继续' : '暂停',
-                      iconSize: 36,
-                      onPressed: () => unawaited(now.toggle()),
-                      icon: Icon(session.isPaused
-                          ? Icons.play_arrow_rounded
-                          : Icons.pause_rounded),
-                    ),
-                    IconButton.filledTonal(
-                      tooltip: '下一段',
-                      onPressed: session.position + 1 < session.segmentCount
-                          ? () => unawaited(now.next())
-                          : null,
-                      icon: const Icon(Icons.skip_next_rounded),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(now.bookTitle,
+                      style: theme.textTheme.titleLarge,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  if (now.chapterTitle.isNotEmpty)
+                    Text(now.chapterTitle,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        )),
+                  if (error != null && error.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.errorContainer,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          error,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: now.bookId <= 0
-                            ? null
-                            : () {
-                                Navigator.pop(context);
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => ReaderPage(
-                                      bookId: now.bookId,
-                                      bookTitle: now.bookTitle,
-                                      chapterId: now.chapterId,
-                                      chapterTitle: now.chapterTitle,
-                                      volumeId: now.volumeId,
+                  const SizedBox(height: 16),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: theme.colorScheme.outlineVariant
+                            .withValues(alpha: .35),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(sentence, style: theme.textTheme.bodyLarge),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    session.isLoading
+                        ? '正在准备语音'
+                        : session.isPaused
+                            ? '已暂停'
+                            : '正在播放 · 第 ${session.position + 1}/${session.segmentCount} 段',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      IconButton.filledTonal(
+                        tooltip: '上一段',
+                        onPressed: session.position > 0
+                            ? () => unawaited(now.previous())
+                            : null,
+                        icon: const Icon(Icons.skip_previous_rounded),
+                      ),
+                      IconButton.filled(
+                        tooltip: session.isPaused ? '继续' : '暂停',
+                        iconSize: 36,
+                        onPressed: () => unawaited(now.toggle()),
+                        icon: Icon(session.isPaused
+                            ? Icons.play_arrow_rounded
+                            : Icons.pause_rounded),
+                      ),
+                      IconButton.filledTonal(
+                        tooltip: '下一段',
+                        onPressed: session.position + 1 < session.segmentCount
+                            ? () => unawaited(now.next())
+                            : null,
+                        icon: const Icon(Icons.skip_next_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: now.bookId <= 0
+                              ? null
+                              : () {
+                                  Navigator.pop(context);
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => ReaderPage(
+                                        bookId: now.bookId,
+                                        bookTitle: now.bookTitle,
+                                        chapterId: now.chapterId,
+                                        chapterTitle: now.chapterTitle,
+                                        volumeId: now.volumeId,
+                                      ),
                                     ),
-                                  ),
-                                );
-                              },
-                        icon: const Icon(Icons.menu_book_rounded),
-                        label: const Text('回到阅读'),
+                                  );
+                                },
+                          icon: const Icon(Icons.menu_book_rounded),
+                          label: const Text('回到阅读'),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: FilledButton.tonalIcon(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          unawaited(now.stop());
-                        },
-                        icon: const Icon(Icons.stop_rounded),
-                        label: const Text('停止'),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton.tonalIcon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            unawaited(now.stop());
+                          },
+                          icon: const Icon(Icons.stop_rounded),
+                          label: const Text('停止'),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         );

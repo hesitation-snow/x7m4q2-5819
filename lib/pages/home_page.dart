@@ -511,7 +511,27 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
-                const ListeningDock(),
+                if (useLiquidGlass)
+                  ListenableBuilder(
+                    listenable: Listenable.merge(
+                        [_barFrac, LKStore.glassConfiguration]),
+                    child: const ListeningDock(),
+                    builder: (context, child) {
+                      final cfg = LKStore.glassConfiguration.value;
+                      final frac = cfg.keepVisibleOnScroll ? 1.0 : _barFrac.value;
+                      final bottomSafe = MediaQuery.paddingOf(context).bottom;
+                      final clearance = frac > 0.01
+                          ? (cfg.barHeight + cfg.floatingHeight + bottomSafe + 4) *
+                              frac
+                          : bottomSafe;
+                      return Padding(
+                        padding: EdgeInsets.only(bottom: clearance),
+                        child: child,
+                      );
+                    },
+                  )
+                else
+                  const ListeningDock(),
               ],
             ),
             bottomNavigationBar: useLiquidGlass

@@ -10,7 +10,7 @@ class ListeningNow extends ChangeNotifier {
 
   ReaderSpeechSession? _session;
   Future<void> Function()? _releaseResources;
-  bool _closing = false;
+  Future<void>? _stopFuture;
 
   String bookTitle = '';
   String chapterTitle = '';
@@ -50,9 +50,7 @@ class ListeningNow extends ChangeNotifier {
     if (previous != null) {
       previous.removeListener(_onSession);
       Future<void>(() async {
-        try {
-          await previous.stop();
-        } catch (_) {}
+        // Do not call previous.stop() once a new session has taken over the shared handler.
         previous.dispose();
         try {
           await previousRelease?.call();
@@ -63,9 +61,19 @@ class ListeningNow extends ChangeNotifier {
 
   void _onSession() {
     final session = _session;
-    if (session == null || _closing) return;
+    if (session == null || _stopFuture != null) return;
     if (session.isStopped) {
-      Future<void>(() => stop());
+      final release = _releaseResources;
+      _session = null;
+      _releaseResources = null;
+      session.removeListener(_onSession);
+      notifyListeners();
+      Future<void>(() async {
+        session.dispose();
+        try {
+          await release?.call();
+        } catch (_) {}
+      });
       return;
     }
     notifyListeners();
@@ -84,22 +92,32 @@ class ListeningNow extends ChangeNotifier {
   Future<void> next() => _session?.next() ?? Future<void>.value();
   Future<void> previous() => _session?.previous() ?? Future<void>.value();
 
-  Future<void> stop() async {
-    if (_closing) return;
-    _closing = true;
+  Future<void> stop() {
+    final existing = _stopFuture;
+    if (existing != null) return existing;
+    final future = _stopInternal();
+    _stopFuture = future;
+    future.whenComplete(() {
+      if (identical(_stopFuture, future)) _stopFuture = null;
+    });
+    return future;
+  }
+
+  Future<void> _stopInternal() async {
     final session = _session;
     final release = _releaseResources;
     _session = null;
     _releaseResources = null;
     session?.removeListener(_onSession);
     try {
-      await session?.stop();
+      if (session != null && !session.isStopped) {
+        await session.stop();
+      }
     } catch (_) {}
     session?.dispose();
     try {
       await release?.call();
     } catch (_) {}
-    _closing = false;
     notifyListeners();
   }
 }

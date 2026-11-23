@@ -22,7 +22,7 @@ class ReaderListeningSheet extends StatelessWidget {
       child: ConstrainedBox(
         constraints:
             BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * .92),
-        child: ColoredBox(
+        child: Material(
           color: scheme.surface,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             const SizedBox(height: 8),

@@ -406,6 +406,7 @@ class SystemTts {
   }
 
   void _handleNativeMethod(MethodCall call) {
+    if (_disposed) return;
     final raw = call.arguments;
     if (raw is! Map) {
       _events.add(const SystemTtsSpeechError('', '语音事件格式无效'));
@@ -458,6 +459,9 @@ class SystemTts {
       'ENGINE_NOT_FOUND' => '所选系统语音引擎未安装',
       'INVALID_ENGINE' => '系统语音引擎参数无效',
       'TTS_ENGINE_CHANGED' => '语音引擎已切换，请重试当前语段',
+      'TTS_STOPPED' => '语音合成已停止',
+      'TTS_DISPOSED' => '系统语音引擎已释放',
+      'SYNTHESIS_FAILED' => '系统语音文件合成失败',
       'INVALID_LOCALE' => '语言区域设置无效',
       'INVALID_RATE' => '语速设置无效',
       'INVALID_TEXT' => '朗读文本为空或无效',
@@ -506,6 +510,7 @@ class NativeSystemTtsService implements SystemTtsService {
         if (_ownsChannel) {
           try {
             await systemTts.stop();
+            _takeoverFailure = null;
           } catch (error) {
             _takeoverFailure = error;
             rethrow;

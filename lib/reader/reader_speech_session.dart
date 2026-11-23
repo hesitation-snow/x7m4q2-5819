@@ -145,8 +145,9 @@ class SpeechAudioCache {
 
   Future<void> _evict(Directory root) async {
     final files = <File>[];
+    final tempPattern = RegExp(r'\.tmp(\.[^./\\]+)?$');
     await for (final e in root.list(recursive: true, followLinks: false)) {
-      if (e is File && !e.path.endsWith('.tmp')) files.add(e);
+      if (e is File && !tempPattern.hasMatch(e.path)) files.add(e);
     }
     final records = <(File, int, DateTime)>[];
     var total = 0;
@@ -197,7 +198,8 @@ class ReaderSpeechSession extends ChangeNotifier {
   int _position = 0;
   int _utterance = 0;
   int? _pendingAdvance;
-  int _internalControls = 0;
+  int _internalPauseControls = 0;
+  int _internalStopControls = 0;
   Duration _gap = Duration.zero;
   Timer? _gapTimer;
   Timer? _sleepTimer;
@@ -234,13 +236,23 @@ class ReaderSpeechSession extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  // Do not bounce our own pause/stop acknowledgements back through the handler.
-  Future<void> _control(Future<void> Function() operation) async {
-    _internalControls++;
+  // Do not bounce our own pause/stop acknowledgements back through the handler,
+  // while keeping external stop callbacks responsive during pause/seek.
+  Future<void> _controlPause(Future<void> Function() operation) async {
+    _internalPauseControls++;
     try {
       await operation();
     } finally {
-      _internalControls--;
+      _internalPauseControls--;
+    }
+  }
+
+  Future<void> _controlStop(Future<void> Function() operation) async {
+    _internalStopControls++;
+    try {
+      await operation();
+    } finally {
+      _internalStopControls--;
     }
   }
 
@@ -280,7 +292,7 @@ class ReaderSpeechSession extends ChangeNotifier {
     _loading = !_stopped;
     _notify();
     try {
-      await _control(handler.stop);
+      await _controlStop(handler.stop);
       if (!_valid(generation)) return;
       await _loadAndPlay(startAt, generation);
     } catch (error) {
@@ -361,6 +373,9 @@ class ReaderSpeechSession extends ChangeNotifier {
       _completed = true;
       _sleepTimer?.cancel();
       _sleepMode = PlaybackSleepTimer.none;
+      try {
+        await _controlStop(handler.stop);
+      } catch (_) {}
       _notify();
       return;
     }
@@ -398,7 +413,7 @@ class ReaderSpeechSession extends ChangeNotifier {
     _loading = !_paused;
     _notify();
     try {
-      await _control(
+      await _controlPause(
           handler.pause); // silence old audio before awaiting synthesis
       if (!_valid(generation) || _paused) return;
       await _loadAndPlay(index, generation);
@@ -435,11 +450,16 @@ class ReaderSpeechSession extends ChangeNotifier {
   Future<void> onHandlerNext() => next();
   Future<void> onHandlerPrevious() => previous();
   Future<void> onHandlerPlay() async {
-    if (_internalControls == 0 && !_disposed && _paused) await resume();
+    if (_internalPauseControls == 0 &&
+        _internalStopControls == 0 &&
+        !_disposed &&
+        _paused) {
+      await resume();
+    }
   }
 
   void onHandlerPaused() {
-    if (_internalControls != 0 || _disposed || _stopped) return;
+    if (_internalPauseControls != 0 || _disposed || _stopped) return;
     ++_generation;
     ++_utterance;
     _paused = true;
@@ -449,7 +469,7 @@ class ReaderSpeechSession extends ChangeNotifier {
   }
 
   void onHandlerStopped() {
-    if (_internalControls != 0 || _disposed) return;
+    if (_internalStopControls != 0 || _disposed) return;
     _markStopped();
     _notify();
   }
@@ -458,7 +478,7 @@ class ReaderSpeechSession extends ChangeNotifier {
     _ensureAlive();
     if (_paused || _stopped) return;
     onHandlerPaused();
-    await _control(handler.pause);
+    await _controlPause(handler.pause);
   }
 
   Future<void> resume() async {
@@ -484,9 +504,12 @@ class ReaderSpeechSession extends ChangeNotifier {
 
   Future<void> stop() async {
     _ensureAlive();
+    final wasStopped = _stopped;
     _markStopped();
-    await _control(handler.stop);
-    _notify();
+    if (!wasStopped) {
+      await _controlStop(handler.stop);
+      _notify();
+    }
   }
 
   void reportPlaybackError(Object error) => _fail(error, _generation);
