@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/app_theme.dart';
 import 'm3_controls.dart';
 
 /// Listening controls stay reachable while voice settings scroll.
@@ -345,17 +346,63 @@ class ListeningRateControl extends StatelessWidget {
     this.onChangeEnd,
   });
 
+  static const _minRate = 0.5;
+  static const _maxRate = 3.0;
+  static const _step = 0.1;
   static const _presets = <double>[0.8, 1.0, 1.2, 1.5, 2.0];
 
   final double rate;
   final ValueChanged<double> onChanged;
   final ValueChanged<double>? onChangeEnd;
 
+  void _stepBy(double delta, double current) {
+    final next = (((current + delta) * 10).round() / 10)
+        .clamp(_minRate, _maxRate)
+        .toDouble();
+    if ((next - current).abs() < 0.001) return;
+    onChanged(next);
+    onChangeEnd?.call(next);
+  }
+
+  Widget _stepButton({
+    required BuildContext context,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final enabled = onPressed != null;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: enabled
+            ? scheme.surfaceContainerHigh
+            : scheme.surfaceContainerHigh.withValues(alpha: 0.45),
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onPressed,
+          child: SizedBox(
+            width: 32,
+            height: 32,
+            child: Icon(
+              icon,
+              size: 18,
+              color: enabled
+                  ? scheme.onSurfaceVariant
+                  : scheme.onSurfaceVariant.withValues(alpha: 0.35),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final shown = rate.clamp(.5, 3).toDouble();
+    final shown = rate.clamp(_minRate, _maxRate).toDouble();
     return Material(
       color: scheme.surfaceContainerLow,
       shape: RoundedRectangleBorder(
@@ -363,7 +410,7 @@ class ListeningRateControl extends StatelessWidget {
         side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .25)),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -394,16 +441,49 @@ class ListeningRateControl extends StatelessWidget {
                 ),
               ),
             ]),
-            const SizedBox(height: 4),
-            Slider(
-              min: .5,
-              max: 3,
-              divisions: 25,
-              value: shown,
-              label: '${shown.toStringAsFixed(2)}×',
-              onChanged: onChanged,
-              onChangeEnd: onChangeEnd,
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _stepButton(
+                  context: context,
+                  icon: Icons.remove_rounded,
+                  tooltip: '减速',
+                  onPressed: shown > _minRate + 0.001
+                      ? () => _stepBy(-_step, shown)
+                      : null,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: SliderTheme(
+                    data: AppTheme.sliderThemeOf(
+                      scheme,
+                      theme.textTheme,
+                      trackHeight: 14,
+                      thumbHeight: 34,
+                    ),
+                    child: Slider(
+                      min: _minRate,
+                      max: _maxRate,
+                      divisions: 25,
+                      value: shown,
+                      label: '${shown.toStringAsFixed(2)}×',
+                      onChanged: onChanged,
+                      onChangeEnd: onChangeEnd,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                _stepButton(
+                  context: context,
+                  icon: Icons.add_rounded,
+                  tooltip: '加速',
+                  onPressed: shown < _maxRate - 0.001
+                      ? () => _stepBy(_step, shown)
+                      : null,
+                ),
+              ],
             ),
+            const SizedBox(height: 10),
             Wrap(
               spacing: 6,
               runSpacing: 6,

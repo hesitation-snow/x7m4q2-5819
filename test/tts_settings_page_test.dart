@@ -9,6 +9,7 @@ import 'package:yomiru/pages/custom_tts_settings_page.dart';
 import 'package:yomiru/pages/settings_page.dart';
 import 'package:yomiru/pages/tts_settings_page.dart';
 import 'package:yomiru/reader/reader_language_segments.dart';
+import 'package:yomiru/services/app_theme.dart';
 import 'package:yomiru/services/reader_tts_preferences.dart';
 
 void main() {
@@ -71,6 +72,18 @@ void main() {
     expect(migrated.rate, 1.25);
   });
 
+  test('AppTheme uses gapped capsule slider without dotted tick marks', () {
+    for (final theme in [
+      AppTheme.build(Brightness.light),
+      AppTheme.build(Brightness.dark, pureBlack: true),
+    ]) {
+      final sliderTheme = theme.sliderTheme;
+      expect(sliderTheme.trackShape, isA<GappedSliderTrackShape>());
+      expect(sliderTheme.thumbShape, isA<HandleThumbShape>());
+      expect(sliderTheme.tickMarkShape, SliderTickMarkShape.noTickMark);
+    }
+  });
+
   testWidgets(
       'SettingsPage opens TtsSettingsPage and persists live summary changes',
       (tester) async {
@@ -117,8 +130,21 @@ void main() {
       expect(find.byType(DropdownButtonFormField<String>), findsNothing);
       expect(find.byType(ExpansionTile), findsNothing);
 
-      // Tap quick speed preset chip 1.5x.
+      // Tap quick speed preset chip 1.5x, then verify modern SliderTheme and ±0.1x step buttons.
+      final sliderTheme = SliderTheme.of(tester.element(find.byType(Slider)));
+      expect(sliderTheme.trackShape, isA<GappedSliderTrackShape>());
+      expect(sliderTheme.thumbShape, isA<HandleThumbShape>());
+      expect(sliderTheme.tickMarkShape, SliderTickMarkShape.noTickMark);
+
       await tester.tap(find.text('1.5×'));
+      await tester.pumpAndSettle();
+      expect(find.text('1.50×'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('加速'));
+      await tester.pumpAndSettle();
+      expect(find.text('1.60×'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('减速'));
       await tester.pumpAndSettle();
       expect(find.text('1.50×'), findsOneWidget);
 

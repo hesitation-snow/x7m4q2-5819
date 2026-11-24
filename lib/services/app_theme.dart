@@ -5,6 +5,43 @@ import 'app_motion.dart';
 
 /// Shared Material 3 defaults. Reader paper and ink remain reader-owned.
 abstract final class AppTheme {
+  /// Modern Material 3 Expressive gapped capsule slider with vertical pill
+  /// handle and clean track (no dotted tick marks).
+  static SliderThemeData sliderThemeOf(
+    ColorScheme scheme,
+    TextTheme textTheme, {
+    double trackHeight = 12,
+    double thumbHeight = 32,
+  }) {
+    return SliderThemeData(
+      trackHeight: trackHeight,
+      trackGap: 6,
+      trackShape: const GappedSliderTrackShape(),
+      thumbShape: const HandleThumbShape(),
+      thumbSize: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.dragged)) {
+          return Size(2, thumbHeight);
+        }
+        return Size(4, thumbHeight);
+      }),
+      tickMarkShape: SliderTickMarkShape.noTickMark,
+      overlayShape: SliderComponentShape.noOverlay,
+      activeTrackColor: scheme.primary,
+      inactiveTrackColor: scheme.secondaryContainer,
+      disabledActiveTrackColor: scheme.onSurface.withValues(alpha: 0.38),
+      disabledInactiveTrackColor: scheme.onSurface.withValues(alpha: 0.12),
+      thumbColor: scheme.primary,
+      disabledThumbColor: scheme.onSurface.withValues(alpha: 0.38),
+      valueIndicatorShape: const RoundedRectSliderValueIndicatorShape(),
+      valueIndicatorColor: scheme.inverseSurface,
+      valueIndicatorTextStyle: textTheme.labelMedium?.copyWith(
+        color: scheme.onInverseSurface,
+        fontWeight: FontWeight.w600,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+    );
+  }
+
   static ThemeData build(Brightness brightness,
       {Color? seedColor, bool pureBlack = false}) {
     var scheme = ColorScheme.fromSeed(
@@ -155,6 +192,7 @@ abstract final class AppTheme {
               EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
         ),
       ),
+      sliderTheme: sliderThemeOf(scheme, base.textTheme),
     );
   }
 }
