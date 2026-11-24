@@ -46,6 +46,25 @@ class ReaderScrollLayoutIndex {
     return itemStart(index) + safeLocal;
   }
 
+  /// 计算将指定块内 `[segmentTop, segmentBottom]` 区间垂直居中于视口所需的滚动偏移。
+  double centeredScrollOffsetForRange({
+    required int rawIndex,
+    required double segmentTop,
+    required double segmentBottom,
+    required double viewportHeight,
+  }) {
+    if (isEmpty || viewportHeight <= 0) return leadingPadding;
+    final index = rawIndex.clamp(0, length - 1);
+    final extent = itemExtents[index];
+    final safeTop = segmentTop.clamp(0.0, extent).toDouble();
+    final safeBottom = segmentBottom.clamp(safeTop, extent).toDouble();
+    final maxSpan = viewportHeight * 0.6;
+    final effectiveBottom =
+        (safeBottom - safeTop) > maxSpan ? safeTop + maxSpan : safeBottom;
+    final centerY = itemStart(index) + (safeTop + effectiveBottom) * 0.5;
+    return centerY - viewportHeight * 0.5;
+  }
+
   ReaderScrollLocation locate(double scrollOffset) {
     if (isEmpty) return const ReaderScrollLocation(index: 0, localOffset: 0);
     final contentOffset =

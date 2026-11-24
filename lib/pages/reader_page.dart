@@ -362,7 +362,7 @@ class _ReaderPageState extends State<ReaderPage>
   bool _mediaServiceRetrying = false;
   bool _speechAutoAdvanceHandled = false;
   bool _autoTtsStarted = false;
-  int? _lastSpeechScrollBlock;
+  String? _lastSpeechScrollKey;
   final ValueNotifier<int> _ttsUiRevision = ValueNotifier<int>(0);
   int _ttsContentRevision = 0;
   bool _readerInputActive = true;
@@ -559,6 +559,27 @@ class _ReaderPageState extends State<ReaderPage>
 
   void _onTtsChanged() {
     _syncTtsMediaSession();
+    final status = _ttsController.status;
+    final segment = _ttsController.currentSegment;
+    if (_speechSession == null &&
+        status == TtsPlaybackStatus.playing &&
+        segment != null) {
+      final key = _speechSegmentScrollKey(segment);
+      if (key != _lastSpeechScrollKey) {
+        _lastSpeechScrollKey = key;
+        _followSpeechSegment(segment);
+      }
+      if (_positionRestored) {
+        _publishPosition(ReadingPosition.text(
+          blockIndex: segment.blockIndex,
+          offset: segment.startOffset,
+        ));
+      }
+    } else if (_speechSession == null &&
+        status != TtsPlaybackStatus.playing &&
+        status != TtsPlaybackStatus.paused) {
+      _lastSpeechScrollKey = null;
+    }
     // stop() may notify synchronously while reader content is being replaced
     // inside setState. Schedule the reader highlight update outside that call.
     scheduleMicrotask(() {
@@ -568,7 +589,8 @@ class _ReaderPageState extends State<ReaderPage>
 
   bool _isTtsBlockHighlighted(int index) {
     final speech = _speechSession;
-    if (speech != null && (speech.isPlaying || speech.isPaused)) {
+    if (speech != null &&
+        (speech.isPlaying || speech.isPaused || speech.isLoading)) {
       return speech.currentSegment?.blockIndex == index;
     }
     final status = _ttsController.status;
@@ -2937,7 +2959,133 @@ class _ReaderPageState extends State<ReaderPage>
     );
   }
 
-  void _followSpeechSegment(TtsSegment segment) {
+  String _speechSegmentScrollKey(TtsSegment segment) =>
+      '${segment.blockIndex}:${segment.startOffset}:${segment.endOffset}';
+
+  double? _scrollCenteredOffsetForSegment(
+    TtsSegment segment, {
+    required double viewportHeight,
+  }) {
+    final layout = _scrollLayoutIndex;
+    if (layout == null ||
+        layout.length != _blocks.length ||
+        _blocks.isEmpty ||
+        viewportHeight <= 0) {
+      return null;
+    }
+    final index = segment.blockIndex.clamp(0, _blocks.length - 1);
+    final block = _blocks[index];
+    double segmentTop = 0;
+    double segmentBottom = layout.itemExtents[index];
+    if (block.image != null) {
+      final imageHeight = _scrollImageHeight(block, _scrollContentWidth());
+      segmentTop = 10;
+      segmentBottom = 10 + imageHeight;
+    } else if (!block.isDivider) {
+      final painter = _scrollTextPainter(index);
+      try {
+        final plainLength = painter.text?.toPlainText().length ??
+            _scrollTextContent(
+              block,
+              lockedBody: _scrollLayoutLockedBody,
+            ).length;
+        final safeStart = segment.startOffset.clamp(0, plainLength);
+        final safeEnd = segment.endOffset.clamp(safeStart, plainLength);
+        final boxes = safeEnd > safeStart
+            ? painter.getBoxesForSelection(
+                TextSelection(baseOffset: safeStart, extentOffset: safeEnd),
+              )
+            : const <TextBox>[];
+        if (boxes.isNotEmpty) {
+          var minTop = boxes.first.top;
+          var maxBottom = boxes.first.bottom;
+          for (var i = 1; i < boxes.length; i++) {
+            final box = boxes[i];
+            if (box.top < minTop) minTop = box.top;
+            if (box.bottom > maxBottom) maxBottom = box.bottom;
+          }
+          segmentTop = minTop;
+          segmentBottom = maxBottom;
+        } else {
+          final caretTop = painter
+              .getOffsetForCaret(TextPosition(offset: safeStart), Rect.zero)
+              .dy;
+          segmentTop = caretTop;
+          segmentBottom = (caretTop + painter.preferredLineHeight)
+              .clamp(caretTop, painter.height)
+              .toDouble();
+        }
+      } finally {
+        painter.dispose();
+      }
+    }
+    return layout.centeredScrollOffsetForRange(
+      rawIndex: index,
+      segmentTop: segmentTop,
+      segmentBottom: segmentBottom,
+      viewportHeight: viewportHeight,
+    );
+  }
+
+  Future<void> _scrollSpeechSegmentToCenter(
+    TtsSegment segment, {
+    bool animate = true,
+  }) async {
+    final serial = ++_positionRestoreSerial;
+    final generation = ++_scrollProgressGeneration;
+    _restoringScrollAnchor = true;
+    try {
+      for (var attempt = 0; attempt < 4; attempt++) {
+        if (!mounted ||
+            _paged ||
+            serial != _positionRestoreSerial ||
+            generation != _scrollProgressGeneration) {
+          return;
+        }
+        final layout = _scrollLayoutIndex;
+        if (!_sc.hasClients ||
+            layout == null ||
+            layout.length != _blocks.length ||
+            _sc.position.viewportDimension <= 0) {
+          await WidgetsBinding.instance.endOfFrame;
+          continue;
+        }
+        final desiredOffset = _scrollCenteredOffsetForSegment(
+          segment,
+          viewportHeight: _sc.position.viewportDimension,
+        );
+        if (desiredOffset == null) {
+          await WidgetsBinding.instance.endOfFrame;
+          continue;
+        }
+        final target = desiredOffset
+            .clamp(_sc.position.minScrollExtent, _sc.position.maxScrollExtent)
+            .toDouble();
+        if ((_sc.offset - target).abs() < 1.0) {
+          return;
+        }
+        if (animate && !AppMotion.isDisabled(context)) {
+          await _sc.animateTo(
+            target,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+          );
+        } else {
+          _sc.jumpTo(target);
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        return;
+      }
+    } catch (_) {
+      // 页面关闭或用户主动滚动接管时安静退出，不影响朗读。
+    } finally {
+      if (mounted && serial == _positionRestoreSerial) {
+        _restoringScrollAnchor = false;
+      }
+    }
+  }
+
+  void _followSpeechSegment(TtsSegment segment, {bool animate = true}) {
     final anchor = ReadingPosition.text(
       blockIndex: segment.blockIndex,
       offset: segment.startOffset,
@@ -2950,16 +3098,24 @@ class _ReaderPageState extends State<ReaderPage>
         _pageController.jumpToPage(target);
       }
     } else if (_sc.hasClients) {
-      unawaited(_restoreScrollAnchor(anchor, retainAnchor: true));
+      unawaited(_scrollSpeechSegmentToCenter(segment, animate: animate));
     }
   }
 
   void _onSpeechSessionChanged() {
     if (!mounted) return;
-    final segment = _speechSession?.currentSegment;
-    if (segment != null && segment.blockIndex != _lastSpeechScrollBlock) {
-      _lastSpeechScrollBlock = segment.blockIndex;
-      _followSpeechSegment(segment);
+    final session = _speechSession;
+    final segment = session?.currentSegment;
+    if (session != null &&
+        (session.isPlaying || session.isLoading) &&
+        segment != null) {
+      final key = _speechSegmentScrollKey(segment);
+      if (key != _lastSpeechScrollKey) {
+        _lastSpeechScrollKey = key;
+        _followSpeechSegment(segment);
+      }
+    } else if (session == null || session.isStopped) {
+      _lastSpeechScrollKey = null;
     }
     if (segment != null && _positionRestored) {
       final anchor = ReadingPosition.text(
@@ -2978,7 +3134,6 @@ class _ReaderPageState extends State<ReaderPage>
     }
     _ttsUiRevision.value++;
     setState(() {});
-    final session = _speechSession;
     if (session == null ||
         !session.isCompleted ||
         !_ttsContinuousChapter ||
@@ -3081,13 +3236,29 @@ class _ReaderPageState extends State<ReaderPage>
     final speech = _speechSession;
     if (speech != null && speech.currentSegment?.blockIndex == blockIndex) {
       if (speech.isPaused) {
+        _lastSpeechScrollKey = null;
         await speech.resume();
       } else if (speech.isPlaying) {
         await speech.pause();
+      } else if (speech.isLoading) {
+        final segment = speech.currentSegment;
+        if (segment != null) _followSpeechSegment(segment);
       } else {
         await _startSpeechSession(startBlock: blockIndex);
       }
       return;
+    }
+    if (speech == null &&
+        _ttsController.currentSegment?.blockIndex == blockIndex) {
+      if (_ttsController.status == TtsPlaybackStatus.paused) {
+        _lastSpeechScrollKey = null;
+        await _ttsController.resume();
+        return;
+      }
+      if (_ttsController.status == TtsPlaybackStatus.playing) {
+        await _ttsController.pause();
+        return;
+      }
     }
     if (speech != null && !speech.isStopped) await speech.stop();
     if (_ttsController.status == TtsPlaybackStatus.playing ||
@@ -3098,7 +3269,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   Future<void> _startSpeechSession({int? startBlock}) async {
-    if (_speechStarting || !mounted) return;
+    if ((_speechStarting && startBlock == null) || !mounted) return;
     final revision = ++_speechStartRevision;
     setState(() {
       _speechStarting = true;
@@ -3173,6 +3344,7 @@ class _ReaderPageState extends State<ReaderPage>
         }
         await _ttsController.setRate(_ttsDraftRate);
         if (!current()) return;
+        _lastSpeechScrollKey = null;
         await _ttsController.play(filtered);
       } else if (mounted) {
         showFloatingPrompt(context, '音频服务尚未初始化');
@@ -3269,7 +3441,7 @@ class _ReaderPageState extends State<ReaderPage>
     _speechSession = speech;
     _activeSpeechConfig = config;
     _speechAutoAdvanceHandled = false;
-    _lastSpeechScrollBlock = null;
+    _lastSpeechScrollKey = null;
     _ttsSessionError = null;
     speech.addListener(_onSpeechSessionChanged);
     handler.bindSpeechSessionControls(
@@ -3606,6 +3778,7 @@ class _ReaderPageState extends State<ReaderPage>
                                   await _ttsController.pause();
                                 }
                               } else if (status == TtsPlaybackStatus.paused) {
+                                _lastSpeechScrollKey = null;
                                 if (speech != null) {
                                   await speech.resume();
                                 } else {
