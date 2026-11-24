@@ -351,6 +351,11 @@ class _ReaderPageState extends State<ReaderPage>
   CustomSsmlTts? _activeSpeechClient;
   SpeechSynthesisConfig? _activeSpeechConfig;
   String _speechAccountId = '';
+  Future<void> Function()? _adoptedSpeechRelease;
+  bool get _isListeningActive =>
+      (_speechSession != null && !_speechSession!.isStopped) ||
+      _ttsController.status == TtsPlaybackStatus.playing ||
+      _ttsController.status == TtsPlaybackStatus.paused;
   String _ttsSourceMode = 'online';
   ReaderLanguageFilter _ttsLanguageFilter = ReaderLanguageFilter.automatic;
   Duration _ttsSegmentInterval = Duration.zero;
@@ -1830,7 +1835,7 @@ class _ReaderPageState extends State<ReaderPage>
       await _renderDetail(cached,
           restore: restore,
           restorePosition: true,
-          savedPosition: savedPosition);
+          savedPosition: _backgroundListeningAnchor() ?? savedPosition);
       if (!mounted || loadSerial != _loadSerial) return;
       if (_readerCacheOwnerUid != cacheOwnerUid ||
           ReaderContentCache.generation != cacheGeneration) {
@@ -1839,6 +1844,7 @@ class _ReaderPageState extends State<ReaderPage>
       }
       setState(() => _loading = false);
       _resolveAdjacentOrPrefetch();
+      _reclaimBackgroundSpeechIfNeeded();
       _startAutoTtsIfNeeded();
 
       // 缓存只负责快速展示,仍在后台向服务端刷新,防止正文过期。
@@ -1882,14 +1888,19 @@ class _ReaderPageState extends State<ReaderPage>
         await _renderDetail(d,
             restore: restore,
             restorePosition: initialLoad && old == null,
-            savedPosition: savedPosition);
+            savedPosition:
+                (initialLoad && old == null ? _backgroundListeningAnchor() : null) ??
+                    savedPosition);
       } else {
         // 正文没有变化时只刷新锁定状态、标题和前后章信息,避免重排版。
         _updateDetailState(d);
       }
       if (!mounted) return;
       setState(() => _loading = false);
-      if (initialLoad) _startAutoTtsIfNeeded();
+      if (initialLoad) {
+        _reclaimBackgroundSpeechIfNeeded();
+        _startAutoTtsIfNeeded();
+      }
 
       // 只缓存公开正文或当前账号已解锁的付费正文。
       if (cacheOwnerUid != null) {
@@ -2852,6 +2863,7 @@ class _ReaderPageState extends State<ReaderPage>
   void _startAutoTtsIfNeeded() {
     if (!widget.autoStartTts ||
         _autoTtsStarted ||
+        _speechSession != null ||
         !mounted ||
         _loading ||
         _loadError != null ||
@@ -3062,12 +3074,14 @@ class _ReaderPageState extends State<ReaderPage>
     );
     if (_paged) {
       final target = _pageForAnchor(anchor);
-      if (target != null &&
-          _pageController.hasClients &&
-          target != _pageIndex) {
-        _pageController.jumpToPage(target);
+      if (target != null && _pageController.hasClients) {
+        if (target != _pageIndex) {
+          _pageController.jumpToPage(target);
+        }
+      } else {
+        _pendingPagedAnchor = anchor;
       }
-    } else if (_sc.hasClients) {
+    } else {
       unawaited(_scrollSpeechSegmentToCenter(segment, animate: animate));
     }
   }
@@ -3125,14 +3139,117 @@ class _ReaderPageState extends State<ReaderPage>
     ));
   }
 
+  ReadingPosition? _backgroundListeningAnchor() {
+    if (!ListeningNow.instance.matchesChapter(
+      bookId: widget.bookId,
+      chapterId: widget.chapterId,
+      accountId: _currentTtsAccountKey(),
+    )) {
+      return null;
+    }
+    final segment = ListeningNow.instance.session?.currentSegment;
+    return segment == null
+        ? null
+        : ReadingPosition.text(
+            blockIndex: segment.blockIndex,
+            offset: segment.startOffset,
+          );
+  }
+
+  void _reclaimBackgroundSpeechIfNeeded() {
+    if (!mounted ||
+        _speechSession != null ||
+        _loading ||
+        _loadError != null ||
+        !_positionRestored ||
+        _blocks.isEmpty) {
+      return;
+    }
+    final accountKey = _currentTtsAccountKey();
+    final transfer = ListeningNow.instance.take(
+      bookId: widget.bookId,
+      chapterId: widget.chapterId,
+      accountId: accountKey,
+    );
+    if (transfer == null) return;
+
+    final session = transfer.session;
+    final config = transfer.config;
+    _speechSession = session;
+    _activeSpeechConfig = config;
+    _speechAccountId =
+        transfer.accountId.isNotEmpty ? transfer.accountId : accountKey;
+    _adoptedSpeechRelease = transfer.releaseResources;
+    _speechAutoAdvanceHandled = false;
+    _lastSpeechScrollKey = null;
+    _ttsSessionError = session.error;
+    session.addListener(_onSpeechSessionChanged);
+    activeReaderAudioHandler?.bindSpeechSessionControls(
+      ownerKey: _speechSessionOwnerKey,
+      callbacks: TtsMediaCallbacks(
+        onPlay: session.onHandlerPlay,
+        onPause: session.onHandlerPaused,
+        onStop: session.onHandlerStopped,
+        onPrevious: session.onHandlerPrevious,
+        onNext: session.onHandlerNext,
+        onError: session.reportPlaybackError,
+      ),
+    );
+
+    final configMode = config == null
+        ? null
+        : switch (config.source) {
+            'system' => 'system',
+            'edge' => 'online',
+            'custom' => 'custom',
+            _ => null,
+          };
+    if (configMode != null) _ttsSourceMode = configMode;
+    if (config != null && config.source != 'edge') {
+      _ttsDraftRate = config.rate;
+    }
+    _ttsSegmentInterval = session.segmentInterval;
+    _ttsSleepTimer = session.sleepTimer;
+    unawaited(_loadTtsPreferences().then((_) {
+      if (!mounted || !identical(_speechSession, session)) return;
+      setState(() {
+        if (configMode != null) _ttsSourceMode = configMode;
+        if (config != null && config.source != 'edge') {
+          _ttsDraftRate = config.rate;
+        }
+        _ttsSegmentInterval = session.segmentInterval;
+        _ttsSleepTimer = session.sleepTimer;
+      });
+      _refreshTtsSheet();
+    }));
+
+    _ttsUiRevision.value++;
+    setState(() {});
+
+    final segment = session.currentSegment;
+    if (segment != null) {
+      _lastSpeechScrollKey = _speechSegmentScrollKey(segment);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !identical(_speechSession, session)) return;
+        final current = session.currentSegment ?? segment;
+        _lastSpeechScrollKey = _speechSegmentScrollKey(current);
+        _followSpeechSegment(current, animate: false);
+      });
+    }
+  }
+
   void _handSpeechToBackground() {
     final session = _speechSession;
     if (session == null) return;
     session.removeListener(_onSpeechSessionChanged);
     _speechSession = null;
     final client = _activeSpeechClient;
+    final config = _activeSpeechConfig;
+    final accountId = _speechAccountId;
+    final previousRelease = _adoptedSpeechRelease;
     _activeSpeechClient = null;
     _activeSpeechConfig = null;
+    _adoptedSpeechRelease = null;
     final platform = _ttsPlatform;
     ListeningNow.instance.adopt(
       session: session,
@@ -3141,7 +3258,12 @@ class _ReaderPageState extends State<ReaderPage>
       bookId: widget.bookId,
       chapterId: widget.chapterId,
       volumeId: widget.volumeId,
+      config: config,
+      accountId: accountId,
       releaseResources: () async {
+        try {
+          await previousRelease?.call();
+        } catch (_) {}
         client?.close();
         await platform.dispose();
       },
@@ -3174,11 +3296,13 @@ class _ReaderPageState extends State<ReaderPage>
     final session = _speechSession;
     final client = _activeSpeechClient;
     final account = _speechAccountId;
+    final adoptedRelease = _adoptedSpeechRelease;
     // Detach synchronously: an old dispose must never close a newly started
     // session or the new page's HTTP client after its first await.
     _speechSession = null;
     _activeSpeechClient = null;
     _activeSpeechConfig = null;
+    _adoptedSpeechRelease = null;
     session?.removeListener(_onSpeechSessionChanged);
     final handler = activeReaderAudioHandler;
     final ownsHandler =
@@ -3200,6 +3324,9 @@ class _ReaderPageState extends State<ReaderPage>
       }
     }
     client?.close();
+    try {
+      await adoptedRelease?.call();
+    } catch (_) {}
   }
 
   Future<void> _toggleTtsAtBlock(int blockIndex) async {
@@ -3635,7 +3762,9 @@ class _ReaderPageState extends State<ReaderPage>
       unawaited(_prepareSystemSpeechOptions());
     }
     if (!mounted || !validContent()) return;
-    if (_activeSpeechConfig != null) _ttsDraftRate = _activeSpeechConfig!.rate;
+    if (_activeSpeechConfig != null && _activeSpeechConfig!.source != 'edge') {
+      _ttsDraftRate = _activeSpeechConfig!.rate;
+    }
     var changingSource = false;
     await showModalBottomSheet<void>(
       context: context,
@@ -6597,8 +6726,13 @@ class _ReaderPageState extends State<ReaderPage>
                             if (defaultTargetPlatform == TargetPlatform.android)
                               IconButton(
                                 tooltip: '系统朗读',
-                                icon: Icon(Icons.record_voice_over_rounded,
-                                    size: 22, color: _textColor),
+                                icon: Icon(
+                                  Icons.record_voice_over_rounded,
+                                  size: 22,
+                                  color: _isListeningActive
+                                      ? _linkColor
+                                      : _textColor,
+                                ),
                                 onPressed: _showTtsSheet,
                               ),
                             IconButton(

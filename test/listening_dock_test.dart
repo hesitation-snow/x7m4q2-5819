@@ -312,6 +312,90 @@ void main() {
     }
   });
 
+  testWidgets(
+      'HomePage in standard M3 mode floats ListeningDock above NavigationBar with full-height feed behind it',
+      (tester) async {
+    late Directory temp;
+    await tester.runAsync(() async {
+      final started = await _startListeningSession();
+      temp = started.temp;
+    });
+
+    final oldClient = LKApi.client;
+    final oldGlassEnabled = LKStore.liquidGlassBottomBarEnabled.value;
+    final oldConfig = LKStore.glassConfiguration.value;
+    final oldUpdate = LKStore.autoCheckUpdateEnabled.value;
+
+    try {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+        (_) async => null,
+      );
+
+      LKApi.client = LKClient.forTesting(
+        httpClient: MockClient(
+          (_) async => http.Response(
+            '{"code":0,"data":{"list":[],"has_more":false}}',
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          ),
+        ),
+      );
+      LKStore.autoCheckUpdateEnabled.value = false;
+      LKStore.liquidGlassBottomBarEnabled.value = false;
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(useMaterial3: true),
+          home: const MediaQuery(
+            data: MediaQueryData(
+              size: Size(412, 915),
+              padding: EdgeInsets.only(bottom: 24),
+            ),
+            child: HomePage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.byType(ListeningDock), findsOneWidget);
+      expect(find.byType(LiquidGlassBottomBar), findsNothing);
+      expect(find.byType(LiquidGlassCapsule), findsNothing);
+
+      final navBarRect = tester.getRect(find.byType(NavigationBar));
+      final dockRect = tester.getRect(find.byType(ListeningDock));
+      final indexedStackRect = tester.getRect(
+        find
+            .descendant(
+              of: find.byType(HomePage),
+              matching: find.byType(IndexedStack),
+            )
+            .first,
+      );
+
+      expect(indexedStackRect.bottom, closeTo(navBarRect.top, 0.5));
+      expect(navBarRect.top - dockRect.bottom, closeTo(8.0, 0.5));
+      expect(tester.takeException(), isNull);
+    } finally {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+      LKApi.client = oldClient;
+      LKStore.liquidGlassBottomBarEnabled.value = oldGlassEnabled;
+      LKStore.glassConfiguration.value = oldConfig;
+      LKStore.autoCheckUpdateEnabled.value = oldUpdate;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+        null,
+      );
+      await _cleanupListeningSession(tester, temp);
+    }
+  });
+
   testWidgets('tapping horizontally outside liquid glass dock passes through',
       (tester) async {
     late Directory temp;

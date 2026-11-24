@@ -518,20 +518,24 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
-                if (!useLiquidGlass) const ListeningDock(),
               ],
             ),
-                if (useLiquidGlass)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: _LiquidGlassListeningDockOverlay(
-                      barFrac: _barFrac,
-                      outerBottomPadding: outerBottomPadding,
-                      keyboardInset: outerKeyboardInset,
-                    ),
-                  ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: useLiquidGlass
+                      ? _LiquidGlassListeningDockOverlay(
+                          barFrac: _barFrac,
+                          outerBottomPadding: outerBottomPadding,
+                          keyboardInset: outerKeyboardInset,
+                        )
+                      : _DockedListeningDockOverlay(
+                          barFrac: _barFrac,
+                          outerBottomPadding: outerBottomPadding,
+                          keyboardInset: outerKeyboardInset,
+                        ),
+                ),
               ],
             ),
             bottomNavigationBar: useLiquidGlass
@@ -2730,6 +2734,41 @@ class _LiquidGlassListeningDockOverlay extends StatelessWidget {
               glassConfiguration: optics,
             ),
           ),
+        );
+      },
+    );
+  }
+}
+
+class _DockedListeningDockOverlay extends StatelessWidget {
+  const _DockedListeningDockOverlay({
+    required this.barFrac,
+    required this.outerBottomPadding,
+    required this.keyboardInset,
+  });
+
+  final ValueNotifier<double> barFrac;
+  final double outerBottomPadding;
+  final double keyboardInset;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        ListeningNow.instance,
+        barFrac,
+      ]),
+      builder: (context, _) {
+        final now = ListeningNow.instance;
+        if (!now.active || now.session == null) {
+          return const SizedBox.shrink();
+        }
+        final fraction = barFrac.value.clamp(0.0, 1.0).toDouble();
+        final extraBottom =
+            keyboardInset > 0 ? 0.0 : outerBottomPadding * (1.0 - fraction);
+        return Padding(
+          padding: EdgeInsets.only(bottom: 8.0 + extraBottom),
+          child: const ListeningDock(),
         );
       },
     );

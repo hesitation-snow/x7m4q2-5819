@@ -2,6 +2,20 @@ import 'package:flutter/foundation.dart';
 
 import '../reader/reader_speech_session.dart';
 
+class ListeningSessionTransfer {
+  const ListeningSessionTransfer({
+    required this.session,
+    required this.config,
+    required this.accountId,
+    required this.releaseResources,
+  });
+
+  final ReaderSpeechSession session;
+  final SpeechSynthesisConfig? config;
+  final String accountId;
+  final Future<void> Function()? releaseResources;
+}
+
 /// Playback that outlives the reader page. Leaving a chapter keeps the
 /// current session running and exposes it to the home dock.
 class ListeningNow extends ChangeNotifier {
@@ -12,6 +26,8 @@ class ListeningNow extends ChangeNotifier {
   Future<void> Function()? _releaseResources;
   Future<void>? _stopFuture;
 
+  SpeechSynthesisConfig? config;
+  String accountId = '';
   String bookTitle = '';
   String chapterTitle = '';
   int bookId = 0;
@@ -28,11 +44,15 @@ class ListeningNow extends ChangeNotifier {
     required int bookId,
     required int chapterId,
     required int volumeId,
+    SpeechSynthesisConfig? config,
+    String accountId = '',
     Future<void> Function()? releaseResources,
   }) {
     if (identical(_session, session)) {
       this.bookTitle = bookTitle;
       this.chapterTitle = chapterTitle;
+      this.config = config;
+      this.accountId = accountId;
       notifyListeners();
       return;
     }
@@ -40,6 +60,8 @@ class ListeningNow extends ChangeNotifier {
     final previousRelease = _releaseResources;
     _session = session;
     _releaseResources = releaseResources;
+    this.config = config;
+    this.accountId = accountId;
     this.bookTitle = bookTitle;
     this.chapterTitle = chapterTitle;
     this.bookId = bookId;
@@ -59,6 +81,50 @@ class ListeningNow extends ChangeNotifier {
     }
   }
 
+  bool matchesChapter({
+    required int bookId,
+    required int chapterId,
+    String? accountId,
+  }) {
+    if (!active || _stopFuture != null) return false;
+    if (this.bookId != bookId || this.chapterId != chapterId) return false;
+    if (accountId != null &&
+        this.accountId.isNotEmpty &&
+        this.accountId != accountId) {
+      return false;
+    }
+    return true;
+  }
+
+  ListeningSessionTransfer? take({
+    required int bookId,
+    required int chapterId,
+    String? accountId,
+  }) {
+    if (!matchesChapter(
+      bookId: bookId,
+      chapterId: chapterId,
+      accountId: accountId,
+    )) {
+      return null;
+    }
+    final session = _session;
+    if (session == null) return null;
+    session.removeListener(_onSession);
+    final transfer = ListeningSessionTransfer(
+      session: session,
+      config: config,
+      accountId: this.accountId,
+      releaseResources: _releaseResources,
+    );
+    _session = null;
+    _releaseResources = null;
+    config = null;
+    this.accountId = '';
+    notifyListeners();
+    return transfer;
+  }
+
   void _onSession() {
     final session = _session;
     if (session == null || _stopFuture != null) return;
@@ -66,6 +132,8 @@ class ListeningNow extends ChangeNotifier {
       final release = _releaseResources;
       _session = null;
       _releaseResources = null;
+      config = null;
+      accountId = '';
       session.removeListener(_onSession);
       notifyListeners();
       Future<void>(() async {
@@ -108,6 +176,8 @@ class ListeningNow extends ChangeNotifier {
     final release = _releaseResources;
     _session = null;
     _releaseResources = null;
+    config = null;
+    accountId = '';
     session?.removeListener(_onSession);
     try {
       if (session != null && !session.isStopped) {

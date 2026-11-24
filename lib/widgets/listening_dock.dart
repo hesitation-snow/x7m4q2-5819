@@ -191,11 +191,12 @@ class _ListeningDockState extends State<ListeningDock> {
           ),
         );
 
+        final activePress = _pressed && !reduceMotion;
+
         if (widget.liquidGlass) {
           final optics = widget.glassConfiguration ??
               LKStore.glassConfigurationFor(MediaQuery.sizeOf(context));
           final dockWidth = liquidGlassBarWidth(context, optics);
-          final activePress = _pressed && !reduceMotion;
           return AnimatedScale(
             scale: activePress ? 0.985 : 1.0,
             duration: AppMotion.duration(context, 120),
@@ -212,20 +213,27 @@ class _ListeningDockState extends State<ListeningDock> {
         }
 
         return Padding(
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-          child: SizedBox(
-            height: dockHeight,
-            child: Material(
-              color: scheme.surfaceContainerHigh,
-              elevation: 2,
-              shadowColor: scheme.shadow.withValues(alpha: .18),
-              shape: StadiumBorder(
-                side: BorderSide(
-                  color: scheme.outlineVariant.withValues(alpha: 0.35),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: AnimatedScale(
+            scale: activePress ? 0.985 : 1.0,
+            duration: AppMotion.duration(context, 120),
+            curve: Curves.easeOutCubic,
+            child: SizedBox(
+              height: dockHeight,
+              child: Material(
+                color: scheme.surfaceContainerHigh,
+                elevation: 4,
+                shadowColor:
+                    scheme.shadow.withValues(alpha: dark ? 0.45 : 0.22),
+                shape: StadiumBorder(
+                  side: BorderSide(
+                    color: scheme.outlineVariant
+                        .withValues(alpha: dark ? 0.42 : 0.50),
+                  ),
                 ),
+                clipBehavior: Clip.antiAlias,
+                child: content,
               ),
-              clipBehavior: Clip.antiAlias,
-              child: content,
             ),
           ),
         );
