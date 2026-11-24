@@ -231,12 +231,19 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                       ),
                     ),
         ),
-        Material(
-          color: scheme.surfaceContainer,
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainer,
+            border: Border(
+              top: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: .25),
+              ),
+            ),
+          ),
           child: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Expanded(
                   child: TextField(
@@ -245,17 +252,41 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                     maxLines: 5,
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
-                        filled: true,
-                        fillColor: scheme.surfaceContainerHighest,
-                        hintText: '发消息…',
-                        isDense: true,
-                        border: const OutlineInputBorder()),
+                      filled: true,
+                      fillColor: scheme.surfaceContainerHigh,
+                      hintText: '发消息…',
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(22),
+                        borderSide: BorderSide.none,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(22),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(22),
+                        borderSide: BorderSide(
+                          color: scheme.primary,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 FilledButton(
-                    onPressed: _sending ? null : _send,
-                    child: Text(_sending ? '发送中…' : '发送')),
+                  style: FilledButton.styleFrom(
+                    shape: const StadiumBorder(),
+                    minimumSize: const Size(64, 42),
+                  ),
+                  onPressed: _sending ? null : _send,
+                  child: Text(_sending ? '发送中…' : '发送'),
+                ),
               ]),
             ),
           ),

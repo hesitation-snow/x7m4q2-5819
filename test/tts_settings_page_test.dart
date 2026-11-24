@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,14 +8,61 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/lk_client.dart';
+import 'package:yomiru/pages/brave_quiz_page.dart';
 import 'package:yomiru/pages/custom_tts_settings_page.dart';
 import 'package:yomiru/pages/settings_page.dart';
 import 'package:yomiru/pages/tts_settings_page.dart';
-import 'package:yomiru/reader/reader_language_segments.dart';
+import 'package:yomiru/reader/reader_language_segments.dart'
+    show PlaybackSleepTimer, ReaderLanguageFilter;
+import 'package:yomiru/reader/reader_speech_session.dart';
+import 'package:yomiru/reader/reader_tts_core.dart';
 import 'package:yomiru/services/app_theme.dart';
+import 'package:yomiru/services/listening_now.dart';
 import 'package:yomiru/services/reader_tts_preferences.dart';
 import 'package:yomiru/services/slider_haptics.dart';
+import 'package:yomiru/widgets/listening_dock.dart';
+import 'package:yomiru/widgets/m3_menu_sheet.dart';
 import 'package:yomiru/widgets/reader_listening_sheet.dart';
+
+class _TestSpeechSynth implements SpeechAudioSynthesizer {
+  @override
+  Future<File> synthesize(
+    String text,
+    SpeechSynthesisConfig config,
+    String cachePath,
+  ) async {
+    final file = File(cachePath);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(text);
+    return file;
+  }
+}
+
+class _TestSpeechHandler implements SpeechFilesHandler {
+  @override
+  Future<void> playFiles(
+    List<File> files, {
+    required String title,
+    String? artist,
+    required int startIndex,
+    required FutureOr<void> Function(int) onSegmentChanged,
+    required FutureOr<void> Function() onCompleted,
+  }) async {
+    await onSegmentChanged(0);
+  }
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> skipToNext() async {}
+
+  @override
+  Future<void> skipToPrevious() async {}
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -310,5 +360,94 @@ void main() {
       haptics,
       everyElement('HapticFeedbackType.selectionClick'),
     );
+  });
+
+  testWidgets('ListeningMenu displays M3SheetHeader and ListeningPlaybackCard',
+      (tester) async {
+    late Directory temp;
+    await tester.runAsync(() async {
+      temp = await Directory.systemTemp.createTemp('yomiru_listening_menu_');
+      final cache = SpeechAudioCache(
+        temporaryDirectory: () async => temp,
+        budgetBytes: 1024 * 1024,
+      );
+      final session = ReaderSpeechSession(
+        handler: _TestSpeechHandler(),
+        synthesizer: _TestSpeechSynth(),
+        cache: cache,
+      );
+      const text = '第一段后台听书内容测试';
+      await session.start(
+        const [
+          TtsSegment(
+            blockIndex: 0,
+            startOffset: 0,
+            endOffset: text.length,
+            text: text,
+          ),
+        ],
+        accountId: 'guest',
+        config: const SpeechSynthesisConfig(
+          source: 'system',
+          voice: 'v1',
+          language: 'zh-CN',
+          rate: 1,
+        ),
+        title: '测试轻小说',
+        artist: '第一章',
+      );
+      ListeningNow.instance.adopt(
+        session: session,
+        bookTitle: '测试轻小说',
+        chapterTitle: '第一章',
+        bookId: 1001,
+        chapterId: 2001,
+        volumeId: 10,
+      );
+    });
+
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showListeningMenu(context),
+                child: const Text('打开听书菜单'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开听书菜单'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(M3SheetHeader), findsOneWidget);
+      expect(find.byType(ListeningPlaybackCard), findsOneWidget);
+      expect(find.text('正在听书'), findsOneWidget);
+      expect(find.text('测试轻小说 · 第一章'), findsOneWidget);
+      expect(find.text('第一段后台听书内容测试'), findsOneWidget);
+      expect(find.text('回到阅读'), findsOneWidget);
+      expect(find.text('停止'), findsOneWidget);
+      expect(find.byTooltip('听书设置'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.runAsync(() async {
+        await ListeningNow.instance.stop();
+        if (await temp.exists()) await temp.delete(recursive: true);
+      });
+    }
+  });
+
+  testWidgets('BraveQuizPage logged-out view renders M3 medallion and CTA',
+      (tester) async {
+    LKClient.shared.session.clear();
+    await tester.pumpWidget(const MaterialApp(home: BraveQuizPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('勇者考试'), findsOneWidget);
+    expect(find.text('登录后才能参加勇者考试'), findsOneWidget);
+    expect(find.text('去登录'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

@@ -5,6 +5,7 @@ import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../widgets/common.dart';
+import '../widgets/m3_controls.dart';
 import 'login_page.dart';
 
 /// 勇者考试页面。
@@ -180,12 +181,41 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
     );
   }
 
+  Widget _medallion(IconData icon,
+      {required Color background, required Color foreground}) {
+    return Center(
+      child: Container(
+        width: 64,
+        height: 64,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Icon(icon, size: 32, color: foreground),
+      ),
+    );
+  }
+
   Widget _buildLoggedOut() {
+    final scheme = Theme.of(context).colorScheme;
     return _scrollBody([
-      const SizedBox(height: 160),
-      const Icon(Icons.lock_outline_rounded, size: 46),
-      const SizedBox(height: 14),
-      const Center(child: Text('登录后才能参加勇者考试')),
+      const SizedBox(height: 140),
+      _medallion(
+        Icons.lock_outline_rounded,
+        background: scheme.surfaceContainerHigh,
+        foreground: scheme.primary,
+      ),
+      const SizedBox(height: 16),
+      Center(
+        child: Text(
+          '登录后才能参加勇者考试',
+          style: Theme.of(context)
+              .textTheme
+              .titleMedium
+              ?.copyWith(fontWeight: FontWeight.w600),
+        ),
+      ),
       const SizedBox(height: 16),
       Center(
         child: FilledButton(
@@ -204,10 +234,15 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
   }
 
   Widget _buildError() {
+    final scheme = Theme.of(context).colorScheme;
     return _scrollBody([
-      const SizedBox(height: 150),
-      const Icon(Icons.error_outline_rounded, size: 44),
-      const SizedBox(height: 12),
+      const SizedBox(height: 140),
+      _medallion(
+        Icons.error_outline_rounded,
+        background: scheme.errorContainer.withValues(alpha: .7),
+        foreground: scheme.onErrorContainer,
+      ),
+      const SizedBox(height: 14),
       Center(
         child: Text(
           _error ?? '题目加载失败，请稍后重试',
@@ -226,20 +261,24 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
   }
 
   Widget _buildUnavailable() {
+    final scheme = Theme.of(context).colorScheme;
     final status = _status!;
     final message = status.answered
         ? '今日已经答题，请明日再试'
         : (status.message.isNotEmpty ? status.message : '勇者答题暂不可用');
     return _scrollBody([
-      const SizedBox(height: 150),
-      Icon(
+      const SizedBox(height: 140),
+      _medallion(
         status.answered
             ? Icons.check_circle_outline_rounded
-            : Icons.info_outline,
-        size: 52,
-        color: status.answered ? Colors.green : null,
+            : Icons.info_outline_rounded,
+        background: status.answered
+            ? scheme.primaryContainer
+            : scheme.surfaceContainerHigh,
+        foreground:
+            status.answered ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 16),
       Center(
         child: Text(
           message,
@@ -249,23 +288,31 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
       ),
       if (status.score > 0) ...[
         const SizedBox(height: 8),
-        Center(child: Text('本次成绩：${status.score} 分')),
+        Center(
+          child: Text(
+            '本次成绩：${status.score} 分',
+            style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+        ),
       ],
     ]);
   }
 
   Widget _buildResult() {
+    final scheme = Theme.of(context).colorScheme;
     final result = _result!;
     final passed = _resultPassed(result);
     final passing = _paper?.passingScore ?? _status?.passingScore ?? 60;
     return _scrollBody([
-      const SizedBox(height: 80),
-      Icon(
+      const SizedBox(height: 68),
+      _medallion(
         passed ? Icons.emoji_events_outlined : Icons.assignment_outlined,
-        size: 68,
-        color: passed ? Colors.amber.shade700 : null,
+        background:
+            passed ? scheme.primaryContainer : scheme.surfaceContainerHigh,
+        foreground:
+            passed ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 16),
       Center(
         child: Text(
           passed ? '恭喜通过勇者考试' : '答题未通过',
@@ -273,7 +320,13 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
         ),
       ),
       const SizedBox(height: 20),
-      Card(
+      Material(
+        color: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .25)),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: Padding(
           padding: const EdgeInsets.all(18),
           child: Column(
@@ -284,15 +337,24 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
                 _resultLine('答对题数', '${result.correctCount}'),
               if (result.points > 0) _resultLine('获得积分', '${result.points}'),
               if (result.message.isNotEmpty) ...[
-                const Divider(height: 22),
+                Divider(
+                  height: 22,
+                  color: scheme.outlineVariant.withValues(alpha: .3),
+                ),
                 Text(result.message, textAlign: TextAlign.center),
               ],
             ],
           ),
         ),
       ),
-      const SizedBox(height: 18),
+      const SizedBox(height: 20),
       FilledButton(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size.fromHeight(46),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
         onPressed: () => Navigator.pop(context),
         child: const Text('完成'),
       ),
@@ -301,7 +363,7 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
 
   Widget _resultLine(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -318,9 +380,16 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
     final selected = _answers[question];
     final total = paper.questions.length;
     final isLast = _questionIndex == total - 1;
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return _scrollBody([
-      Card(
+      Material(
+        color: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .25)),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
           child: Column(
@@ -328,64 +397,161 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
             children: [
               Row(
                 children: [
-                  Text(
-                    '第 ${_questionIndex + 1} / $total 题',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  const AppSettingIcon(Icons.quiz_outlined),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '第 ${_questionIndex + 1} / $total 题',
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
                   ),
-                  const Spacer(),
-                  Text(
-                    '单选',
-                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: scheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '单选',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSecondaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              LinearProgressIndicator(value: (_questionIndex + 1) / total),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  minHeight: 6,
+                  value: (_questionIndex + 1) / total,
+                  backgroundColor: scheme.surfaceContainerHighest,
+                ),
+              ),
             ],
           ),
         ),
       ),
       const SizedBox(height: 12),
-      Card(
+      Material(
+        color: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .25)),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Text(
             question.prompt,
-            style: const TextStyle(fontSize: 17, height: 1.45),
+            style: const TextStyle(fontSize: 17, height: 1.5),
           ),
         ),
       ),
-      const SizedBox(height: 10),
-      RadioGroup<LKBraveQuizOption>(
-        groupValue: selected,
-        onChanged: (value) {
-          if (!_submitting && value != null) _selectOption(question, value);
-        },
-        child: Column(
-          children: question.options
-              .map(
-                (option) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Card(
-                    clipBehavior: Clip.antiAlias,
-                    child: RadioListTile<LKBraveQuizOption>(
-                      value: option,
-                      enabled: !_submitting,
-                      title: Text(option.text),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+      const SizedBox(height: 12),
+      for (var i = 0; i < question.options.length; i++)
+        Builder(builder: (_) {
+          final option = question.options[i];
+          final isSelected = selected == option;
+          final badgeLabel =
+              i < 26 ? String.fromCharCode(65 + i) : '${i + 1}';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Semantics(
+              selected: isSelected,
+              button: true,
+              child: Material(
+                color: isSelected
+                    ? scheme.secondaryContainer
+                    : scheme.surfaceContainerLow,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(
+                    color: isSelected
+                        ? scheme.primary
+                        : scheme.outlineVariant.withValues(alpha: .25),
+                    width: isSelected ? 1.5 : 1,
+                  ),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: _submitting
+                      ? null
+                      : () => _selectOption(question, option),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 14,
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 28,
+                          height: 28,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? scheme.primary
+                                : scheme.surfaceContainerHigh,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            badgeLabel,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: isSelected
+                                  ? scheme.onPrimary
+                                  : scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            option.text,
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              color: isSelected
+                                  ? scheme.onSecondaryContainer
+                                  : scheme.onSurface,
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                        if (isSelected) ...[
+                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.check_circle_rounded,
+                            color: scheme.primary,
+                            size: 20,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ),
-              )
-              .toList(growable: false),
-        ),
-      ),
+              ),
+            ),
+          );
+        }),
       const SizedBox(height: 8),
       Row(
         children: [
           if (_questionIndex > 0)
             Expanded(
               child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(46),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
                 onPressed: _submitting ? null : _previousQuestion,
                 child: const Text('上一题'),
               ),
@@ -393,6 +559,12 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
           if (_questionIndex > 0) const SizedBox(width: 10),
           Expanded(
             child: FilledButton(
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(46),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
               onPressed: _submitting ? null : _nextQuestion,
               child: _submitting
                   ? const SizedBox(

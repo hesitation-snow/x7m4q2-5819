@@ -167,6 +167,11 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final idleBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(18),
+      borderSide: BorderSide(color: scheme.outlineVariant.withValues(alpha: .25)),
+    );
     return Scaffold(
       appBar: AppBar(
         title: const Text('发布动态'),
@@ -181,7 +186,12 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          24 + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           TextField(
             controller: _controller,
@@ -189,12 +199,20 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
             maxLines: 12,
             maxLength: 2000,
             autofocus: true,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               hintText: '分享此刻想说的话…',
-              border: OutlineInputBorder(),
+              filled: true,
+              fillColor: scheme.surfaceContainerLow,
+              contentPadding: const EdgeInsets.all(16),
+              border: idleBorder,
+              enabledBorder: idleBorder,
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide(color: scheme.primary, width: 1.5),
+              ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -202,7 +220,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
               ..._media.asMap().entries.map((entry) => Stack(
                     children: [
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(12),
                         child: CachedNetworkImage(
                           fadeOutDuration: AppMotion.duration(context, 1000),
                           fadeInDuration: AppMotion.duration(context, 500),
@@ -214,23 +232,44 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                         ),
                       ),
                       Positioned(
-                        right: 0,
-                        top: 0,
-                        child: IconButton(
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.cancel, color: Colors.white),
-                          onPressed: () =>
-                              setState(() => _media.removeAt(entry.key)),
+                        right: 4,
+                        top: 4,
+                        child: Material(
+                          color: Colors.black.withValues(alpha: 0.6),
+                          shape: const CircleBorder(),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            onTap: () =>
+                                setState(() => _media.removeAt(entry.key)),
+                            child: const Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(
+                                Icons.close_rounded,
+                                size: 16,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ],
                   )),
               OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
                 onPressed: _showEmojiPicker,
                 icon: const Icon(Icons.emoji_emotions_outlined),
                 label: const Text('表情'),
               ),
               OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
                 onPressed: _uploading ? null : _pickImage,
                 icon: _uploading
                     ? const SizedBox(

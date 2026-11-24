@@ -33,6 +33,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
   bool _includeIllustrations = true;
   bool _exportAsTxt = false;
   bool _warnedDataSaver = false;
+  bool _failedExpanded = true;
   final GlobalKey _shareButtonKey = GlobalKey();
 
   TextEditingController? _titleController;
@@ -731,61 +732,108 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
 
         // 如果存在失败章节，显示失败列表
         if (task.failedCount > 0) ...[
-          Card(
-            color: scheme.errorContainer.withValues(alpha: 0.2),
+          Material(
+            color: scheme.errorContainer.withValues(alpha: 0.22),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(18),
               side: BorderSide(
-                color: scheme.error.withValues(alpha: 0.4),
+                color: scheme.error.withValues(alpha: 0.35),
               ),
             ),
-            child: ExpansionTile(
-              initiallyExpanded: true,
-              leading: Icon(Icons.warning_amber_rounded, color: scheme.error),
-              title: Text(
-                '有 ${task.failedCount} 个章节下载未成功',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.error,
-                ),
-              ),
-              subtitle: const Text('可一键重试或直接导出已完成部分'),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final entry in task.failedChapters.entries) ...[
-                  ListTile(
-                    dense: true,
-                    title: Text(
-                      _findChapterTitle(task, entry.key),
-                      style: const TextStyle(fontSize: 13),
+                InkWell(
+                  onTap: () =>
+                      setState(() => _failedExpanded = !_failedExpanded),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                    child: Row(
+                      children: [
+                        const AppSettingIcon(
+                          Icons.warning_amber_rounded,
+                          danger: true,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '有 ${task.failedCount} 个章节下载未成功',
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: scheme.error,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '可一键重试或直接导出已完成部分',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          _failedExpanded
+                              ? Icons.keyboard_arrow_up_rounded
+                              : Icons.keyboard_arrow_down_rounded,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ],
                     ),
-                    subtitle: Text(
-                      entry.value,
-                      style: TextStyle(fontSize: 12, color: scheme.error),
+                  ),
+                ),
+                if (_failedExpanded) ...[
+                  for (final entry in task.failedChapters.entries)
+                    ListTile(
+                      dense: true,
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 16),
+                      title: Text(
+                        _findChapterTitle(task, entry.key),
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      subtitle: Text(
+                        entry.value,
+                        style: TextStyle(fontSize: 12, color: scheme.error),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            onPressed: () => _service.retryFailedChapters(),
+                            icon: const Icon(Icons.refresh_rounded, size: 18),
+                            label: const Text('重试失败章节'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton.tonal(
+                            style: FilledButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            onPressed: () => _service.exportCompletedContent(),
+                            child: const Text('导出已完成内容'),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _service.retryFailedChapters(),
-                          icon: const Icon(Icons.refresh_rounded, size: 18),
-                          label: const Text('重试失败章节'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: () => _service.exportCompletedContent(),
-                          child: const Text('导出已完成内容'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),
@@ -959,8 +1007,24 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                           labelText:
                               task.options.exportAsTxt ? 'TXT 标题' : 'EPUB 标题',
                           hintText: '输入自定义标题',
+                          filled: true,
+                          fillColor: scheme.surfaceContainerHigh,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 14,
+                          ),
                           border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide:
+                                BorderSide(color: scheme.primary, width: 1.5),
                           ),
                           suffixIcon: IconButton(
                             icon: const Icon(Icons.refresh_rounded, size: 20),

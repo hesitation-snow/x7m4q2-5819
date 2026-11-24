@@ -4075,156 +4075,255 @@ class _ReaderPageState extends State<ReaderPage>
         builder: (sheetContext, _, __) {
           if (!sameAccount()) {
             return SafeArea(
-                child: ListTile(
-                    title: const Text('账户已切换'),
-                    trailing: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.pop(sheetContext))));
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  M3SheetHeader(
+                    title: '本章书签',
+                    icon: Icons.bookmark_outline_rounded,
+                    onClose: () => Navigator.pop(sheetContext),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
+                    child: AppSettingsGroup(
+                      children: [
+                        ListTile(
+                          leading: AppSettingIcon(Icons.swap_horiz_rounded),
+                          title: Text('账户已切换'),
+                          subtitle: Text('请重新打开书签面板查看当前账户书签'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
           }
           return StatefulBuilder(builder: (sheetContext, setSheet) {
+            final theme = Theme.of(sheetContext);
+            final scheme = theme.colorScheme;
             return SafeArea(
                 top: false,
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
-                      maxHeight: MediaQuery.sizeOf(sheetContext).height * .7),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    M3SheetHeader(
-                        title: '本章书签',
-                        icon: Icons.bookmark_outline_rounded,
-                        onClose: () => Navigator.pop(sheetContext)),
-                    const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 20),
-                        child: Text('书签仅保存在本机，按当前账户隔离',
-                            style: TextStyle(fontSize: 12))),
-                    ListTile(
-                        leading: const Icon(Icons.bookmark_add_outlined),
-                        title: const Text('保存当前位置'),
-                        onTap: () async {
-                          if (!sameAccount()) {
-                            Navigator.pop(sheetContext);
-                            return;
-                          }
-                          final raw = _paged
-                              ? (_logicalAnchor ?? _anchorForPage(_pageIndex))
-                              : (_captureScrollAnchor() ?? _logicalAnchor);
-                          if (raw == null || _blocks.isEmpty) return;
-                          final position = _normalizeAnchor(raw);
-                          final block = _blocks[position.blockIndex];
-                          final offset = position.textOffset ?? 0;
-                          final start =
-                              (offset - 24).clamp(0, block.text.length);
-                          final end = (offset + 24).clamp(0, block.text.length);
-                          if (block.image == null && start == end) {
-                            showFloatingPrompt(context, '此位置没有可保存的正文');
-                            return;
-                          }
-                          final now = DateTime.now();
-                          final bookmark = ReaderBookmark(
-                              id: '${now.microsecondsSinceEpoch}',
-                              bookId: widget.bookId,
-                              chapterId: widget.chapterId,
-                              chapterTitle: _title,
-                              position: position,
-                              context: block.text.substring(start, end),
-                              contextOffset: offset - start,
-                              createdAt: now,
-                              imageFingerprint: block.image == null
-                                  ? null
-                                  : bookmarkImageFingerprint(block.image!));
-                          try {
-                            await ReaderBookmarkStore.add(
-                                uid: uid, bookmark: bookmark);
-                            if (!mounted ||
-                                !sameAccount() ||
-                                !sheetContext.mounted) {
-                              return;
-                            }
-                            setSheet(() => items = [...items, bookmark]);
-                            showFloatingPrompt(context, '已保存本地书签');
-                          } catch (_) {
-                            if (mounted && sameAccount()) {
-                              showFloatingPrompt(context, '保存书签失败');
-                            }
-                          }
-                        }),
-                    Flexible(
-                        child: items.isEmpty
-                            ? const Padding(
-                                padding: EdgeInsets.all(24),
-                                child: Text('本章暂无书签'))
-                            : ListView.builder(
-                                shrinkWrap: true,
-                                itemCount: items.length,
-                                itemBuilder: (ctx, i) {
-                                  final bookmark = items[items.length - 1 - i];
-                                  final date = bookmark.createdAt.toLocal();
-                                  final time =
-                                      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-                                  return ListTile(
-                                    title: Text(
-                                        bookmark.context.isEmpty
-                                            ? '插画'
-                                            : bookmark.context,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis),
-                                    subtitle: Text(
-                                        '${bookmark.chapterTitle} · $time'),
-                                    trailing: IconButton(
-                                        tooltip: '删除书签',
-                                        icon: const Icon(
-                                            Icons.delete_outline_rounded),
-                                        onPressed: () async {
-                                          if (!sameAccount()) {
-                                            Navigator.pop(sheetContext);
-                                            return;
-                                          }
-                                          try {
-                                            await ReaderBookmarkStore.delete(
-                                                uid: uid,
-                                                bookId: widget.bookId,
-                                                chapterId: widget.chapterId,
-                                                id: bookmark.id);
-                                            if (!sameAccount() ||
-                                                !sheetContext.mounted) {
+                      maxHeight: MediaQuery.sizeOf(sheetContext).height * .72),
+                  child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        M3SheetHeader(
+                            title: '本章书签',
+                            icon: Icons.bookmark_outline_rounded,
+                            onClose: () => Navigator.pop(sheetContext)),
+                        Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                            child: Text('书签仅保存在本机，按当前账户隔离',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                    color: scheme.onSurfaceVariant))),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Material(
+                            color: scheme.primaryContainer
+                                .withValues(alpha: .55),
+                            borderRadius: BorderRadius.circular(16),
+                            clipBehavior: Clip.antiAlias,
+                            child: ListTile(
+                                leading: const AppSettingIcon(
+                                    Icons.bookmark_add_outlined),
+                                title: const Text('保存当前位置'),
+                                subtitle: const Text('记录当前阅读位置，随时一键回跳'),
+                                trailing: Icon(Icons.add_rounded,
+                                    color: scheme.primary),
+                                onTap: () async {
+                                  if (!sameAccount()) {
+                                    Navigator.pop(sheetContext);
+                                    return;
+                                  }
+                                  final raw = _paged
+                                      ? (_logicalAnchor ??
+                                          _anchorForPage(_pageIndex))
+                                      : (_captureScrollAnchor() ??
+                                          _logicalAnchor);
+                                  if (raw == null || _blocks.isEmpty) return;
+                                  final position = _normalizeAnchor(raw);
+                                  final block = _blocks[position.blockIndex];
+                                  final offset = position.textOffset ?? 0;
+                                  final start = (offset - 24)
+                                      .clamp(0, block.text.length);
+                                  final end = (offset + 24)
+                                      .clamp(0, block.text.length);
+                                  if (block.image == null && start == end) {
+                                    showFloatingPrompt(
+                                        context, '此位置没有可保存的正文');
+                                    return;
+                                  }
+                                  final now = DateTime.now();
+                                  final bookmark = ReaderBookmark(
+                                      id: '${now.microsecondsSinceEpoch}',
+                                      bookId: widget.bookId,
+                                      chapterId: widget.chapterId,
+                                      chapterTitle: _title,
+                                      position: position,
+                                      context:
+                                          block.text.substring(start, end),
+                                      contextOffset: offset - start,
+                                      createdAt: now,
+                                      imageFingerprint: block.image == null
+                                          ? null
+                                          : bookmarkImageFingerprint(
+                                              block.image!));
+                                  try {
+                                    await ReaderBookmarkStore.add(
+                                        uid: uid, bookmark: bookmark);
+                                    if (!mounted ||
+                                        !sameAccount() ||
+                                        !sheetContext.mounted) {
+                                      return;
+                                    }
+                                    setSheet(() => items = [...items, bookmark]);
+                                    showFloatingPrompt(context, '已保存本地书签');
+                                  } catch (_) {
+                                    if (mounted && sameAccount()) {
+                                      showFloatingPrompt(
+                                          context, '保存书签失败');
+                                    }
+                                  }
+                                }),
+                          ),
+                        ),
+                        Flexible(
+                            child: items.isEmpty
+                                ? Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        24, 28, 24, 32),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          width: 48,
+                                          height: 48,
+                                          alignment: Alignment.center,
+                                          decoration: BoxDecoration(
+                                            color: scheme.surfaceContainerHigh,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(
+                                            Icons.bookmark_border_rounded,
+                                            color: scheme.onSurfaceVariant,
+                                            size: 22,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Text('本章暂无书签',
+                                            style: theme.textTheme.bodyMedium
+                                                ?.copyWith(
+                                                    fontWeight: FontWeight.w600)),
+                                        const SizedBox(height: 4),
+                                        Text('点上方按钮保存当前段落',
+                                            style: theme.textTheme.bodySmall
+                                                ?.copyWith(
+                                                    color: scheme
+                                                        .onSurfaceVariant)),
+                                      ],
+                                    ),
+                                  )
+                                : ListView.separated(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        16, 12, 16, 16),
+                                    shrinkWrap: true,
+                                    separatorBuilder: (_, __) =>
+                                        const SizedBox(height: 8),
+                                    itemCount: items.length,
+                                    itemBuilder: (ctx, i) {
+                                      final bookmark =
+                                          items[items.length - 1 - i];
+                                      final date = bookmark.createdAt.toLocal();
+                                      final time =
+                                          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+                                      return Material(
+                                        color: scheme.surfaceContainerLow,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(16),
+                                          side: BorderSide(
+                                            color: scheme.outlineVariant
+                                                .withValues(alpha: .25),
+                                          ),
+                                        ),
+                                        clipBehavior: Clip.antiAlias,
+                                        child: ListTile(
+                                          leading: const AppSettingIcon(
+                                              Icons.bookmark_rounded),
+                                          title: Text(
+                                              bookmark.context.isEmpty
+                                                  ? '插画'
+                                                  : bookmark.context,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis),
+                                          subtitle: Text(
+                                              '${bookmark.chapterTitle} · $time'),
+                                          trailing: IconButton(
+                                              tooltip: '删除书签',
+                                              icon: const Icon(
+                                                  Icons.delete_outline_rounded),
+                                              onPressed: () async {
+                                                if (!sameAccount()) {
+                                                  Navigator.pop(sheetContext);
+                                                  return;
+                                                }
+                                                try {
+                                                  await ReaderBookmarkStore
+                                                      .delete(
+                                                          uid: uid,
+                                                          bookId: widget.bookId,
+                                                          chapterId:
+                                                              widget.chapterId,
+                                                          id: bookmark.id);
+                                                  if (!sameAccount() ||
+                                                      !sheetContext.mounted) {
+                                                    return;
+                                                  }
+                                                  setSheet(() => items = items
+                                                      .where((item) =>
+                                                          item.id !=
+                                                          bookmark.id)
+                                                      .toList());
+                                                } catch (_) {
+                                                  if (mounted &&
+                                                      sameAccount()) {
+                                                    showFloatingPrompt(
+                                                        context, '删除书签失败');
+                                                  }
+                                                }
+                                              }),
+                                          onTap: () {
+                                            if (!sameAccount()) {
+                                              Navigator.pop(sheetContext);
                                               return;
                                             }
-                                            setSheet(() => items = items
-                                                .where((item) =>
-                                                    item.id != bookmark.id)
-                                                .toList());
-                                          } catch (_) {
-                                            if (mounted && sameAccount()) {
+                                            final position = resolveBookmark(
+                                                bookmark,
+                                                _blocks
+                                                    .map((b) => (
+                                                          text: b.text,
+                                                          image: b.image
+                                                        ))
+                                                    .toList());
+                                            if (position == null) {
                                               showFloatingPrompt(
-                                                  context, '删除书签失败');
+                                                  context, '正文已变化，书签位置失效');
+                                              return;
                                             }
-                                          }
-                                        }),
-                                    onTap: () {
-                                      if (!sameAccount()) {
-                                        Navigator.pop(sheetContext);
-                                        return;
-                                      }
-                                      final position = resolveBookmark(
-                                          bookmark,
-                                          _blocks
-                                              .map((b) => (
-                                                    text: b.text,
-                                                    image: b.image
-                                                  ))
-                                              .toList());
-                                      if (position == null) {
-                                        showFloatingPrompt(
-                                            context, '正文已变化，书签位置失效');
-                                        return;
-                                      }
-                                      Navigator.pop(sheetContext);
-                                      unawaited(_seekToProgress(
-                                          _progressForAnchor(position),
-                                          position: position));
-                                    },
-                                  );
-                                })),
-                  ]),
+                                            Navigator.pop(sheetContext);
+                                            unawaited(_seekToProgress(
+                                                _progressForAnchor(position),
+                                                position: position));
+                                          },
+                                        ),
+                                      );
+                                    })),
+                      ]),
                 ));
           });
         },

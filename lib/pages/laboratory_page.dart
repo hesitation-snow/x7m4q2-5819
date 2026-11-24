@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../api/store.dart';
+import '../services/app_theme.dart';
 import '../services/slider_haptics.dart';
 import '../widgets/liquid_glass_bottom_bar.dart';
+import '../widgets/m3_controls.dart';
 
 class LaboratoryPage extends StatelessWidget {
   const LaboratoryPage({super.key});
@@ -14,46 +16,48 @@ class LaboratoryPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('实验室')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          MediaQuery.of(context).padding.bottom + 24,
+        ),
         children: [
-          Text(
-            '探索可选功能与界面实验，所有设置均可随时关闭。',
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium
-                ?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 24),
-          Text('功能实验', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: LKStore.dailyTreasureEnabled,
-              builder: (context, enabled, _) => SwitchListTile(
-                key: const ValueKey('laboratory-daily-treasure-switch'),
-                secondary:
-                    Icon(Icons.inventory_2_outlined, color: scheme.primary),
-                title: const Text('每日开宝箱'),
-                value: enabled,
-                onChanged: LKStore.setDailyTreasureEnabled,
-              ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 20),
+            child: Text(
+              '探索可选功能与界面实验，所有设置均可随时关闭。',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: scheme.onSurfaceVariant, height: 1.4),
             ),
           ),
-          const SizedBox(height: 8),
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: LKStore.allMedalsEnabled,
-              builder: (context, enabled, _) => SwitchListTile(
-                key: const ValueKey('laboratory-all-medals-switch'),
-                secondary: Icon(Icons.workspace_premium_outlined,
-                    color: scheme.primary),
-                title: const Text('加载勋章商城全部内容'),
-                value: enabled,
-                onChanged: LKStore.setAllMedalsEnabled,
+          const AppSectionTitle('功能实验'),
+          AppSettingsGroup(
+            children: [
+              ValueListenableBuilder<bool>(
+                valueListenable: LKStore.dailyTreasureEnabled,
+                builder: (context, enabled, _) => SwitchListTile(
+                  key: const ValueKey('laboratory-daily-treasure-switch'),
+                  secondary: const AppSettingIcon(Icons.inventory_2_outlined),
+                  title: const Text('每日开宝箱'),
+                  value: enabled,
+                  onChanged: LKStore.setDailyTreasureEnabled,
+                ),
               ),
-            ),
+              ValueListenableBuilder<bool>(
+                valueListenable: LKStore.allMedalsEnabled,
+                builder: (context, enabled, _) => SwitchListTile(
+                  key: const ValueKey('laboratory-all-medals-switch'),
+                  secondary:
+                      const AppSettingIcon(Icons.workspace_premium_outlined),
+                  title: const Text('加载勋章商城全部内容'),
+                  value: enabled,
+                  onChanged: LKStore.setAllMedalsEnabled,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -96,47 +100,59 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
   Widget control(
       String title, double value, double max, ValueChanged<double> change,
       {double min = 0, bool enabled = true, String? hint}) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final isNewHaptics = !_sliderHaptics.containsKey(title);
     final haptics = _sliderHaptics.putIfAbsent(title, SliderHapticFeedback.new);
     if (isNewHaptics) {
       haptics.sync(value, min: min, max: max, continuousNotches: 25);
     }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('$title：${number(title, value)}',
-            style: Theme.of(context).textTheme.titleSmall),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text(
+          '$title：${number(title, value)}',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w500,
+            color: enabled ? scheme.onSurface : scheme.onSurfaceVariant,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
         if (hint != null) ...[
           const SizedBox(height: 4),
           Text(hint,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant)),
         ],
-        Slider(
-            key: ValueKey(title),
-            value: value,
-            min: min,
-            max: max,
-            label: number(title, value),
-            semanticFormatterCallback: (v) => '$title ${number(title, v)}',
-            onChangeStart: enabled
-                ? (v) =>
-                    haptics.sync(v, min: min, max: max, continuousNotches: 25)
-                : null,
-            onChanged: enabled
-                ? (v) {
-                    haptics.onChanged(
-                      v,
-                      min: min,
-                      max: max,
-                      continuousNotches: 25,
-                    );
-                    change(v);
-                  }
-                : null,
-            onChangeEnd: enabled
-                ? (_) => unawaited(LKStore.flushGlassConfiguration())
-                : null),
+        const SizedBox(height: 4),
+        SliderTheme(
+          data: AppTheme.sliderThemeOf(scheme, theme.textTheme),
+          child: Slider(
+              key: ValueKey(title),
+              value: value,
+              min: min,
+              max: max,
+              label: number(title, value),
+              semanticFormatterCallback: (v) => '$title ${number(title, v)}',
+              onChangeStart: enabled
+                  ? (v) =>
+                      haptics.sync(v, min: min, max: max, continuousNotches: 25)
+                  : null,
+              onChanged: enabled
+                  ? (v) {
+                      haptics.onChanged(
+                        v,
+                        min: min,
+                        max: max,
+                        continuousNotches: 25,
+                      );
+                      change(v);
+                    }
+                  : null,
+              onChangeEnd: enabled
+                  ? (_) => unawaited(LKStore.flushGlassConfiguration())
+                  : null),
+        ),
       ]),
     );
   }
@@ -144,32 +160,36 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
   Widget section(BuildContext context, String title, IconData icon,
       List<Widget> children) {
     final scheme = Theme.of(context).colorScheme;
-    return Card.filled(
-      margin: EdgeInsets.zero,
-      color: scheme.surfaceContainerLow,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: Row(children: [
-              Icon(icon, color: scheme.primary, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(title,
-                      style: Theme.of(context).textTheme.titleMedium)),
-            ]),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppSectionTitle(title),
+        Material(
+          color: scheme.surfaceContainerLow,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(
+              color: scheme.outlineVariant.withValues(alpha: .25),
+            ),
           ),
-          ...children,
-        ]),
-      ),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: children,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final supported = ui.ImageFilter.isShaderFilterSupported;
+    final theme = Theme.of(context);
+    final rootScheme = theme.colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('悬浮底栏')),
       bottomNavigationBar: ValueListenableBuilder<GlassConfiguration>(
@@ -180,45 +200,119 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
               .clamp(minPreviewHeight, 240.0);
           return SizedBox(height: targetHeight, child: previewChild);
         },
-        child: Stack(children: [
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: rootScheme.surface,
+            border: Border(
+              top: BorderSide(
+                color: rootScheme.outlineVariant.withValues(alpha: .25),
+              ),
+            ),
+          ),
+          child: Stack(children: [
             Positioned.fill(
                 child: ListView.builder(
                     primary: false,
                     key: const ValueKey('glass-preview-background'),
-                    padding: const EdgeInsets.only(bottom: 80),
+                    padding: const EdgeInsets.fromLTRB(12, 34, 12, 80),
                     itemCount: 12,
-                    itemBuilder: (context, i) => ColoredBox(
-                        color: [Colors.teal, Colors.amber, Colors.indigo][i % 3]
-                            .withValues(alpha: .14),
-                        child: ListTile(
-                            leading: Container(
-                                width: 44,
+                    itemBuilder: (context, i) {
+                      final accents = [
+                        (
+                          rootScheme.primaryContainer,
+                          rootScheme.onPrimaryContainer,
+                          '第一卷 · 轻小说阅读样本',
+                          '轻文学 · 连载中',
+                        ),
+                        (
+                          rootScheme.secondaryContainer,
+                          rootScheme.onSecondaryContainer,
+                          '第二卷 · 书架排版效果',
+                          '奇幻 · 已收藏',
+                        ),
+                        (
+                          rootScheme.tertiaryContainer,
+                          rootScheme.onTertiaryContainer,
+                          '第三卷 · 动态视觉示例',
+                          '日常 · 最近更新',
+                        ),
+                      ];
+                      final sample = accents[i % accents.length];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: sample.$1.withValues(alpha: .42),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 34,
                                 height: 44,
+                                alignment: Alignment.center,
                                 decoration: BoxDecoration(
-                                    color: [
-                                      Colors.teal,
-                                      Colors.amber,
-                                      Colors.indigo
-                                    ][i % 3]
-                                        .withValues(alpha: .55),
-                                    borderRadius: BorderRadius.circular(12))),
-                            title: Text('演示内容 ${i + 1}'),
-                            subtitle: const Text('滚动文字与色块，观察玻璃背景变化'))))),
+                                  color: sample.$1,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  Icons.menu_book_rounded,
+                                  size: 18,
+                                  color: sample.$2,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      sample.$3,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.bodyMedium?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      sample.$4,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: rootScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    })),
             Positioned(
               top: 8,
               left: 16,
               child: IgnorePointer(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    color:
-                        Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
+                    color: rootScheme.surfaceContainerHighest
+                        .withValues(alpha: .92),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: rootScheme.outlineVariant.withValues(alpha: .3),
+                    ),
                   ),
                   child: Padding(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    child: Text('实时预览',
-                        style: Theme.of(context).textTheme.labelMedium),
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    child: Text('实时预览', style: theme.textTheme.labelSmall),
                   ),
                 ),
               ),
@@ -248,7 +342,9 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
                           selectedIcon: Icons.person,
                           label: '我的'),
                     ])),
-          ])),
+          ]),
+        ),
+      ),
       body: ValueListenableBuilder<GlassConfiguration>(
           valueListenable: LKStore.glassConfiguration,
           builder: (context, _, __) {
@@ -258,21 +354,23 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
             final scheme = Theme.of(context).colorScheme;
             return ListView(
               key: const ValueKey('glass-controls'),
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 16),
+                  padding: const EdgeInsets.fromLTRB(4, 0, 4, 20),
                   child: Text(
                     '调整悬浮底栏的玻璃效果会自动保存为自定义参数；重置会保存当前设备的默认参数。',
                     style: Theme.of(context)
                         .textTheme
                         .bodyMedium
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+                        ?.copyWith(color: scheme.onSurfaceVariant, height: 1.4),
                   ),
                 ),
                 section(context, '显示行为', Icons.swipe_vertical_rounded, [
                   SwitchListTile(
                     key: const ValueKey('glass-keep-visible-on-scroll'),
+                    secondary:
+                        const AppSettingIcon(Icons.swipe_vertical_rounded),
                     title: const Text('滚动时保持底栏显示'),
                     subtitle: const Text('关闭后，首页、书架和动态滚动时底栏会随内容收起'),
                     value: c.keepVisibleOnScroll,
@@ -280,7 +378,7 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
                         current().copyWith(keepVisibleOnScroll: value)),
                   ),
                 ]),
-                const SizedBox(height: 12),
+                const SizedBox(height: 20),
                 section(context, '玻璃效果', Icons.blur_on_rounded, [
                   control(
                       '背景模糊',
@@ -309,7 +407,7 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
                       (v) => LKStore.updateGlassConfiguration(
                           current().copyWith(highlight: v))),
                 ]),
-                const SizedBox(height: 12),
+                const SizedBox(height: 20),
                 section(context, '尺寸与位置', Icons.tune_rounded, [
                   control(
                       '底栏宽度',
@@ -332,9 +430,15 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
                       (v) => LKStore.updateGlassConfiguration(
                           current().copyWith(floatingHeight: v))),
                 ]),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 OutlinedButton.icon(
-                  icon: const Icon(Icons.restore),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(46),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: const Icon(Icons.restore_rounded),
                   label: const Text('重置悬浮底栏默认参数'),
                   onPressed: () {
                     LKStore.updateGlassConfiguration(
