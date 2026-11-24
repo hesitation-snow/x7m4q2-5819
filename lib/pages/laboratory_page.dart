@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../api/store.dart';
+import '../services/slider_haptics.dart';
 import '../widgets/liquid_glass_bottom_bar.dart';
 
 class LaboratoryPage extends StatelessWidget {
@@ -68,6 +69,7 @@ class LiquidGlassLabPage extends StatefulWidget {
 
 class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
   int selected = 0;
+  final Map<String, SliderHapticFeedback> _sliderHaptics = {};
 
   @override
   void didChangeDependencies() {
@@ -92,32 +94,52 @@ class _LiquidGlassLabPageState extends State<LiquidGlassLabPage> {
               : '${(v * 100).toStringAsFixed(0)}%';
 
   Widget control(
-          String title, double value, double max, ValueChanged<double> change,
-          {double min = 0, bool enabled = true, String? hint}) =>
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('$title：${number(title, value)}',
-              style: Theme.of(context).textTheme.titleSmall),
-          if (hint != null) ...[
-            const SizedBox(height: 4),
-            Text(hint,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          ],
-          Slider(
-              key: ValueKey(title),
-              value: value,
-              min: min,
-              max: max,
-              label: number(title, value),
-              semanticFormatterCallback: (v) => '$title ${number(title, v)}',
-              onChanged: enabled ? change : null,
-              onChangeEnd: enabled
-                  ? (_) => unawaited(LKStore.flushGlassConfiguration())
-                  : null),
-        ]),
-      );
+      String title, double value, double max, ValueChanged<double> change,
+      {double min = 0, bool enabled = true, String? hint}) {
+    final isNewHaptics = !_sliderHaptics.containsKey(title);
+    final haptics = _sliderHaptics.putIfAbsent(title, SliderHapticFeedback.new);
+    if (isNewHaptics) {
+      haptics.sync(value, min: min, max: max, continuousNotches: 25);
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('$title：${number(title, value)}',
+            style: Theme.of(context).textTheme.titleSmall),
+        if (hint != null) ...[
+          const SizedBox(height: 4),
+          Text(hint,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ],
+        Slider(
+            key: ValueKey(title),
+            value: value,
+            min: min,
+            max: max,
+            label: number(title, value),
+            semanticFormatterCallback: (v) => '$title ${number(title, v)}',
+            onChangeStart: enabled
+                ? (v) =>
+                    haptics.sync(v, min: min, max: max, continuousNotches: 25)
+                : null,
+            onChanged: enabled
+                ? (v) {
+                    haptics.onChanged(
+                      v,
+                      min: min,
+                      max: max,
+                      continuousNotches: 25,
+                    );
+                    change(v);
+                  }
+                : null,
+            onChangeEnd: enabled
+                ? (_) => unawaited(LKStore.flushGlassConfiguration())
+                : null),
+      ]),
+    );
+  }
 
   Widget section(BuildContext context, String title, IconData icon,
       List<Widget> children) {

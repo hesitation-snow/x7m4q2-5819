@@ -55,6 +55,7 @@ import '../services/app_motion.dart';
 import '../reader/reader_indent.dart';
 import '../services/reader_volume_keys.dart';
 import '../services/reader_system_ui.dart';
+import '../services/slider_haptics.dart';
 import '../widgets/reader_device_status.dart';
 import '../widgets/reader_indicators.dart';
 import '../reader/indicator_position.dart';
@@ -365,6 +366,7 @@ class _ReaderPageState extends State<ReaderPage>
   bool _autoTtsStarted = false;
   String? _lastSpeechScrollKey;
   final ValueNotifier<int> _ttsUiRevision = ValueNotifier<int>(0);
+  final SliderHapticFeedback _progressSliderHaptics = SliderHapticFeedback();
   int _ttsContentRevision = 0;
   bool _readerInputActive = true;
 
@@ -4773,7 +4775,25 @@ class _ReaderPageState extends State<ReaderPage>
                     value: '$percent%',
                     child: Slider(
                       value: value,
-                      onChanged: enabled ? (v) => _progressN.value = v : null,
+                      onChangeStart: enabled
+                          ? (v) => _progressSliderHaptics.sync(
+                                v,
+                                min: 0,
+                                max: 1,
+                                continuousNotches: 25,
+                              )
+                          : null,
+                      onChanged: enabled
+                          ? (v) {
+                              _progressSliderHaptics.onChanged(
+                                v,
+                                min: 0,
+                                max: 1,
+                                continuousNotches: 25,
+                              );
+                              _progressN.value = v;
+                            }
+                          : null,
                       onChangeEnd:
                           enabled ? (v) => unawaited(_seekToProgress(v)) : null,
                     ),

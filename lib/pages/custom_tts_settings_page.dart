@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/custom_ssml_tts.dart';
 import '../services/reader_audio_handler.dart';
+import '../widgets/m3_controls.dart';
+import '../widgets/tts_settings_sections.dart';
 
 /// The page owns and disposes the injected preview player.
 abstract interface class CustomTtsPreviewPlayer {
@@ -70,6 +72,7 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
   bool _saveError = false;
   bool _previewError = false;
   bool _voicesError = false;
+  bool _showLanguageOverrides = false;
 
   @override
   void initState() {
@@ -411,72 +414,311 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
   }
 
   Widget _field(String label, TextEditingController controller,
-          {String? id,
-          String? hint,
-          String? helper,
-          TextInputType? keyboardType,
-          bool secret = false,
-          TextInputAction action = TextInputAction.next}) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: TextField(
-          key: id == null ? null : ValueKey('custom-tts-$id'),
-          controller: controller,
-          enabled: !_saving,
-          keyboardType: keyboardType,
-          textInputAction: action,
-          obscureText: secret && _hideCredential,
-          enableSuggestions: false,
-          autocorrect: false,
-          onChanged: (_) {
-            if (_fieldErrors.containsKey(id)) {
-              setState(() => _fieldErrors.remove(id));
-            }
-          },
-          decoration: InputDecoration(
-            labelText: label,
-            hintText: hint,
-            helperText: helper,
-            helperMaxLines: 5,
-            errorText: _fieldErrors[id],
-            errorMaxLines: 5,
-            border: const OutlineInputBorder(),
-            suffixIcon: secret
-                ? IconButton(
-                    tooltip: _hideCredential ? '显示密钥' : '隐藏密钥',
-                    onPressed: () =>
-                        setState(() => _hideCredential = !_hideCredential),
-                    icon: Icon(_hideCredential
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined),
-                  )
-                : null,
+      {String? id,
+      String? hint,
+      String? helper,
+      TextInputType? keyboardType,
+      bool secret = false,
+      double bottomMargin = 12,
+      TextInputAction action = TextInputAction.next}) {
+    final colors = Theme.of(context).colorScheme;
+    final transparentBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: BorderSide.none,
+    );
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomMargin),
+      child: TextField(
+        key: id == null ? null : ValueKey('custom-tts-$id'),
+        controller: controller,
+        enabled: !_saving,
+        keyboardType: keyboardType,
+        textInputAction: action,
+        obscureText: secret && _hideCredential,
+        enableSuggestions: false,
+        autocorrect: false,
+        onChanged: (_) {
+          if (_fieldErrors.containsKey(id)) {
+            setState(() => _fieldErrors.remove(id));
+          }
+        },
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hint,
+          helperText: helper,
+          helperMaxLines: 5,
+          errorText: _fieldErrors[id],
+          errorMaxLines: 5,
+          filled: true,
+          fillColor: colors.surfaceContainerHigh,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          border: transparentBorder,
+          enabledBorder: transparentBorder,
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: colors.primary, width: 1.5),
           ),
+          errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: colors.error, width: 1.2),
+          ),
+          focusedErrorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: colors.error, width: 1.5),
+          ),
+          suffixIcon: secret
+              ? IconButton(
+                  tooltip: _hideCredential ? '显示密钥' : '隐藏密钥',
+                  onPressed: () =>
+                      setState(() => _hideCredential = !_hideCredential),
+                  icon: Icon(_hideCredential
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined),
+                )
+              : null,
         ),
-      );
+      ),
+    );
+  }
 
-  Widget _section(String title, IconData icon, List<Widget> children) =>
-      Card.filled(
-        margin: const EdgeInsets.only(bottom: 16),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget _section(String title, IconData icon, List<Widget> children) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AppSectionTitle(title),
+          Material(
+            color: scheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: .25),
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: children,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _segmentedSelector<T>({
+    required T value,
+    required List<(T, String, IconData?)> options,
+    required ValueChanged<T>? onChanged,
+  }) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaledText = MediaQuery.textScalerOf(context).scale(14);
+        final useChips = constraints.maxWidth < options.length * 100 ||
+            scaledText > 18;
+        if (useChips) {
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Wrap(
-                spacing: 10,
-                crossAxisAlignment: WrapCrossAlignment.center,
+              for (final option in options)
+                M3ChoiceChip(
+                  label: option.$2,
+                  icon: option.$3,
+                  selected: option.$1 == value,
+                  onSelected: onChanged == null
+                      ? null
+                      : (_) => onChanged(option.$1),
+                ),
+            ],
+          );
+        }
+        final showIcon = constraints.maxWidth >= options.length * 124;
+        return Material(
+          color: scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(14),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                for (final option in options)
+                  Expanded(
+                    child: Semantics(
+                      selected: option.$1 == value,
+                      button: true,
+                      child: Material(
+                        color: option.$1 == value
+                            ? scheme.secondaryContainer
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: onChanged == null
+                              ? null
+                              : () => onChanged(option.$1),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                if (showIcon && option.$3 != null) ...[
+                                  Icon(
+                                    option.$3,
+                                    size: 16,
+                                    color: option.$1 == value
+                                        ? scheme.onSecondaryContainer
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                Flexible(
+                                  child: Text(
+                                    option.$2,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        theme.textTheme.labelMedium?.copyWith(
+                                      fontWeight: option.$1 == value
+                                          ? FontWeight.w600
+                                          : FontWeight.w500,
+                                      color: option.$1 == value
+                                          ? scheme.onSecondaryContainer
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _languageOverridesSection() {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final configuredCount = [_zhVoice, _jaVoice, _koVoice]
+        .where((c) => c.text.trim().isNotEmpty)
+        .length;
+    final summary = configuredCount == 0
+        ? '留空时使用上方默认音色'
+        : '已自定义 $configuredCount 种语言';
+    return Material(
+      color: colors.surfaceContainerHigh.withValues(alpha: .55),
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: _saving
+                ? null
+                : () => setState(
+                    () => _showLanguageOverrides = !_showLanguageOverrides),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
                 children: [
-                  Icon(icon, color: Theme.of(context).colorScheme.primary),
-                  Text(title, style: Theme.of(context).textTheme.titleMedium),
+                  const AppSettingIcon(Icons.language_rounded),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '分语言音色（可选）',
+                          style: theme.textTheme.bodyLarge
+                              ?.copyWith(fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          summary,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _showLanguageOverrides
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: colors.onSurfaceVariant,
+                  ),
                 ],
               ),
-              const SizedBox(height: 20),
-              ...children,
-            ],
+            ),
           ),
-        ),
-      );
+          if (_showLanguageOverrides)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _field('中文音色 ID', _zhVoice,
+                      hint: '例如 zh-CN-XiaoxiaoNeural'),
+                  _field('日语音色 ID', _jaVoice,
+                      hint: '例如 ja-JP-NanamiNeural'),
+                  _field('韩语音色 ID', _koVoice,
+                      hint: '例如 ko-KR-SunHiNeural', bottomMargin: 0),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickAzureVoice() async {
+    final picked = await showTtsOptionSheet<String>(
+      context: context,
+      title: '选择 Azure 音色',
+      icon: Icons.record_voice_over_outlined,
+      selected: _voice.text,
+      options: [
+        for (final voice in _azureVoices)
+          TtsPickerOption(
+            value: voice.id,
+            title: '${voice.name} · ${voice.locale}',
+            subtitle: voice.id,
+            icon: Icons.graphic_eq_rounded,
+          ),
+      ],
+    );
+    if (picked == null || !mounted) return;
+    final voice =
+        _azureVoices.where((candidate) => candidate.id == picked).firstOrNull;
+    if (voice == null) return;
+    setState(() {
+      _voice.text = voice.id;
+      _name.text = voice.name;
+      _locale.text = voice.locale;
+      _fieldErrors.remove('voice');
+      _fieldErrors.remove('name');
+      _fieldErrors.remove('locale');
+    });
+  }
 
   Widget _status(String? message, bool error, String id) {
     if (message == null) return const SizedBox.shrink();
@@ -485,11 +727,38 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
       padding: const EdgeInsets.only(top: 12),
       child: Semantics(
         liveRegion: true,
-        child: Text(
-          message,
-          key: ValueKey(id),
-          style:
-              TextStyle(color: error ? colors.error : colors.onSurfaceVariant),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: error
+                ? colors.errorContainer.withValues(alpha: .55)
+                : colors.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                error
+                    ? Icons.error_outline_rounded
+                    : Icons.info_outline_rounded,
+                size: 18,
+                color: error ? colors.error : colors.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  key: ValueKey(id),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color:
+                            error ? colors.onErrorContainer : colors.onSurface,
+                        height: 1.4,
+                      ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -502,13 +771,22 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final matchedVoice = _azureVoices
+        .where((voice) => voice.id == _voice.text)
+        .firstOrNull;
     return Scaffold(
       appBar: AppBar(title: const Text('自定义语音服务')),
       body: SafeArea(
         top: false,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
+            24 + MediaQuery.paddingOf(context).bottom,
+          ),
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 720),
@@ -516,27 +794,24 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _section('连接', Icons.cloud_outlined, [
-                    DropdownButtonFormField<_EndpointMode>(
-                      initialValue: _endpointMode,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: '服务地址方式',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: _EndpointMode.azureRegion,
-                          child: Text('Azure 区域'),
+                    _segmentedSelector<_EndpointMode>(
+                      value: _endpointMode,
+                      options: const [
+                        (
+                          _EndpointMode.azureRegion,
+                          'Azure 区域',
+                          Icons.cloud_outlined,
                         ),
-                        DropdownMenuItem(
-                          value: _EndpointMode.fullUrl,
-                          child: Text('完整 HTTPS endpoint'),
+                        (
+                          _EndpointMode.fullUrl,
+                          '完整 HTTPS',
+                          Icons.link_rounded,
                         ),
                       ],
                       onChanged: _saving
                           ? null
                           : (value) {
-                              if (value == null) return;
+                              if (value == _endpointMode) return;
                               if (value == _EndpointMode.fullUrl &&
                                   _endpoint.text.isEmpty) {
                                 _endpoint.text = _effectiveEndpoint;
@@ -548,18 +823,20 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
                               _invalidateVoiceCatalog();
                             },
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     if (_endpointMode == _EndpointMode.azureRegion)
                       _field('Azure 区域', _region,
                           id: 'region',
                           hint: '例如 eastasia、eastus',
-                          helper: '填写 Azure Speech 资源所在区域，自动生成标准 HTTPS 地址。')
+                          helper: '填写 Azure Speech 资源所在区域，自动生成标准 HTTPS 地址。',
+                          bottomMargin: 0)
                     else
                       _field('完整 HTTPS endpoint', _endpoint,
                           id: 'endpoint',
                           hint: defaultMicrosoftSpeechEndpoint,
                           keyboardType: TextInputType.url,
-                          helper: '保留完整路径；支持 Microsoft Speech REST 兼容服务。'),
+                          helper: '保留完整路径；支持 Microsoft Speech REST 兼容服务。',
+                          bottomMargin: 0),
                   ]),
                   _section('音色', Icons.record_voice_over_outlined, [
                     _field('音色 ID', _voice,
@@ -568,72 +845,52 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
                         id: 'name', helper: '用于识别此配置；仅保存时必填。'),
                     _field('语言', _locale,
                         id: 'locale', hint: '例如 zh-CN、ja-JP、en-US'),
-                    ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      title: const Text('分语言音色（可选）'),
-                      subtitle: const Text('留空时使用上方默认音色'),
-                      children: [
-                        _field('中文音色 ID', _zhVoice,
-                            hint: '例如 zh-CN-XiaoxiaoNeural'),
-                        _field('日语音色 ID', _jaVoice,
-                            hint: '例如 ja-JP-NanamiNeural'),
-                        _field('韩语音色 ID', _koVoice,
-                            hint: '例如 ko-KR-SunHiNeural'),
-                      ],
-                    ),
+                    _languageOverridesSection(),
                     if (_authMode == CustomTtsAuthMode.azureKey) ...[
                       const SizedBox(height: 12),
-                      Wrap(children: [
-                        OutlinedButton.icon(
-                          key: const ValueKey('custom-tts-load-voices'),
-                          onPressed: _voicesLoading || _saving
-                              ? null
-                              : _loadAzureVoices,
-                          icon: _voicesLoading
-                              ? _progress()
-                              : const Icon(Icons.refresh_rounded),
-                          label: Text(
-                              _voicesLoading ? '正在获取音色…' : '获取 Azure 音色列表'),
+                      OutlinedButton.icon(
+                        key: const ValueKey('custom-tts-load-voices'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
-                      ]),
+                        onPressed: _voicesLoading || _saving
+                            ? null
+                            : _loadAzureVoices,
+                        icon: _voicesLoading
+                            ? _progress()
+                            : const Icon(Icons.refresh_rounded),
+                        label: Text(
+                            _voicesLoading ? '正在获取音色…' : '获取 Azure 音色列表'),
+                      ),
                       if (_azureVoices.isNotEmpty) ...[
                         const SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          key: ValueKey(_azureVoices),
-                          initialValue: _azureVoices
-                                  .any((voice) => voice.id == _voice.text)
-                              ? _voice.text
-                              : null,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: '选择 Azure 音色',
-                            border: OutlineInputBorder(),
+                        Material(
+                          color: colors.surfaceContainerHigh,
+                          borderRadius: BorderRadius.circular(14),
+                          clipBehavior: Clip.antiAlias,
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 4,
+                            ),
+                            leading:
+                                const AppSettingIcon(Icons.graphic_eq_rounded),
+                            title: const Text('选择 Azure 音色'),
+                            subtitle: Text(
+                              matchedVoice != null
+                                  ? '${matchedVoice.name} · ${matchedVoice.locale}'
+                                  : '共 ${_azureVoices.length} 个可用音色，点击选择',
+                            ),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                            onTap: _saving ? null : _pickAzureVoice,
                           ),
-                          items: [
-                            for (final voice in _azureVoices)
-                              DropdownMenuItem(
-                                value: voice.id,
-                                child: Text(
-                                  '${voice.name} · ${voice.locale}',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                          ],
-                          onChanged: _saving
-                              ? null
-                              : (id) {
-                                  if (id == null) return;
-                                  final voice = _azureVoices.firstWhere(
-                                      (candidate) => candidate.id == id);
-                                  setState(() {
-                                    _voice.text = voice.id;
-                                    _name.text = voice.name;
-                                    _locale.text = voice.locale;
-                                    _fieldErrors.remove('voice');
-                                    _fieldErrors.remove('name');
-                                    _fieldErrors.remove('locale');
-                                  });
-                                },
                         ),
                       ],
                       _status(_voicesMessage, _voicesError,
@@ -641,61 +898,117 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
                     ],
                   ]),
                   _section('认证', Icons.key_outlined, [
-                    DropdownButtonFormField<CustomTtsAuthMode>(
-                      initialValue: _authMode,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: '认证方式',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                            value: CustomTtsAuthMode.none, child: Text('无认证')),
-                        DropdownMenuItem(
-                            value: CustomTtsAuthMode.azureKey,
-                            child: Text('Azure Key')),
-                        DropdownMenuItem(
-                            value: CustomTtsAuthMode.bearer,
-                            child: Text('Bearer Token')),
+                    _segmentedSelector<CustomTtsAuthMode>(
+                      value: _authMode,
+                      options: const [
+                        (
+                          CustomTtsAuthMode.azureKey,
+                          'Azure Key',
+                          Icons.key_outlined,
+                        ),
+                        (
+                          CustomTtsAuthMode.bearer,
+                          'Bearer Token',
+                          Icons.verified_user_outlined,
+                        ),
+                        (
+                          CustomTtsAuthMode.none,
+                          '无认证',
+                          Icons.no_encryption_outlined,
+                        ),
                       ],
                       onChanged: _saving
                           ? null
                           : (value) {
+                              if (value == _authMode) return;
                               setState(() {
-                                _authMode = value ?? CustomTtsAuthMode.none;
+                                _authMode = value;
                                 _fieldErrors.remove('credential');
                               });
                               _invalidateVoiceCatalog();
                             },
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     if (_authMode != CustomTtsAuthMode.none)
                       _field('密钥 / Token（单独安全保存）', _credential,
                           id: 'credential',
                           hint: '留空使用已保存密钥',
                           helper: '草稿可直接用于试听和获取音色，无需先保存；保存成功后清空此处。',
                           secret: true,
+                          bottomMargin: 0,
                           action: TextInputAction.done)
                     else
-                      const Text('当前不发送认证信息；保存时将清除已有密钥。'),
+                      Text(
+                        '当前不发送认证信息；保存时将清除已有密钥。',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          height: 1.4,
+                        ),
+                      ),
                   ]),
                   _section('试听', Icons.headphones_outlined, [
-                    Text(widget.previewText,
-                        style: Theme.of(context).textTheme.bodyLarge),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: colors.surfaceContainerHigh,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.format_quote_rounded,
+                            size: 18,
+                            color: colors.primary,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              widget.previewText,
+                              style: theme.textTheme.bodyLarge,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: colors.secondaryContainer.withValues(alpha: .55),
-                        borderRadius: BorderRadius.circular(16),
+                        color:
+                            colors.secondaryContainer.withValues(alpha: .42),
+                        borderRadius: BorderRadius.circular(14),
                       ),
-                      child: const Text(
-                          '计费提示：试听及正文朗读会调用所配置的服务，可能按字符或请求计费。正文发送提示：使用此服务朗读时，正文文本会发送至该 endpoint。'),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            size: 18,
+                            color: colors.onSecondaryContainer,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '计费提示：试听及正文朗读会调用所配置的服务，可能按字符或请求计费。正文发送提示：使用此服务朗读时，正文文本会发送至该 endpoint。',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colors.onSecondaryContainer,
+                                height: 1.4,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     Wrap(spacing: 10, runSpacing: 8, children: [
                       OutlinedButton.icon(
                         key: const ValueKey('custom-tts-preview'),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
                         onPressed: _saving ? null : _preview,
                         icon: _previewBusy
                             ? _progress()
@@ -704,6 +1017,11 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
                       ),
                       if (_previewBusy || _player != null)
                         OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
                           onPressed: _stopPreview,
                           icon: const Icon(Icons.stop_rounded),
                           label: const Text('取消试听'),
@@ -714,6 +1032,12 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
                   ]),
                   FilledButton.icon(
                     key: const ValueKey('custom-tts-save'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
                     onPressed: _saving ? null : _save,
                     icon:
                         _saving ? _progress() : const Icon(Icons.save_outlined),

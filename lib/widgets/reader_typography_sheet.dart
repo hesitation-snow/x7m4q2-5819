@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../reader/reader_typography.dart';
+import '../services/slider_haptics.dart';
 import 'reader_settings_section.dart';
 import 'm3_controls.dart';
 
@@ -39,6 +40,7 @@ class ReaderTypographySheet extends StatefulWidget {
 class ReaderTypographySheetState extends State<ReaderTypographySheet> {
   late ReaderTypography _current;
   late double _fontSize;
+  final Map<String, SliderHapticFeedback> _sliderHaptics = {};
 
   @override
   void initState() {
@@ -691,8 +693,13 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
   }) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final clampedValue = value.clamp(min, max);
+    final clampedValue = value.clamp(min, max).toDouble();
     final valueText = valueFormatter(clampedValue);
+    final isNewHaptics = !_sliderHaptics.containsKey(label);
+    final haptics = _sliderHaptics.putIfAbsent(label, SliderHapticFeedback.new);
+    if (isNewHaptics) {
+      haptics.sync(clampedValue, min: min, max: max, divisions: divisions);
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -722,7 +729,15 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
             divisions: divisions,
             label: valueText,
             semanticFormatterCallback: valueFormatter,
-            onChanged: enabled ? onChanged : null,
+            onChangeStart: enabled
+                ? (v) => haptics.sync(v, min: min, max: max, divisions: divisions)
+                : null,
+            onChanged: enabled
+                ? (v) {
+                    haptics.onChanged(v, min: min, max: max, divisions: divisions);
+                    onChanged(v);
+                  }
+                : null,
             onChangeEnd: enabled ? onChangeEnd : null,
           ),
         ),

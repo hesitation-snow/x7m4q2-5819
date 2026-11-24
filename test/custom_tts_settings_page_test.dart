@@ -158,6 +158,8 @@ void main() {
     expect(find.text('音色'), findsOneWidget);
     expect(find.text('认证'), findsOneWidget);
     expect(find.text('试听'), findsNWidgets(2));
+    expect(find.byType(DropdownButtonFormField<dynamic>), findsNothing);
+    expect(find.byType(ExpansionTile), findsNothing);
     expect(_key('region'), findsOneWidget);
     expect(
         tester.widget<TextField>(_key('region')).controller!.text, 'eastasia');

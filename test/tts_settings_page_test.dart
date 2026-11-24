@@ -11,6 +11,8 @@ import 'package:yomiru/pages/tts_settings_page.dart';
 import 'package:yomiru/reader/reader_language_segments.dart';
 import 'package:yomiru/services/app_theme.dart';
 import 'package:yomiru/services/reader_tts_preferences.dart';
+import 'package:yomiru/services/slider_haptics.dart';
+import 'package:yomiru/widgets/reader_listening_sheet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -226,5 +228,87 @@ void main() {
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
+  });
+
+  testWidgets(
+      'SliderHapticFeedback and ListeningRateControl emit subtle haptics per notch',
+      (tester) async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final haptics = <String?>[];
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'HapticFeedback.vibrate') {
+        haptics.add(call.arguments as String?);
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(SystemChannels.platform, null));
+
+    final helper = SliderHapticFeedback()
+      ..sync(1.0, min: 0.5, max: 3.0, divisions: 25);
+    helper.onChanged(1.0, min: 0.5, max: 3.0, divisions: 25);
+    helper.onChanged(1.02, min: 0.5, max: 3.0, divisions: 25);
+    expect(haptics, isEmpty);
+
+    helper.onChanged(1.1, min: 0.5, max: 3.0, divisions: 25);
+    helper.onChanged(1.1, min: 0.5, max: 3.0, divisions: 25);
+    helper.onChanged(1.2, min: 0.5, max: 3.0, divisions: 25);
+    await tester.pump();
+    expect(haptics, [
+      'HapticFeedbackType.selectionClick',
+      'HapticFeedbackType.selectionClick',
+    ]);
+
+    haptics.clear();
+    var rate = 1.0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => ListeningRateControl(
+              rate: rate,
+              onChanged: (value) => setState(() => rate = value),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    slider.onChangeStart?.call(1.0);
+    slider.onChanged!(1.1);
+    await tester.pump();
+    expect(haptics, ['HapticFeedbackType.selectionClick']);
+
+    // Staying on the same notch should not trigger duplicate haptics.
+    tester.widget<Slider>(find.byType(Slider)).onChanged!(1.1);
+    await tester.pump();
+    expect(haptics, hasLength(1));
+
+    // Crossing to 1.2x triggers one subtle selection click.
+    tester.widget<Slider>(find.byType(Slider)).onChanged!(1.2);
+    await tester.pump();
+    expect(haptics, hasLength(2));
+
+    // Stepper buttons and preset chips also emit a subtle selection click.
+    await tester.tap(find.byTooltip('加速'));
+    await tester.pump();
+    expect(rate, closeTo(1.3, 0.001));
+    expect(haptics, hasLength(3));
+
+    await tester.tap(find.byTooltip('减速'));
+    await tester.pump();
+    expect(rate, closeTo(1.2, 0.001));
+    expect(haptics, hasLength(4));
+
+    await tester.tap(find.text('1.5×'));
+    await tester.pump();
+    expect(rate, closeTo(1.5, 0.001));
+    expect(haptics, hasLength(5));
+    expect(
+      haptics,
+      everyElement('HapticFeedbackType.selectionClick'),
+    );
   });
 }
