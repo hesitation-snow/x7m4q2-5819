@@ -1,18 +1,40 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../api/store.dart';
 import '../pages/reader_page.dart';
 import '../pages/tts_settings_page.dart';
 import '../services/app_motion.dart';
 import '../services/listening_now.dart';
-import 'm3_controls.dart';
+import 'liquid_glass_bottom_bar.dart';
 import 'm3_menu_sheet.dart';
 import 'reader_listening_sheet.dart';
 
 /// Home entry for an in-progress listening session. One tap opens the menu.
-class ListeningDock extends StatelessWidget {
-  const ListeningDock({super.key});
+class ListeningDock extends StatefulWidget {
+  const ListeningDock({
+    super.key,
+    this.liquidGlass = false,
+    this.glassConfiguration,
+  });
+
+  final bool liquidGlass;
+  final GlassConfiguration? glassConfiguration;
+
+  @override
+  State<ListeningDock> createState() => _ListeningDockState();
+}
+
+class _ListeningDockState extends State<ListeningDock> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed == value || !mounted) return;
+    setState(() => _pressed = value);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,61 +44,188 @@ class ListeningDock extends StatelessWidget {
         final now = ListeningNow.instance;
         final session = now.session;
         if (!now.active || session == null) return const SizedBox.shrink();
+
         final theme = Theme.of(context);
+        final scheme = theme.colorScheme;
+        final dark = theme.brightness == Brightness.dark;
+        final reduceMotion = AppMotion.isDisabled(context);
+        final scaler = MediaQuery.textScalerOf(context);
+        final titleLine = scaler.scale(13.5) * 1.25;
+        final subtitleLine = scaler.scale(11.5) * 1.25;
+        final dockHeight = math.max(54.0, titleLine + subtitleLine + 20.0);
+
+        final error = session.error;
+        final hasError = error != null && error.isNotEmpty;
         final sentence = session.currentSegment?.text ?? '正在准备下一段';
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          child: Material(
-            color: theme.colorScheme.surfaceContainerLow,
-            elevation: 2,
-            shadowColor: theme.colorScheme.shadow.withValues(alpha: .18),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-              side: BorderSide(
-                  color: theme.colorScheme.outlineVariant.withValues(alpha: .4)),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              key: const ValueKey('listening-dock'),
-              onTap: () => showListeningMenu(context),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-                child: Row(
-                  children: [
-                    const AppSettingIcon(Icons.headphones_rounded),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            now.bookTitle.isEmpty ? '正在听书' : now.bookTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleSmall,
+        final subtitleText = hasError
+            ? '朗读失败，点击查看'
+            : session.isLoading
+                ? '正在准备语音…'
+                : sentence;
+        final double? progress = session.isLoading
+            ? (reduceMotion ? 0.25 : null)
+            : session.segmentCount > 0
+                ? ((session.position + 1) / session.segmentCount)
+                    .clamp(0.0, 1.0)
+                : 0.0;
+        final badgeAccent = hasError ? scheme.error : scheme.primary;
+        final toggleLabel = session.isPaused ? '继续' : '暂停';
+
+        final content = InkWell(
+          key: const ValueKey('listening-dock'),
+          borderRadius: BorderRadius.circular(dockHeight / 2),
+          onTap: () => showListeningMenu(context),
+          onHighlightChanged: _setPressed,
+          child: SizedBox(
+            height: dockHeight,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(9, 0, 8, 0),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: hasError
+                                ? scheme.errorContainer
+                                    .withValues(alpha: dark ? 0.55 : 0.85)
+                                : scheme.primary
+                                    .withValues(alpha: dark ? 0.24 : 0.14),
                           ),
-                          Text(
-                            sentence,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
+                          child: const SizedBox.expand(),
+                        ),
+                        Positioned.fill(
+                          child: CircularProgressIndicator(
+                            value: progress,
+                            strokeWidth: 2,
+                            strokeCap: StrokeCap.round,
+                            color: badgeAccent,
+                            backgroundColor: badgeAccent.withValues(
+                              alpha: dark ? 0.18 : 0.12,
                             ),
                           ),
-                        ],
+                        ),
+                        Icon(
+                          hasError
+                              ? Icons.error_outline_rounded
+                              : Icons.headphones_rounded,
+                          size: 18,
+                          color: badgeAccent,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          now.bookTitle.isEmpty ? '正在听书' : now.bookTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                            height: 1.25,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        Text(
+                          subtitleText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontSize: 11.5,
+                            height: 1.25,
+                            color: hasError
+                                ? scheme.error
+                                : scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: toggleLabel,
+                    excludeFromSemantics: true,
+                    child: Semantics(
+                      button: true,
+                      label: toggleLabel,
+                      child: Material(
+                        color: scheme.primaryContainer
+                            .withValues(alpha: dark ? 0.55 : 0.78),
+                        shape: const CircleBorder(),
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            unawaited(now.toggle());
+                          },
+                          child: SizedBox(
+                            width: 38,
+                            height: 38,
+                            child: Icon(
+                              session.isPaused
+                                  ? Icons.play_arrow_rounded
+                                  : Icons.pause_rounded,
+                              size: 21,
+                              color: scheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                    IconButton(
-                      tooltip: session.isPaused ? '继续' : '暂停',
-                      onPressed: () => unawaited(now.toggle()),
-                      icon: Icon(session.isPaused
-                          ? Icons.play_arrow_rounded
-                          : Icons.pause_rounded),
-                    ),
-                  ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+
+        if (widget.liquidGlass) {
+          final optics = widget.glassConfiguration ??
+              LKStore.glassConfigurationFor(MediaQuery.sizeOf(context));
+          final dockWidth = liquidGlassBarWidth(context, optics);
+          final activePress = _pressed && !reduceMotion;
+          return AnimatedScale(
+            scale: activePress ? 0.985 : 1.0,
+            duration: AppMotion.duration(context, 120),
+            curve: Curves.easeOutCubic,
+            child: LiquidGlassCapsule(
+              surfaceKey: const ValueKey('listening-dock-glass-surface'),
+              optics: optics,
+              width: dockWidth,
+              height: dockHeight,
+              pressed: activePress,
+              child: content,
+            ),
+          );
+        }
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+          child: SizedBox(
+            height: dockHeight,
+            child: Material(
+              color: scheme.surfaceContainerHigh,
+              elevation: 2,
+              shadowColor: scheme.shadow.withValues(alpha: .18),
+              shape: StadiumBorder(
+                side: BorderSide(
+                  color: scheme.outlineVariant.withValues(alpha: 0.35),
                 ),
               ),
+              clipBehavior: Clip.antiAlias,
+              child: content,
             ),
           ),
         );

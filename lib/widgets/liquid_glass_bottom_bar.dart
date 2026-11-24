@@ -180,6 +180,31 @@ class _RenderRootGlass extends RenderProxyBox {
   }
 }
 
+Future<ui.FragmentProgram>? _liquidGlassProgram;
+
+Future<ui.FragmentProgram> _loadLiquidGlassProgram() =>
+    _liquidGlassProgram ??=
+        ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
+
+double liquidGlassBarHeight(BuildContext context, GlassConfiguration optics) {
+  final textHeight =
+      MediaQuery.textScalerOf(context).scale(10 * optics.barHeight / 50);
+  return math.max(
+    48.0,
+    math.max(
+      optics.barHeight,
+      textHeight * 1.35 + 19 * optics.barHeight / 50 + 7,
+    ),
+  );
+}
+
+double liquidGlassBarWidth(BuildContext context, GlassConfiguration optics) {
+  return math.min(
+    optics.barWidth,
+    math.max(0.0, MediaQuery.sizeOf(context).width - 32),
+  );
+}
+
 class LiquidGlassDestination {
   final IconData icon;
   final IconData selectedIcon;
@@ -190,6 +215,186 @@ class LiquidGlassDestination {
     required this.selectedIcon,
     required this.label,
   });
+}
+
+/// Reusable Liquid Glass floating capsule matching [LiquidGlassBottomBar].
+class LiquidGlassCapsule extends StatefulWidget {
+  const LiquidGlassCapsule({
+    super.key,
+    required this.optics,
+    required this.height,
+    this.width,
+    this.pressed = false,
+    this.fraction = 1.0,
+    this.surfaceKey,
+    required this.child,
+  });
+
+  final GlassConfiguration optics;
+  final double height;
+  final double? width;
+  final bool pressed;
+  final double fraction;
+  final Key? surfaceKey;
+  final Widget child;
+
+  @override
+  State<LiquidGlassCapsule> createState() => _LiquidGlassCapsuleState();
+}
+
+class _LiquidGlassCapsuleState extends State<LiquidGlassCapsule> {
+  ui.FragmentShader? _shader;
+
+  @override
+  void initState() {
+    super.initState();
+    if (ui.ImageFilter.isShaderFilterSupported) {
+      _loadShader();
+    }
+  }
+
+  Future<void> _loadShader() async {
+    try {
+      final program = await _loadLiquidGlassProgram();
+      if (mounted) {
+        setState(() => _shader = program.fragmentShader());
+      }
+    } catch (error) {
+      _liquidGlassProgram = null;
+      debugPrint('Liquid glass capsule: ordinary blur fallback ($error)');
+    }
+  }
+
+  @override
+  void dispose() {
+    _shader?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fraction = widget.fraction.clamp(0.0, 1.0).toDouble();
+    final radius = widget.height / 2;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final optics = widget.optics;
+    final shader = _shader;
+    final refracting = shader != null && ui.ImageFilter.isShaderFilterSupported;
+    final glintStrength = highlightStrength(
+      configured: optics.highlight,
+      pressed: widget.pressed,
+      deformation: widget.pressed ? 6 : 0,
+    );
+    final tint = DecoratedBox(
+      decoration: BoxDecoration(
+        color: (dark ? const Color(0xff202026) : const Color(0xfff5f5f7))
+            .withValues(alpha: optics.tint * fraction),
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
+    return SizedBox(
+      width: widget.width,
+      height: widget.height,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black
+                  .withValues(alpha: (dark ? 0.30 : 0.09) * fraction),
+              blurRadius: widget.pressed ? 12 : 18,
+              spreadRadius: -2,
+              offset: Offset(0, widget.pressed ? 3 : 6),
+            ),
+            BoxShadow(
+              color: Colors.black
+                  .withValues(alpha: (dark ? 0.18 : 0.05) * fraction),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.hasBoundedWidth
+                  ? constraints.maxWidth
+                  : (widget.width ?? 0.0);
+              return Stack(
+                key: widget.surfaceKey,
+                children: [
+                  Positioned.fill(
+                    child: refracting
+                        ? _RootGlassBackdrop(
+                            key: const ValueKey('listening-dock-glass-refraction'),
+                            shader: shader,
+                            optics: optics,
+                            lens: Rect.fromLTWH(0, 0, width, widget.height),
+                            pressed: widget.pressed,
+                            deformation: widget.pressed ? 6 : 0,
+                            fraction: fraction,
+                            view: View.of(context),
+                            child: tint,
+                          )
+                        : BackdropFilter(
+                            key: const ValueKey('listening-dock-glass-blur'),
+                            filter: ui.ImageFilter.blur(
+                              sigmaX: optics.blur * fraction,
+                              sigmaY: optics.blur * fraction,
+                            ),
+                            child: tint,
+                          ),
+                  ),
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(radius),
+                          border: Border.all(
+                            color: Colors.white.withValues(
+                              alpha: (dark ? 0.16 : 0.65) *
+                                  optics.highlight *
+                                  fraction,
+                            ),
+                            width: 0.9,
+                          ),
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.white.withValues(
+                                alpha: (dark ? 0.10 : 0.28) *
+                                    glintStrength *
+                                    fraction,
+                              ),
+                              Colors.white.withValues(alpha: 0),
+                              Colors.white.withValues(
+                                alpha: (dark ? 0.04 : 0.08) *
+                                    optics.highlight *
+                                    fraction,
+                              ),
+                            ],
+                            stops: const [0.0, 0.45, 1.0],
+                          ),
+                        ),
+                        child: CustomPaint(
+                          painter: _GlassGlint(dark, glintStrength * fraction),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Material(
+                    type: MaterialType.transparency,
+                    child: widget.child,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// A clipped GPU backdrop lens on Impeller. Other renderers use ordinary blur,
@@ -214,7 +419,6 @@ class LiquidGlassBottomBar extends StatefulWidget {
 
 class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
     with TickerProviderStateMixin {
-  static Future<ui.FragmentProgram>? _program;
   late final AnimationController _controller;
   late final AnimationController _springX;
   late final AnimationController _springY;
@@ -254,12 +458,11 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
 
   Future<void> _loadShader() async {
     try {
-      final program = await (_program ??=
-          ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag'));
+      final program = await _loadLiquidGlassProgram();
       if (mounted) setState(() => _shader = program.fragmentShader());
     } catch (error) {
       // Loading/driver failure is explicitly the blur fallback, not fake optics.
-      _program = null;
+      _liquidGlassProgram = null;
       debugPrint('Liquid glass: ordinary blur fallback ($error)');
     }
   }
@@ -425,11 +628,7 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
       return const SizedBox.shrink();
     }
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final textHeight = media.textScaler.scale(10 * optics.barHeight / 50);
-    final barHeight = math.max(
-        48.0,
-        math.max(optics.barHeight,
-            textHeight * 1.35 + 19 * optics.barHeight / 50 + 7));
+    final barHeight = liquidGlassBarHeight(context, optics);
     final barScale = optics.barHeight / 50;
     // heightFactor is essential in Scaffold.bottomNavigationBar: do not consume
     // the whole viewport, nor intercept taps in the page above the 50px bar.
@@ -443,8 +642,7 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
           offset: Offset(
               0, (1 - fraction) * (barHeight + optics.floatingHeight + 10)),
           child: SizedBox(
-            width:
-                math.min(optics.barWidth, math.max(0.0, media.size.width - 32)),
+            width: liquidGlassBarWidth(context, optics),
             height: barHeight,
             child: LayoutBuilder(builder: (context, constraints) {
               final width = constraints.maxWidth;

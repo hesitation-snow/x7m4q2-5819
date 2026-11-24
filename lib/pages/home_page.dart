@@ -1,6 +1,7 @@
 import '../services/app_motion.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -258,10 +259,14 @@ class _HomePageState extends State<HomePage> {
       child: ValueListenableBuilder<bool>(
         valueListenable: LKStore.liquidGlassBottomBarEnabled,
         builder: (context, useLiquidGlass, _) {
+          final outerBottomPadding = MediaQuery.paddingOf(context).bottom;
+          final outerKeyboardInset = MediaQuery.viewInsetsOf(context).bottom;
           return Scaffold(
             extendBody: useLiquidGlass,
-            body: Column(
+            body: Stack(
               children: [
+                Column(
+                  children: [
                 // 顶栏:状态栏条固定,搜索区与频道导航随滚动向上滑出
                 // 采用让渡式收合;其它 Tab 只留状态栏背景
                 SizedBox(
@@ -513,33 +518,20 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
+                if (!useLiquidGlass) const ListeningDock(),
+              ],
+            ),
                 if (useLiquidGlass)
-                  ListenableBuilder(
-                    listenable: Listenable.merge([
-                      ListeningNow.instance,
-                      _barFrac,
-                      LKStore.glassConfiguration,
-                    ]),
-                    child: const ListeningDock(),
-                    builder: (context, child) {
-                      if (!ListeningNow.instance.active) {
-                        return const SizedBox.shrink();
-                      }
-                      final cfg = LKStore.glassConfiguration.value;
-                      final frac = cfg.keepVisibleOnScroll ? 1.0 : _barFrac.value;
-                      final bottomSafe = MediaQuery.paddingOf(context).bottom;
-                      final clearance = frac > 0.01
-                          ? (cfg.barHeight + cfg.floatingHeight + bottomSafe + 4) *
-                              frac
-                          : bottomSafe;
-                      return Padding(
-                        padding: EdgeInsets.only(bottom: clearance),
-                        child: child,
-                      );
-                    },
-                  )
-                else
-                  const ListeningDock(),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _LiquidGlassListeningDockOverlay(
+                      barFrac: _barFrac,
+                      outerBottomPadding: outerBottomPadding,
+                      keyboardInset: outerKeyboardInset,
+                    ),
+                  ),
               ],
             ),
             bottomNavigationBar: useLiquidGlass
@@ -2690,5 +2682,56 @@ class _MyTabState extends State<MyTab> {
             onTap: onTap,
             child: child,
           );
+  }
+}
+
+class _LiquidGlassListeningDockOverlay extends StatelessWidget {
+  const _LiquidGlassListeningDockOverlay({
+    required this.barFrac,
+    required this.outerBottomPadding,
+    required this.keyboardInset,
+  });
+
+  final ValueNotifier<double> barFrac;
+  final double outerBottomPadding;
+  final double keyboardInset;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        ListeningNow.instance,
+        barFrac,
+        LKStore.glassConfiguration,
+      ]),
+      builder: (context, _) {
+        final now = ListeningNow.instance;
+        if (!now.active || now.session == null) {
+          return const SizedBox.shrink();
+        }
+        final optics =
+            LKStore.glassConfigurationFor(MediaQuery.sizeOf(context));
+        final fraction = optics.keepVisibleOnScroll
+            ? 1.0
+            : barFrac.value.clamp(0.0, 1.0).toDouble();
+        final navVisible = fraction > 0.01 && keyboardInset == 0;
+        final navBarHeight = liquidGlassBarHeight(context, optics);
+        final navBottomMargin =
+            math.max(outerBottomPadding, optics.floatingHeight);
+        const dockGap = 10.0;
+        final dockBottom = navVisible
+            ? navBottomMargin + (navBarHeight + dockGap) * fraction
+            : (keyboardInset > 0 ? 10.0 : navBottomMargin);
+        return Padding(
+          padding: EdgeInsets.only(bottom: dockBottom),
+          child: Center(
+            child: ListeningDock(
+              liquidGlass: true,
+              glassConfiguration: optics,
+            ),
+          ),
+        );
+      },
+    );
   }
 }
