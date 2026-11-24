@@ -98,77 +98,132 @@ class ListeningSourcePicker extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final bool enabled;
 
+  static const _sources = [
+    ('online', '在线自然音', '免密钥，中日韩自动切换音色', Icons.cloud_outlined),
+    ('system', '系统引擎', '使用手机已安装的本地语音', Icons.phone_android_rounded),
+    ('custom', '自定义', 'Azure 或自定义 SSML 接口', Icons.tune_rounded),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    const sources = [
-      ('online', '在线自然音', '免密钥，中日韩自动换音色', Icons.cloud_outlined),
-      ('system', '系统引擎', '使用手机已安装的语音', Icons.phone_android_rounded),
-      ('custom', '自定义', 'Azure 或自己的 SSML 服务', Icons.tune_rounded),
-    ];
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final activeSource = _sources.firstWhere(
+      (item) => item.$1 == value,
+      orElse: () => _sources.first,
+    );
     return LayoutBuilder(builder: (context, constraints) {
-      final wide = constraints.maxWidth >= 520 &&
-          MediaQuery.textScalerOf(context).scale(14) <= 20;
-      return Wrap(spacing: 8, runSpacing: 8, children: [
-        for (final source in sources)
-          SizedBox(
-            width: wide ? (constraints.maxWidth - 16) / 3 : constraints.maxWidth,
-            child: Semantics(
-              selected: value == source.$1,
-              button: true,
-              child: Material(
-                color: value == source.$1
-                    ? scheme.secondaryContainer
-                    : scheme.surfaceContainerLow,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(
-                    color: value == source.$1
-                        ? scheme.primary
-                        : scheme.outlineVariant.withValues(alpha: .35),
-                  ),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
+      final compactList = constraints.maxWidth < 300 ||
+          MediaQuery.textScalerOf(context).scale(14) > 18;
+      if (compactList) {
+        return AppSettingsGroup(
+          children: [
+            for (final source in _sources)
+              Semantics(
+                selected: value == source.$1,
+                button: true,
+                child: ListTile(
                   key: ValueKey('listening-source-${source.$1}'),
+                  enabled: enabled,
+                  leading: AppSettingIcon(source.$4),
+                  title: Text(source.$2),
+                  subtitle: Text(source.$3),
+                  trailing: Icon(
+                    value == source.$1
+                        ? Icons.check_circle_rounded
+                        : Icons.circle_outlined,
+                    color:
+                        value == source.$1 ? scheme.primary : scheme.outline,
+                    size: 20,
+                  ),
                   onTap: !enabled ? null : () => onChanged(source.$1),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(children: [
-                      AppSettingIcon(source.$4),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(source.$2, style: theme.textTheme.titleSmall),
-                            const SizedBox(height: 2),
-                            Text(source.$3,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                    color: scheme.onSurfaceVariant)),
-                          ],
+                ),
+              ),
+          ],
+        );
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: scheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: .25),
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                children: [
+                  for (final source in _sources)
+                    Expanded(
+                      child: Semantics(
+                        selected: value == source.$1,
+                        button: true,
+                        child: Material(
+                          color: value == source.$1
+                              ? scheme.secondaryContainer
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(14),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            key: ValueKey('listening-source-${source.$1}'),
+                            onTap: !enabled ? null : () => onChanged(source.$1),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 10,
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    source.$4,
+                                    size: 20,
+                                    color: value == source.$1
+                                        ? scheme.onSecondaryContainer
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    source.$2,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.labelMedium?.copyWith(
+                                      fontWeight: value == source.$1
+                                          ? FontWeight.w600
+                                          : FontWeight.w500,
+                                      color: value == source.$1
+                                          ? scheme.onSecondaryContainer
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                      if (!wide) ...[
-                        const SizedBox(width: 8),
-                        Icon(
-                          value == source.$1
-                              ? Icons.check_circle_rounded
-                              : Icons.circle_outlined,
-                          color: value == source.$1
-                              ? scheme.primary
-                              : scheme.outline,
-                          size: 20,
-                        ),
-                      ],
-                    ]),
-                  ),
-                ),
+                    ),
+                ],
               ),
             ),
           ),
-      ]);
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 6, 6, 0),
+            child: Text(
+              activeSource.$3,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      );
     });
   }
 }
@@ -281,7 +336,7 @@ class ListeningSection extends StatelessWidget {
       );
 }
 
-/// Rate control used by the reader listening sheet. Matches settings cards.
+/// Rate control used by both settings and the reader listening sheet.
 class ListeningRateControl extends StatelessWidget {
   const ListeningRateControl({
     super.key,
@@ -289,6 +344,8 @@ class ListeningRateControl extends StatelessWidget {
     required this.onChanged,
     this.onChangeEnd,
   });
+
+  static const _presets = <double>[0.8, 1.0, 1.2, 1.5, 2.0];
 
   final double rate;
   final ValueChanged<double> onChanged;
@@ -303,10 +360,10 @@ class ListeningRateControl extends StatelessWidget {
       color: scheme.surfaceContainerLow,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
-        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .35)),
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: .25)),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -314,12 +371,30 @@ class ListeningRateControl extends StatelessWidget {
               const AppSettingIcon(Icons.speed_rounded),
               const SizedBox(width: 12),
               Expanded(
-                child: Text('语速', style: theme.textTheme.titleSmall),
+                child: Text(
+                  '朗读语速',
+                  style: theme.textTheme.bodyLarge
+                      ?.copyWith(fontWeight: FontWeight.w500),
+                ),
               ),
-              Text('${shown.toStringAsFixed(2)}×',
-                  style: theme.textTheme.titleSmall
-                      ?.copyWith(color: scheme.primary)),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '${shown.toStringAsFixed(2)}×',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: scheme.onPrimaryContainer,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
             ]),
+            const SizedBox(height: 4),
             Slider(
               min: .5,
               max: 3,
@@ -328,6 +403,21 @@ class ListeningRateControl extends StatelessWidget {
               label: '${shown.toStringAsFixed(2)}×',
               onChanged: onChanged,
               onChangeEnd: onChangeEnd,
+            ),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final preset in _presets)
+                  M3ChoiceChip(
+                    label: '${preset.toStringAsFixed(1)}×',
+                    selected: (shown - preset).abs() < 0.03,
+                    onSelected: (_) {
+                      onChanged(preset);
+                      onChangeEnd?.call(preset);
+                    },
+                  ),
+              ],
             ),
           ],
         ),

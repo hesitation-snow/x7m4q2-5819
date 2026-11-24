@@ -165,9 +165,10 @@ void main() {
                 of: find.byType(BottomSheet),
                 matching: find.byType(SingleChildScrollView)),
             findsWidgets);
-        await tester.tap(find.byWidgetPredicate((widget) =>
-            widget is DropdownButtonFormField<String> &&
-            widget.initialValue == 'one'));
+        await tester.ensureVisible(
+            find.byKey(const ValueKey('tts-system-voice-tile')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('tts-system-voice-tile')));
         await tester.pumpAndSettle();
         await tester.tap(find.textContaining('语音二').last);
         await tester.pumpAndSettle();

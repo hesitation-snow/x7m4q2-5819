@@ -18,8 +18,10 @@ import '../api/reader_cache.dart';
 import '../api/store.dart';
 import '../services/app_cache.dart';
 import '../services/app_update_service.dart';
+import '../services/reader_tts_preferences.dart';
 import '../widgets/common.dart';
 import 'feedback_options_sheet.dart';
+import 'tts_settings_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -38,23 +40,43 @@ class _SettingsPageState extends State<SettingsPage> {
   int? _aboutPointer;
   Offset? _aboutPointerStart;
   bool _checkingBrave = false;
+  ReaderTtsPreferences _ttsPrefs = ReaderTtsPreferences.defaults;
 
   @override
   void initState() {
     super.initState();
     LKClient.sessionRev.addListener(_onSessionRev);
+    ReaderTtsPreferences.revision.addListener(_onTtsPrefsRev);
     _loadCacheUsage();
+    unawaited(_loadTtsPrefs());
   }
 
   @override
   void dispose() {
     _aboutPressTimer?.cancel();
     LKClient.sessionRev.removeListener(_onSessionRev);
+    ReaderTtsPreferences.revision.removeListener(_onTtsPrefsRev);
     super.dispose();
   }
 
   void _onSessionRev() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+      unawaited(_loadTtsPrefs());
+    }
+  }
+
+  void _onTtsPrefsRev() {
+    if (mounted) unawaited(_loadTtsPrefs());
+  }
+
+  Future<void> _loadTtsPrefs() async {
+    final accountKey = ReaderTtsPreferences.currentAccountKey();
+    final loaded = await ReaderTtsPreferences.load(accountKey);
+    if (!mounted || accountKey != ReaderTtsPreferences.currentAccountKey()) {
+      return;
+    }
+    setState(() => _ttsPrefs = loaded);
   }
 
   Future<void> _loadCacheUsage() async {
@@ -520,6 +542,19 @@ class _SettingsPageState extends State<SettingsPage> {
                 subtitle: const Text('如原文支持，显示文字样式'),
                 value: enabled,
                 onChanged: LKStore.setEnhancedContentStyleEnabled,
+              ),
+            ),
+            ListTile(
+              key: const ValueKey('settings-tts-tile'),
+              leading: _settingsIcon(context, Icons.headphones_rounded),
+              title: const Text('听书与 TTS'),
+              subtitle: Text('当前：${_ttsPrefs.summaryLabel}'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => const TtsSettingsPage(),
+                ),
               ),
             ),
             if (LKClient.shared.session.isLoggedIn)

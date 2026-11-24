@@ -1,7 +1,6 @@
 import '../reader/layout_cache.dart';
 import 'dart:async';
 import 'dart:collection';
-import 'dart:convert';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
@@ -45,7 +44,9 @@ import '../services/custom_ssml_tts.dart';
 import 'custom_tts_settings_page.dart';
 import '../services/reader_audio_handler.dart';
 import '../services/reader_audio_bootstrap.dart';
+import '../services/reader_tts_preferences.dart';
 import '../widgets/reader_listening_sheet.dart';
+import '../widgets/tts_settings_sections.dart';
 import 'comments_page.dart';
 import 'media_viewer_page.dart';
 import 'reader_catalog_sheet.dart';
@@ -517,6 +518,7 @@ class _ReaderPageState extends State<ReaderPage>
         .addListener(_onEnhancedContentStyleChanged);
     _prefsReady = _loadPrefs();
     LKClient.sessionRev.addListener(_onAccountChanged);
+    ReaderTtsPreferences.revision.addListener(_onTtsPreferencesRevision);
     _load();
   }
 
@@ -1367,6 +1369,7 @@ class _ReaderPageState extends State<ReaderPage>
   void dispose() {
     _readerInputActive = false;
     LKClient.sessionRev.removeListener(_onAccountChanged);
+    ReaderTtsPreferences.revision.removeListener(_onTtsPreferencesRevision);
     _exitConfirmationTimer?.cancel();
     readerRouteObserver.unsubscribe(this);
     FocusManager.instance.removeListener(_syncVolumeKeys);
@@ -2857,106 +2860,71 @@ class _ReaderPageState extends State<ReaderPage>
     unawaited(_loadTtsPreferences().then((_) => _startSpeechSession()));
   }
 
-  String _currentTtsAccountKey() {
-    final session = LKClient.shared.session;
-    return session.uid > 0 ? 'uid:${session.uid}' : 'guest';
+  bool _savingOwnTtsPrefs = false;
+
+  void _onTtsPreferencesRevision() {
+    if (_savingOwnTtsPrefs || !mounted) return;
+    _ttsSettingsLoadedForAccount = null;
+    unawaited(_loadTtsPreferences());
   }
 
+  String _currentTtsAccountKey() => ReaderTtsPreferences.currentAccountKey();
+
   String _customTtsMetadataKey(String accountKey) =>
-      'custom_ssml_tts_metadata_${Uri.encodeComponent(accountKey)}';
+      ReaderTtsPreferences.customMetadataKey(accountKey);
 
   String _customTtsCredentialKey(String accountKey) =>
-      'custom_ssml_tts_credential_${Uri.encodeComponent(accountKey)}';
-
-  String _ttsPreferencesKey(String accountKey) =>
-      'reader_tts_preferences_v1_${Uri.encodeComponent(accountKey)}';
+      ReaderTtsPreferences.customCredentialKey(accountKey);
 
   Future<void> _loadTtsPreferences() async {
     final accountKey = _currentTtsAccountKey();
     if (_ttsSettingsLoadedForAccount == accountKey) return;
-    final preferences = await SharedPreferences.getInstance();
+    final loaded = await ReaderTtsPreferences.loadOrNull(accountKey);
     if (!mounted || accountKey != _currentTtsAccountKey()) return;
-    final raw = preferences.getString(_ttsPreferencesKey(accountKey));
-    if (raw == null || raw.isEmpty) {
+    if (loaded == null) {
       _ttsSettingsLoadedForAccount = accountKey;
       return;
     }
-    try {
-      final values = jsonDecode(raw);
-      if (values is! Map) return;
-      final source = values['source'];
-      final filter = values['languageFilter'];
-      final sleep = values['sleepTimer'];
-      final voiceMap = values['voiceByLanguage'];
-      setState(() {
-        _ttsSourceMode = source == 'gpt_sovits'
-            ? 'online'
-            : source is String &&
-                    const {'system', 'online', 'custom'}.contains(source)
-                ? source
-                : 'online';
-        _ttsDraftRate =
-            ((values['rate'] as num?)?.toDouble() ?? 1.0).clamp(.5, 3);
-        _ttsSegmentInterval = Duration(
-            milliseconds: (values['segmentIntervalMs'] as num?)?.toInt() ?? 0);
-        _ttsLanguageFilter = ReaderLanguageFilter.values.firstWhere(
-          (value) => value.name == filter,
-          orElse: () => ReaderLanguageFilter.automatic,
-        );
-        _ttsSleepTimer = PlaybackSleepTimer.values.firstWhere(
-          (value) => value.name == sleep,
-          orElse: () => PlaybackSleepTimer.none,
-        );
-        _ttsContinuousChapter = values['continuousChapter'] == true;
-        _ttsPreferredSystemVoiceId = values['systemVoice'] as String?;
-        _ttsEngineId = values['systemEngine'] as String?;
-        _ttsVoiceByLanguage.clear();
-        if (voiceMap is Map) {
-          for (final entry in voiceMap.entries) {
-            if (entry.key is String && entry.value is String) {
-              _ttsVoiceByLanguage[entry.key as String] = entry.value as String;
-            }
-          }
-        }
-        _edgeVoiceByLanguage.clear();
-        final edgeMap = values['edgeVoiceByLanguage'];
-        if (edgeMap is Map) {
-          for (final entry in edgeMap.entries) {
-            if (entry.key is String &&
-                entry.value is String &&
-                edgeVoiceById(entry.value as String)?.language ==
-                    entry.key) {
-              _edgeVoiceByLanguage[entry.key as String] =
-                  entry.value as String;
-            }
-          }
-        }
-      });
-      _ttsSettingsLoadedForAccount = accountKey;
-    } catch (_) {
-      _ttsSettingsLoadedForAccount = accountKey;
-    }
+    setState(() {
+      _ttsSourceMode = loaded.sourceMode;
+      _ttsDraftRate = loaded.rate;
+      _ttsSegmentInterval = loaded.segmentInterval;
+      _ttsLanguageFilter = loaded.languageFilter;
+      _ttsSleepTimer = loaded.sleepTimer;
+      _ttsContinuousChapter = loaded.continuousChapter;
+      _ttsPreferredSystemVoiceId = loaded.systemVoiceId;
+      _ttsEngineId = loaded.systemEngineId;
+      _ttsVoiceByLanguage
+        ..clear()
+        ..addAll(loaded.systemVoiceByLanguage);
+      _edgeVoiceByLanguage
+        ..clear()
+        ..addAll(loaded.edgeVoiceByLanguage);
+    });
+    _ttsSettingsLoadedForAccount = accountKey;
+    _refreshTtsSheet();
   }
 
   Future<void> _saveTtsPreferences() async {
     final accountKey = _currentTtsAccountKey();
-    final preferences = await SharedPreferences.getInstance();
-    if (!mounted || accountKey != _currentTtsAccountKey()) return;
-    await preferences.setString(
-      _ttsPreferencesKey(accountKey),
-      jsonEncode(<String, Object?>{
-        'source': _ttsSourceMode,
-        'rate': _ttsDraftRate,
-        'systemVoice': _ttsPlatform.voiceId,
-        'systemEngine': _ttsEngineId,
-        'voiceByLanguage': _ttsVoiceByLanguage,
-        'edgeVoiceByLanguage': _edgeVoiceByLanguage,
-        'languageFilter': _ttsLanguageFilter.name,
-        'segmentIntervalMs': _ttsSegmentInterval.inMilliseconds,
-        'sleepTimer': _ttsSleepTimer.name,
-        'continuousChapter': _ttsContinuousChapter,
-      }),
+    final prefs = ReaderTtsPreferences(
+      sourceMode: _ttsSourceMode,
+      rate: _ttsDraftRate,
+      systemVoiceId: _ttsPlatform.voiceId ?? _ttsPreferredSystemVoiceId,
+      systemEngineId: _ttsEngineId,
+      systemVoiceByLanguage: _ttsVoiceByLanguage,
+      edgeVoiceByLanguage: _edgeVoiceByLanguage,
+      languageFilter: _ttsLanguageFilter,
+      segmentInterval: _ttsSegmentInterval,
+      sleepTimer: _ttsSleepTimer,
+      continuousChapter: _ttsContinuousChapter,
     );
+    _savingOwnTtsPrefs = true;
+    try {
+      await ReaderTtsPreferences.save(prefs, accountKey: accountKey);
+    } finally {
+      _savingOwnTtsPrefs = false;
+    }
   }
 
   String _speechSegmentScrollKey(TtsSegment segment) =>
@@ -3299,6 +3267,8 @@ class _ReaderPageState extends State<ReaderPage>
       showFloatingPrompt(context, '当前版本的音频文件合成仅支持 Android');
       return;
     }
+    await _loadTtsPreferences();
+    if (!mounted || startRevision != _speechStartRevision) return;
     final handler = activeReaderAudioHandler;
     final accountKey = _currentTtsAccountKey();
     final accountRevision = LKClient.sessionRev.value;
@@ -3837,20 +3807,27 @@ class _ReaderPageState extends State<ReaderPage>
                         loading: loading,
                         hasError: status == TtsPlaybackStatus.error,
                       ),
-                      if (activeReaderAudioHandler == null)
-                        Card.filled(
-                            child: ListTile(
-                          leading: const Icon(Icons.info_outline_rounded),
-                          title: const Text('媒体服务尚未连接'),
-                          subtitle:
-                              const Text('系统朗读使用兼容模式；连接后可使用预缓存、睡眠定时及完整后台控制。'),
-                          trailing: TextButton(
-                              onPressed: _mediaServiceRetrying
-                                  ? null
-                                  : _retryReaderAudioService,
-                              child:
-                                  Text(_mediaServiceRetrying ? '连接中…' : '重连')),
-                        )),
+                      if (activeReaderAudioHandler == null) ...[
+                        const SizedBox(height: 12),
+                        AppSettingsGroup(
+                          children: [
+                            ListTile(
+                              leading:
+                                  const AppSettingIcon(Icons.info_outline_rounded),
+                              title: const Text('媒体服务尚未连接'),
+                              subtitle: const Text(
+                                  '系统朗读使用兼容模式；连接后可使用预缓存、睡眠定时及完整后台控制。'),
+                              trailing: TextButton(
+                                onPressed: _mediaServiceRetrying
+                                    ? null
+                                    : _retryReaderAudioService,
+                                child: Text(
+                                    _mediaServiceRetrying ? '连接中…' : '重连'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 14),
                       ListeningRateControl(
                         rate: _ttsDraftRate,
@@ -3909,468 +3886,138 @@ class _ReaderPageState extends State<ReaderPage>
                               }
                             },
                           )),
-                      const SizedBox(height: 12),
-                      if (changingSource)
+                      if (changingSource) ...[
+                        const SizedBox(height: 8),
                         const LinearProgressIndicator(minHeight: 2),
-                      if (_ttsSourceMode == 'system')
-                        ListeningSection(
-                            title: '音色与引擎',
-                            child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  if (_ttsSourceMode == 'system' &&
-                                      _ttsEnginesLoading)
-                                    const LinearProgressIndicator(minHeight: 2)
-                                  else if (_ttsSourceMode == 'system' &&
-                                      _ttsEngineError != null)
-                                    ListTile(
-                                      dense: true,
-                                      leading: const Icon(
-                                          Icons.info_outline_rounded),
-                                      title: Text(_ttsEngineError!),
-                                      trailing: IconButton(
-                                        tooltip: '重新检测引擎',
-                                        onPressed: () async {
-                                          final task = _loadTtsEngines();
-                                          setSheet(() {});
-                                          await task;
-                                          if (sheetContext.mounted) {
-                                            setSheet(() {});
-                                          }
-                                        },
-                                        icon: const Icon(Icons.refresh_rounded),
-                                      ),
-                                    )
-                                  else if (_ttsSourceMode == 'system')
-                                    DropdownButtonFormField<String>(
-                                      key: ValueKey(
-                                          'system-tts-engine-$_ttsEngineId'),
-                                      initialValue: _ttsEngineId ?? 'default',
-                                      isExpanded: true,
-                                      decoration: const InputDecoration(
-                                        labelText: '系统朗读引擎',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                      items: [
-                                        const DropdownMenuItem(
-                                          value: 'default',
-                                          child: Text('系统默认引擎'),
-                                        ),
-                                        for (final engine in _ttsEngines)
-                                          DropdownMenuItem(
-                                            value: engine.id,
-                                            child: Text(
-                                              '${engine.label} · ${engine.id}',
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                      ],
-                                      onChanged: (id) async {
-                                        if (id == null ||
-                                            id == (_ttsEngineId ?? 'default')) {
-                                          return;
-                                        }
-                                        await _disposeSpeechSession();
-                                        await _ttsController.stop();
-                                        try {
-                                          await _systemTts.setEngine(id);
-                                          if (!mounted ||
-                                              !sheetContext.mounted) {
-                                            return;
-                                          }
-                                          setState(() {
-                                            _ttsEngineId =
-                                                id == 'default' ? null : id;
-                                            _ttsVoices = const [];
-                                            _ttsPreferredSystemVoiceId = null;
-                                            _ttsVoiceByLanguage.clear();
-                                          });
-                                          _ttsPlatform.selectVoice(null);
-                                          await _saveTtsPreferences();
-                                          await _loadTtsVoices();
-                                          if (sheetContext.mounted) {
-                                            setSheet(() {});
-                                          }
-                                        } catch (error) {
-                                          if (!mounted) return;
-                                          setState(() => _ttsEngineError =
-                                              error.toString());
-                                          if (sheetContext.mounted) {
-                                            setSheet(() {});
-                                          }
-                                        }
-                                      },
-                                    ),
-                                  if (_ttsSourceMode == 'system' &&
-                                      _ttsVoicesLoading)
-                                    const LinearProgressIndicator(minHeight: 2)
-                                  else if (_ttsSourceMode == 'system' &&
-                                      _ttsVoiceError != null)
-                                    ListTile(
-                                      dense: true,
-                                      leading: const Icon(
-                                          Icons.info_outline_rounded),
-                                      title: Text(_ttsVoiceError!),
-                                      trailing: IconButton(
-                                        tooltip: '重新检测语音',
-                                        onPressed: () async {
-                                          final task = _loadTtsVoices();
-                                          setSheet(() {});
-                                          await task;
-                                          if (sheetContext.mounted) {
-                                            setSheet(() {});
-                                          }
-                                        },
-                                        icon: const Icon(Icons.refresh_rounded),
-                                      ),
-                                    )
-                                  else if (_ttsSourceMode == 'system' &&
-                                      _ttsVoices.isEmpty)
-                                    const ListTile(
-                                      dense: true,
-                                      leading:
-                                          Icon(Icons.warning_amber_rounded),
-                                      title: Text('系统未提供可用语音，请检查设备语音设置'),
-                                    )
-                                  else if (_ttsSourceMode == 'system')
-                                    DropdownButtonFormField<String>(
-                                      key: ValueKey(_ttsPlatform.voiceId),
-                                      isExpanded: true,
-                                      initialValue: _ttsVoices.any((v) =>
-                                              v.id == _ttsPlatform.voiceId)
-                                          ? _ttsPlatform.voiceId
-                                          : null,
-                                      decoration: const InputDecoration(
-                                        labelText: '系统语音',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                      items: [
-                                        for (final voice in _ttsVoices)
-                                          DropdownMenuItem(
-                                            value: voice.id,
-                                            child: Text(
-                                              '${voice.name} · ${voice.locale ?? '未知语言'}${voice.networkRequired == true ? ' · 需联网' : ''}',
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                      ],
-                                      onChanged: (id) {
-                                        final voice = _ttsVoices
-                                            .where((item) => item.id == id)
-                                            .firstOrNull;
-                                        setSheet(() {
-                                          _ttsPlatform.selectVoice(voice);
-                                          _ttsPreferredSystemVoiceId =
-                                              voice?.id;
-                                        });
-                                        unawaited(_applySystemSpeechVoice());
-                                      },
-                                    ),
-                                  if (_ttsSourceMode == 'system' &&
-                                      _ttsVoices.isNotEmpty)
-                                    ExpansionTile(
-                                      tilePadding: EdgeInsets.zero,
-                                      title: const Text('分语言音色'),
-                                      subtitle: activeReaderAudioHandler == null
-                                          ? const Text('连接媒体服务后可用')
-                                          : null,
-                                      children: [
-                                        for (final language in const [
-                                          ('chinese', '中文', 'zh'),
-                                          ('japanese', '日语', 'ja'),
-                                          ('korean', '韩语', 'ko'),
-                                        ])
-                                          ListTile(
-                                            dense: true,
-                                            title: Text(language.$2),
-                                            trailing: DropdownButton<String>(
-                                              value: _ttsVoices.any((voice) =>
-                                                      voice.id ==
-                                                          _ttsVoiceByLanguage[
-                                                              language.$1] &&
-                                                      voice.locale
-                                                              ?.toLowerCase()
-                                                              .startsWith(
-                                                                  language
-                                                                      .$3) ==
-                                                          true)
-                                                  ? _ttsVoiceByLanguage[
-                                                      language.$1]
-                                                  : '',
-                                              items: [
-                                                const DropdownMenuItem(
-                                                  value: '',
-                                                  child: Text('自动'),
-                                                ),
-                                                for (final voice
-                                                    in _ttsVoices.where(
-                                                  (item) =>
-                                                      item.locale
-                                                          ?.toLowerCase()
-                                                          .startsWith(
-                                                              language.$3) ==
-                                                      true,
-                                                ))
-                                                  DropdownMenuItem(
-                                                    value: voice.id,
-                                                    child: Text(
-                                                      voice.name,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                    ),
-                                                  ),
-                                              ],
-                                              onChanged:
-                                                  activeReaderAudioHandler ==
-                                                          null
-                                                      ? null
-                                                      : (id) {
-                                                          setSheet(() {
-                                                            if (id == null ||
-                                                                id.isEmpty) {
-                                                              _ttsVoiceByLanguage
-                                                                  .remove(
-                                                                      language
-                                                                          .$1);
-                                                            } else {
-                                                              _ttsVoiceByLanguage[
-                                                                  language
-                                                                      .$1] = id;
-                                                            }
-                                                          });
-                                                          unawaited(
-                                                              _applySystemSpeechVoice());
-                                                        },
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                ])),
-                      if (_ttsSourceMode == 'online')
-                        ListeningSection(
-                          title: '在线音色',
-                          child: Card.filled(
-                            margin: EdgeInsets.zero,
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                              child: Column(
-                                children: [
-                                  const ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    leading: Icon(Icons.cloud_outlined),
-                                    title: Text('中日韩自动换音色'),
-                                    subtitle: Text(
-                                        '不需要密钥。语速只改变播放速度，不会重新合成。正文会发送到在线语音服务。'),
-                                  ),
-                                  for (final language in const [
-                                    ('chinese', '中文'),
-                                    ('japanese', '日文'),
-                                    ('korean', '韩文'),
-                                  ])
-                                    DropdownButtonFormField<String>(
-                                      key: ValueKey(
-                                          'edge-voice-${language.$1}-${_edgeVoiceByLanguage[language.$1] ?? ''}'),
-                                      isExpanded: true,
-                                      initialValue: edgeVoiceById(
-                                                      _edgeVoiceByLanguage[
-                                                          language.$1])
-                                                  ?.language ==
-                                              language.$1
-                                          ? _edgeVoiceByLanguage[language.$1]
-                                          : '',
-                                      decoration: InputDecoration(
-                                        labelText: language.$2,
-                                        border: const OutlineInputBorder(),
-                                      ),
-                                      items: [
-                                        const DropdownMenuItem(
-                                          value: '',
-                                          child: Text('自动'),
-                                        ),
-                                        for (final voice in builtInEdgeVoices
-                                            .where((item) =>
-                                                item.language == language.$1))
-                                          DropdownMenuItem(
-                                            value: voice.id,
-                                            child: Text(voice.label),
-                                          ),
-                                      ],
-                                      onChanged: (id) {
-                                        setSheet(() {
-                                          if (id == null || id.isEmpty) {
-                                            _edgeVoiceByLanguage
-                                                .remove(language.$1);
-                                          } else {
-                                            _edgeVoiceByLanguage[language.$1] =
-                                                id;
-                                          }
-                                        });
-                                        unawaited(_applyEdgeVoices());
-                                      },
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (_ttsSourceMode == 'custom') ...[
-                        ListeningSection(
-                            title: '服务配置',
-                            child: Card.filled(
-                              margin: EdgeInsets.zero,
-                              child: ListTile(
-                                contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 8),
-                                leading:
-                                    const Icon(Icons.settings_voice_rounded),
-                                title: Text(_customSpeechProfile
-                                            ?.displayName.isNotEmpty ==
-                                        true
-                                    ? _customSpeechProfile!.displayName
-                                    : '尚未配置语音服务'),
-                                subtitle: Text(_customSpeechProfile == null
-                                    ? (_customSpeechProfileError ??
-                                        '填写服务地址和音色；Azure 还需要区域密钥。')
-                                    : '${Uri.tryParse(_customSpeechProfile!.endpoint)?.host ?? ''} · ${_customSpeechProfile!.locale}\n配置已保存，连接状态以试听为准'),
-                                trailing:
-                                    const Icon(Icons.chevron_right_rounded),
-                                onTap: _openCustomTtsSettings,
-                              ),
-                            )),
-                        const SizedBox(height: 10),
-                        OutlinedButton.icon(
-                          onPressed: _openCustomTtsSettings,
-                          icon: const Icon(Icons.cloud_outlined),
-                          label: const Text('配置在线 / 自定义 SSML 语音'),
-                        ),
                       ],
-                      const SizedBox(height: 12),
-                      ExpansionTile(
-                        key:
-                            const PageStorageKey('listening-playback-settings'),
-                        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-                        childrenPadding:
-                            const EdgeInsets.only(top: 8, bottom: 8),
-                        title: const Text('播放设置'),
-                        subtitle: const Text('语言筛选 · 睡眠定时 · 连续朗读'),
-                        leading: const Icon(Icons.tune_rounded),
-                        children: [
-                          DropdownButtonFormField<ReaderLanguageFilter>(
-                            initialValue: _ttsLanguageFilter,
-                            decoration: const InputDecoration(
-                              labelText: '朗读语言',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: const [
-                              DropdownMenuItem(
-                                value: ReaderLanguageFilter.automatic,
-                                child: Text('自动识别'),
-                              ),
-                              DropdownMenuItem(
-                                value: ReaderLanguageFilter.chineseOnly,
-                                child: Text('仅中文'),
-                              ),
-                              DropdownMenuItem(
-                                value: ReaderLanguageFilter.japaneseOnly,
-                                child: Text('仅日文'),
-                              ),
-                            ],
-                            onChanged: (value) async {
-                              if (value == null) return;
-                              await _disposeSpeechSession();
-                              await _ttsController.stop();
-                              if (!sheetContext.mounted) return;
-                              setSheet(() => _ttsLanguageFilter = value);
-                              unawaited(_saveTtsPreferences());
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          DropdownButtonFormField<int>(
-                            initialValue: _ttsSegmentInterval.inMilliseconds,
-                            decoration: const InputDecoration(
-                              labelText: '语段间隔',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: const [
-                              DropdownMenuItem(value: 0, child: Text('无间隔')),
-                              DropdownMenuItem(
-                                  value: 500, child: Text('0.5 秒')),
-                              DropdownMenuItem(value: 1000, child: Text('1 秒')),
-                              DropdownMenuItem(value: 2000, child: Text('2 秒')),
-                            ],
-                            onChanged: activeReaderAudioHandler == null
-                                ? null
-                                : (value) {
-                                    if (value == null) return;
-                                    setSheet(() => _ttsSegmentInterval =
-                                        Duration(milliseconds: value));
-                                    _speechSession?.setSegmentInterval(
-                                        Duration(milliseconds: value));
-                                    unawaited(_saveTtsPreferences());
-                                  },
-                          ),
-                          const SizedBox(height: 8),
-                          DropdownButtonFormField<PlaybackSleepTimer>(
-                            initialValue: _ttsSleepTimer,
-                            decoration: const InputDecoration(
-                              labelText: '睡眠定时',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: const [
-                              DropdownMenuItem(
-                                  value: PlaybackSleepTimer.none,
-                                  child: Text('关闭')),
-                              DropdownMenuItem(
-                                  value: PlaybackSleepTimer.minutes15,
-                                  child: Text('15 分钟')),
-                              DropdownMenuItem(
-                                  value: PlaybackSleepTimer.minutes30,
-                                  child: Text('30 分钟')),
-                              DropdownMenuItem(
-                                  value: PlaybackSleepTimer.minutes60,
-                                  child: Text('60 分钟')),
-                              DropdownMenuItem(
-                                  value: PlaybackSleepTimer.chapterEnd,
-                                  child: Text('本章结束时停止')),
-                            ],
-                            onChanged: activeReaderAudioHandler == null
-                                ? null
-                                : (value) {
-                                    if (value == null) return;
-                                    setSheet(() => _ttsSleepTimer = value);
-                                    _speechSession?.setSleepTimer(value);
-                                    unawaited(_saveTtsPreferences());
-                                  },
-                          ),
-                          SwitchListTile.adaptive(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('连续朗读下一章'),
-                            value: _ttsContinuousChapter,
-                            onChanged: activeReaderAudioHandler == null
-                                ? null
-                                : (value) {
-                                    setSheet(
-                                        () => _ttsContinuousChapter = value);
-                                    unawaited(_saveTtsPreferences());
-                                  },
-                          ),
-                        ],
+                      const SizedBox(height: 18),
+                      if (_ttsSourceMode == 'system')
+                        TtsSystemVoicesSection(
+                          isAndroid:
+                              defaultTargetPlatform == TargetPlatform.android,
+                          engines: _ttsEngines,
+                          enginesLoading: _ttsEnginesLoading,
+                          engineError: _ttsEngineError,
+                          selectedEngineId: _ttsEngineId,
+                          onRetryEngines: () async {
+                            final task = _loadTtsEngines();
+                            setSheet(() {});
+                            await task;
+                            if (sheetContext.mounted) setSheet(() {});
+                          },
+                          onEngineSelected: (id) async {
+                            if (id == (_ttsEngineId ?? 'default')) return;
+                            await _disposeSpeechSession();
+                            await _ttsController.stop();
+                            try {
+                              await _systemTts.setEngine(id);
+                              if (!mounted || !sheetContext.mounted) return;
+                              setState(() {
+                                _ttsEngineId = id == 'default' ? null : id;
+                                _ttsVoices = const [];
+                                _ttsPreferredSystemVoiceId = null;
+                                _ttsVoiceByLanguage.clear();
+                              });
+                              _ttsPlatform.selectVoice(null);
+                              await _saveTtsPreferences();
+                              await _loadTtsVoices();
+                              if (sheetContext.mounted) setSheet(() {});
+                            } catch (error) {
+                              if (!mounted) return;
+                              setState(() => _ttsEngineError = error.toString());
+                              if (sheetContext.mounted) setSheet(() {});
+                            }
+                          },
+                          voices: _ttsVoices,
+                          voicesLoading: _ttsVoicesLoading,
+                          voiceError: _ttsVoiceError,
+                          selectedVoiceId: _ttsPlatform.voiceId,
+                          onRetryVoices: () async {
+                            final task = _loadTtsVoices();
+                            setSheet(() {});
+                            await task;
+                            if (sheetContext.mounted) setSheet(() {});
+                          },
+                          onVoiceSelected: (voice) {
+                            setSheet(() {
+                              _ttsPlatform.selectVoice(voice);
+                              _ttsPreferredSystemVoiceId = voice.id;
+                            });
+                            unawaited(_applySystemSpeechVoice());
+                          },
+                          voiceByLanguage: _ttsVoiceByLanguage,
+                          perLanguageEnabled: activeReaderAudioHandler != null,
+                          onLanguageVoiceChanged: (language, voiceId) {
+                            setSheet(() {
+                              if (voiceId == null || voiceId.isEmpty) {
+                                _ttsVoiceByLanguage.remove(language);
+                              } else {
+                                _ttsVoiceByLanguage[language] = voiceId;
+                              }
+                            });
+                            unawaited(_applySystemSpeechVoice());
+                          },
+                        ),
+                      if (_ttsSourceMode == 'online')
+                        TtsOnlineVoicesSection(
+                          edgeVoiceByLanguage: _edgeVoiceByLanguage,
+                          onVoiceChanged: (language, voiceId) {
+                            setSheet(() {
+                              if (voiceId == null || voiceId.isEmpty) {
+                                _edgeVoiceByLanguage.remove(language);
+                              } else {
+                                _edgeVoiceByLanguage[language] = voiceId;
+                              }
+                            });
+                            unawaited(_applyEdgeVoices());
+                          },
+                        ),
+                      if (_ttsSourceMode == 'custom')
+                        TtsCustomVoiceSection(
+                          profile: _customSpeechProfile,
+                          profileError: _customSpeechProfileError,
+                          onConfigure: () => unawaited(_openCustomTtsSettings()),
+                        ),
+                      const SizedBox(height: 18),
+                      TtsPlaybackSettingsSection(
+                        languageFilter: _ttsLanguageFilter,
+                        onLanguageFilterChanged: (value) async {
+                          await _disposeSpeechSession();
+                          await _ttsController.stop();
+                          if (!sheetContext.mounted) return;
+                          setSheet(() => _ttsLanguageFilter = value);
+                          unawaited(_saveTtsPreferences());
+                        },
+                        segmentInterval: _ttsSegmentInterval,
+                        onSegmentIntervalChanged: (interval) {
+                          setSheet(() => _ttsSegmentInterval = interval);
+                          _speechSession?.setSegmentInterval(interval);
+                          unawaited(_saveTtsPreferences());
+                        },
+                        sleepTimer: _ttsSleepTimer,
+                        onSleepTimerChanged: (value) {
+                          setSheet(() => _ttsSleepTimer = value);
+                          _speechSession?.setSleepTimer(value);
+                          unawaited(_saveTtsPreferences());
+                        },
+                        continuousChapter: _ttsContinuousChapter,
+                        onContinuousChapterChanged: (value) {
+                          setSheet(() => _ttsContinuousChapter = value);
+                          unawaited(_saveTtsPreferences());
+                        },
+                        mediaControlsEnabled: activeReaderAudioHandler != null,
                       ),
-                      ExpansionTile(
-                        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-                        title: const Text('使用说明与功能状态'),
-                        leading: const Icon(Icons.info_outline_rounded),
+                      const SizedBox(height: 16),
+                      const AppSettingsGroup(
                         children: [
-                          const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: Text(
-                                  '后台与锁屏通过媒体通知控制；暂停后从当前语段开头恢复。在线自然音会把正文发到语音服务，不需要密钥。')),
-                          if (_ttsSourceMode == 'custom')
-                            const Padding(
-                              padding: EdgeInsets.only(top: 8),
-                              child: Text(
-                                  '自定义 SSML 会将朗读正文发送至你配置的 HTTPS Endpoint。Azure 也从这里配置。'),
+                          ListTile(
+                            leading:
+                                AppSettingIcon(Icons.info_outline_rounded),
+                            title: Text('后台与锁屏播放'),
+                            subtitle: Text(
+                              '支持在后台与锁屏通过媒体通知控制播放。',
                             ),
+                          ),
                         ],
                       ),
                     ]),
@@ -4928,6 +4575,15 @@ class _ReaderPageState extends State<ReaderPage>
                                   }, subtitle: '关闭后使用连续滚动'),
                                 ]),
                                 ReaderSettingsSection(title: '快捷操作', children: [
+                                  if (defaultTargetPlatform ==
+                                      TargetPlatform.android)
+                                    _aaTile(
+                                        scheme,
+                                        Icons.headphones_rounded,
+                                        '听书与 TTS 设置', () {
+                                      Navigator.pop(sheetCtx);
+                                      unawaited(_showTtsSheet());
+                                    }),
                                   if (_locked && !_unlocked)
                                     _aaTile(
                                         scheme,
