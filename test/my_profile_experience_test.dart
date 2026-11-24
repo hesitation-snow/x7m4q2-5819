@@ -101,6 +101,15 @@ void main() {
     expect(zero.next?.name, '骑士');
     expect(zero.ratioText, '0/251');
     expect(zero.remainingToNext, 251);
+    expect(zero.totalProgress, 0.0);
+
+    final knight = lkRankProgressForExp(251);
+    expect(knight.current.name, '骑士');
+    expect(knight.totalProgress, closeTo(1 / 8, 0.0001));
+
+    final count = lkRankProgressForExp(4501);
+    expect(count.current.name, '伯爵');
+    expect(count.totalProgress, closeTo(4 / 8, 0.0001));
 
     final marquis = lkRankProgressForExp(8275);
     expect(marquis.current.name, '侯爵');
@@ -108,7 +117,8 @@ void main() {
     expect(marquis.remainingToNext, 4226);
     expect(marquis.nextHintText, '距公爵还差 4,226 经验');
     expect(marquis.summaryLineText, '经验 8275/12501 · 距公爵还差 4,226 经验');
-    expect(marquis.totalProgress, closeTo(8275 / 50001, 0.0001));
+    expect(
+        marquis.totalProgress, closeTo((5 + (8275 - 8001) / 4500) / 8, 0.0001));
 
     final emperor = lkRankProgressForExp(50001);
     expect(emperor.current.name, '皇帝');

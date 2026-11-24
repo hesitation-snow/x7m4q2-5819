@@ -24,11 +24,13 @@ const List<LKRankTier> kLKRankTiers = [
 
 class LKRankProgress {
   final int exp;
+  final int tierIndex;
   final LKRankTier current;
   final LKRankTier? next;
 
   const LKRankProgress({
     required this.exp,
+    required this.tierIndex,
     required this.current,
     required this.next,
   });
@@ -46,11 +48,12 @@ class LKRankProgress {
     return ((exp - current.minExp) / span).clamp(0.0, 1.0);
   }
 
-  /// 相对最高身份组（皇帝 50,001）的总经验进度。
+  /// 按身份组阶梯等分的总进度（平民 0% → 骑士 12.5% → … → 伯爵 50% → … → 皇帝 100%），
+  /// 档位内按当前身份组升级进度平滑插值。
   double get totalProgress {
-    final maxExp = kLKRankTiers.last.minExp;
-    if (maxExp <= 0) return 1.0;
-    return (exp / maxExp).clamp(0.0, 1.0);
+    final steps = kLKRankTiers.length - 1;
+    if (steps <= 0 || isMaxRank) return 1.0;
+    return ((tierIndex + progress) / steps).clamp(0.0, 1.0);
   }
 
   /// 例如 `0/251`，满级时显示 `50001`。
@@ -80,7 +83,8 @@ LKRankProgress lkRankProgressForExp(int exp) {
   final next = currentIndex + 1 < kLKRankTiers.length
       ? kLKRankTiers[currentIndex + 1]
       : null;
-  return LKRankProgress(exp: safeExp, current: current, next: next);
+  return LKRankProgress(
+      exp: safeExp, tierIndex: currentIndex, current: current, next: next);
 }
 
 /// 将整数格式化为千分位字符串（如 `12501` -> `12,501`）。
