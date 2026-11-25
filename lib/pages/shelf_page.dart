@@ -957,11 +957,15 @@ class _ShelfPageState extends State<ShelfPage> {
       if (!local) await LKStore.cacheBooksPage(_shelfCacheKey(uid), _items);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('移除失败，请重试'),
+        showLkSnackBar(
+          context,
+          '移除失败，请重试',
+          tone: LkNoticeTone.error,
           action: SnackBarAction(
-              label: '重试', onPressed: () => _showBookActions(book)),
-        ));
+            label: '重试',
+            onPressed: () => _showBookActions(book),
+          ),
+        );
       }
     } finally {
       _removing.remove(book.bookId);

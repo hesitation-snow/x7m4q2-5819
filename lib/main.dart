@@ -11,6 +11,7 @@ import 'services/app_motion.dart';
 import 'services/app_theme.dart';
 import 'services/reader_volume_keys.dart';
 import 'services/reader_audio_bootstrap.dart';
+import 'widgets/common.dart';
 
 final _rootScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
@@ -21,16 +22,13 @@ void _showSessionExpiredNotice() {
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        snackBarAnimationStyle: AppMotion.style(messenger.context),
-        SnackBar(
-          content: const Text('登录状态已失效，已自动退出，请重新登录'),
+        buildLkSnackBar(
+          messenger.context,
+          '登录状态已失效，已自动退出，请重新登录',
+          tone: LkNoticeTone.error,
           duration: const Duration(seconds: 4),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
         ),
+        snackBarAnimationStyle: AppMotion.style(messenger.context),
       );
   });
 }

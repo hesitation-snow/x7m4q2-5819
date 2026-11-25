@@ -1766,12 +1766,11 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
         _items.removeWhere((h) => h.bookId == bookId);
         _mutationRevision++;
       });
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('已删除《${item.title}》的阅读记录'),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-      ));
+      showLkSnackBar(
+        context,
+        '已删除《${item.title}》的阅读记录',
+        tone: LkNoticeTone.success,
+      );
     } catch (e) {
       if (!mounted || !isCurrent()) return;
       setState(() {

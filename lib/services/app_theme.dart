@@ -158,7 +158,24 @@ abstract final class AppTheme {
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 6,
+        backgroundColor:
+            dark ? scheme.surfaceContainerHigh : scheme.surfaceContainerLowest,
+        actionTextColor: scheme.primary,
+        disabledActionTextColor: scheme.onSurface.withValues(alpha: 0.38),
+        insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+        contentTextStyle: base.textTheme.bodyMedium?.copyWith(
+          fontSize: 13.5,
+          fontWeight: FontWeight.w500,
+          height: 1.35,
+          color: scheme.onSurface,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: dark ? 0.42 : 0.55),
+          ),
+        ),
       ),
       tooltipTheme: const TooltipThemeData(
         waitDuration: Duration(seconds: 2),

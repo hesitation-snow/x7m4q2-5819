@@ -1240,52 +1240,170 @@ class BookGridCard extends StatelessWidget {
   }
 }
 
-/// 统一的错误提示条
-void showLkError(BuildContext context, Object e) {
-  if (!context.mounted) return;
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      snackBarAnimationStyle: AppMotion.style(context),
-      SnackBar(
-        content: Text(e.toString()),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+enum LkNoticeTone { info, success, error }
+
+LkNoticeTone inferLkNoticeTone(Object source, {bool defaultError = false}) {
+  if (source is Exception || source is Error) return LkNoticeTone.error;
+  final text = source.toString().trim();
+  const errorHints = [
+    '失败',
+    '错误',
+    '异常',
+    '不存在',
+    '无法',
+    '不能',
+    '不足',
+    '无效',
+    '超时',
+    '重试',
+    '暂不可用',
+    '尚未',
+    '请先',
+    '请完成',
+    '至少',
+    '不能为空',
+    '未开启',
+    '已失效',
+  ];
+  for (final hint in errorHints) {
+    if (text.contains(hint)) return LkNoticeTone.error;
+  }
+  const successHints = [
+    '成功',
+    '已复制',
+    '已保存',
+    '已加入',
+    '已关注',
+    '已清除',
+    '已清理',
+    '已删除',
+    '已另存为',
+    '已退出',
+    '已领取',
+    '已签到',
+    '已取消关注',
+  ];
+  for (final hint in successHints) {
+    if (text.contains(hint)) return LkNoticeTone.success;
+  }
+  return defaultError ? LkNoticeTone.error : LkNoticeTone.info;
 }
 
-/// 悬浮气泡提示（与书籍详情页点击书名弹出的悬浮框样式一致）
+/// 全应用统一格式的悬浮消息条，自动适配浅色、深色与纯黑主题。
+SnackBar buildLkSnackBar(
+  BuildContext context,
+  String message, {
+  LkNoticeTone tone = LkNoticeTone.info,
+  Duration duration = const Duration(seconds: 3),
+  EdgeInsetsGeometry? margin,
+  SnackBarAction? action,
+}) {
+  final theme = Theme.of(context);
+  final scheme = theme.colorScheme;
+  final dark = theme.brightness == Brightness.dark;
+  final accent = tone == LkNoticeTone.error ? scheme.error : scheme.primary;
+  final icon = switch (tone) {
+    LkNoticeTone.error => Icons.error_outline_rounded,
+    LkNoticeTone.success => Icons.check_rounded,
+    LkNoticeTone.info => Icons.info_outline_rounded,
+  };
+  final border = tone == LkNoticeTone.error
+      ? scheme.error.withValues(alpha: dark ? 0.45 : 0.35)
+      : scheme.outlineVariant.withValues(alpha: dark ? 0.42 : 0.55);
+
+  return SnackBar(
+    content: Row(
+      children: [
+        Container(
+          width: 24,
+          height: 24,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: dark ? 0.20 : 0.12),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, size: 15, color: accent),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            message.trim(),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w500,
+              height: 1.35,
+              color: scheme.onSurface,
+            ),
+          ),
+        ),
+      ],
+    ),
+    backgroundColor:
+        dark ? scheme.surfaceContainerHigh : scheme.surfaceContainerLowest,
+    elevation: 6,
+    duration: duration,
+    behavior: SnackBarBehavior.floating,
+    dismissDirection: DismissDirection.horizontal,
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+    margin: margin ?? const EdgeInsets.fromLTRB(16, 0, 16, 18),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+      side: BorderSide(color: border),
+    ),
+    action: action,
+  );
+}
+
+ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? showLkSnackBar(
+  BuildContext context,
+  String message, {
+  LkNoticeTone? tone,
+  Duration duration = const Duration(seconds: 3),
+  EdgeInsetsGeometry? margin,
+  SnackBarAction? action,
+}) {
+  final value = message.trim();
+  if (value.isEmpty || !context.mounted) return null;
+  final resolvedTone = tone ?? inferLkNoticeTone(value);
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.hideCurrentSnackBar();
+  return messenger.showSnackBar(
+    buildLkSnackBar(
+      context,
+      value,
+      tone: resolvedTone,
+      duration: duration,
+      margin: margin,
+      action: action,
+    ),
+    snackBarAnimationStyle: AppMotion.style(context),
+  );
+}
+
+/// 统一的错误/状态提示条
+void showLkError(BuildContext context, Object e) {
+  if (!context.mounted) return;
+  showLkSnackBar(
+    context,
+    e.toString(),
+    tone: inferLkNoticeTone(e, defaultError: true),
+    duration: const Duration(seconds: 2),
+  );
+}
+
+/// 统一悬浮气泡提示
 void showFloatingPrompt(
   BuildContext context,
   String message, {
   Duration duration = const Duration(seconds: 3),
+  LkNoticeTone? tone,
 }) {
-  final value = message.trim();
-  if (value.isEmpty || !context.mounted) return;
-  final theme = Theme.of(context);
-  final scheme = theme.colorScheme;
-  final isDark = theme.brightness == Brightness.dark;
-  final messenger = ScaffoldMessenger.of(context);
-  messenger
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      SnackBar(
-        content: Text(
-          value,
-          style: TextStyle(
-            color: isDark ? scheme.onSurface : scheme.onInverseSurface,
-          ),
-        ),
-        backgroundColor:
-            isDark ? scheme.surfaceContainerHighest : scheme.inverseSurface,
-        duration: duration,
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-      ),
-    );
+  showLkSnackBar(
+    context,
+    message,
+    tone: tone ?? inferLkNoticeTone(message),
+    duration: duration,
+  );
 }

@@ -1501,18 +1501,12 @@ class _ReaderPageState extends State<ReaderPage>
     }
     if (_exitInFlight || ModalRoute.of(context)?.isCurrent != true) return;
     if (_exitConfirmationTimer?.isActive != true) {
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.hideCurrentSnackBar();
-      _exitPrompt = messenger.showSnackBar(
-        SnackBar(
-          content: const Text('再按一次返回退出阅读'),
-          duration: _exitConfirmationDuration,
-          behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.fromLTRB(16, 0, 16, _chrome ? 104 : 16),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-        snackBarAnimationStyle: AppMotion.style(context),
+      _exitPrompt = showLkSnackBar(
+        context,
+        '再按一次返回退出阅读',
+        tone: LkNoticeTone.info,
+        duration: _exitConfirmationDuration,
+        margin: EdgeInsets.fromLTRB(16, 0, 16, _chrome ? 104 : 38),
       );
       _exitConfirmationTimer =
           Timer(_exitConfirmationDuration, _resetExitConfirmation);
