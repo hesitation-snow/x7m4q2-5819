@@ -28,13 +28,15 @@ class CommentsPage extends StatefulWidget {
   final int volumeId;
   final int dynamicId;
   final LKDynamicItem? dynamicPreview;
+  final ValueChanged<LKTopicTag>? onTopicTap;
   const CommentsPage(
       {super.key,
       this.bookId = 0,
       this.bookTitle = '',
       this.volumeId = 0,
       this.dynamicId = 0,
-      this.dynamicPreview});
+      this.dynamicPreview,
+      this.onTopicTap});
 
   @override
   State<CommentsPage> createState() => _CommentsPageState();
@@ -615,6 +617,51 @@ class _CommentsPageState extends State<CommentsPage> {
                     style: const TextStyle(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
               ],
+              Builder(builder: (context) {
+                final topicTags = item.topicTags.isNotEmpty
+                    ? item.topicTags
+                    : (widget.dynamicPreview?.topicTags ??
+                        const <LKTopicTag>[]);
+                if (topicTags.isEmpty) return const SizedBox.shrink();
+                final color = Theme.of(context).colorScheme.primary;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      for (final tag in topicTags)
+                        if (widget.onTopicTap != null)
+                          InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: () => widget.onTopicTap!(tag),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 1),
+                              child: Text(
+                                '# ${tag.name}',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w500,
+                                  color: color,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          Text(
+                            '# ${tag.name}',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w500,
+                              color: color,
+                              height: 1.3,
+                            ),
+                          ),
+                    ],
+                  ),
+                );
+              }),
               if (item.displayContent.trim().isNotEmpty)
                 _renderContent(item.displayContent),
               _mediaGallery(item.media),

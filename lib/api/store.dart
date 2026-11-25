@@ -882,6 +882,39 @@ class LKStore {
     }
   }
 
+  static const String _recentTopicTagsKey = 'lk_recent_topic_tags_v1';
+
+  static Future<List<LKTopicTag>> readRecentTopicTags() async {
+    try {
+      final raw =
+          (await SharedPreferences.getInstance()).getString(_recentTopicTagsKey);
+      if (raw == null || raw.isEmpty) return const [];
+      return LKTopicTag.parseList(jsonDecode(raw));
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static Future<void> recordRecentTopicTag(LKTopicTag tag) async {
+    if (!tag.isUsable) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final current = await readRecentTopicTags();
+      final updated = <LKTopicTag>[
+        tag,
+        ...current.where((item) => !item.matches(tag)),
+      ].take(8).toList(growable: false);
+      await prefs.setString(
+        _recentTopicTagsKey,
+        jsonEncode(
+          updated.map((item) => item.toPublishJson()).toList(growable: false),
+        ),
+      );
+    } catch (_) {
+      // 最近话题持久化失败不影响正常发动态。
+    }
+  }
+
   static Future<void> cacheDynamicPage(
       String key, List<LKDynamicItem> items) async {
     try {
@@ -944,6 +977,9 @@ class LKStore {
                   'stored_url': media.storedUrl,
                   'source_url': media.sourceUrl,
                 })
+            .toList(growable: false),
+        'topic_tags': item.topicTags
+            .map((tag) => tag.toPublishJson())
             .toList(growable: false),
         'poll': item.poll == null
             ? null

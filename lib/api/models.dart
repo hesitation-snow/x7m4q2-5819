@@ -2287,6 +2287,90 @@ class LKDynamicPoll {
   }
 }
 
+class LKTopicTag {
+  final int tagId;
+  final int topicId;
+  final String name;
+  final String alias;
+  final int usageCount;
+
+  const LKTopicTag({
+    this.tagId = 0,
+    this.topicId = 0,
+    this.name = '',
+    this.alias = '',
+    this.usageCount = 0,
+  });
+
+  int get effectiveId => topicId > 0 ? topicId : tagId;
+
+  bool get isUsable => name.trim().isNotEmpty && (tagId > 0 || topicId > 0);
+
+  bool matches(LKTopicTag other) {
+    if (topicId > 0 && other.topicId > 0) return topicId == other.topicId;
+    if (tagId > 0 && other.tagId > 0) return tagId == other.tagId;
+    if (effectiveId > 0 && other.effectiveId > 0) {
+      return effectiveId == other.effectiveId;
+    }
+    return name.trim().isNotEmpty && name.trim() == other.name.trim();
+  }
+
+  Map<String, dynamic> toPublishJson() => {
+        'tag_id': tagId > 0 ? tagId : topicId,
+        'topic_tag_id': topicId > 0 ? topicId : tagId,
+        'name': name,
+        'alias': alias,
+      };
+
+  static LKTopicTag? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final j = Map<String, dynamic>.from(raw);
+    if (j.containsKey('status') && j['status'] != null) {
+      final status = _jsonIntOrNull(j['status']);
+      if (status != 1) return null;
+    }
+    final tagId = _jsonInt(j['tag_id'] ?? j['tagId']);
+    final topicId = _jsonInt(j['topic_tag_id'] ?? j['topicTagId'] ?? j['topic_id']);
+    final name = (j['name'] ?? '').toString().trim();
+    final alias = (j['alias'] ?? '').toString().trim();
+    final usageCount = _jsonInt(j['usage_count'] ?? j['usageCount']);
+    final tag = LKTopicTag(
+      tagId: tagId,
+      topicId: topicId,
+      name: name,
+      alias: alias,
+      usageCount: usageCount < 0 ? 0 : usageCount,
+    );
+    return tag.isUsable ? tag : null;
+  }
+
+  static List<LKTopicTag> parseList(Object? raw) {
+    if (raw is! List) return const [];
+    final result = <LKTopicTag>[];
+    final seen = <String>{};
+    for (final entry in raw) {
+      final tag = tryParse(entry);
+      if (tag == null) continue;
+      final key = '${tag.topicId}:${tag.tagId}:${tag.name}';
+      if (seen.add(key)) result.add(tag);
+    }
+    return result;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LKTopicTag &&
+          runtimeType == other.runtimeType &&
+          tagId == other.tagId &&
+          topicId == other.topicId &&
+          name == other.name &&
+          alias == other.alias;
+
+  @override
+  int get hashCode => Object.hash(tagId, topicId, name, alias);
+}
+
 class LKDynamicItem {
   final int dynamicId;
   final int authorUid;
@@ -2314,6 +2398,7 @@ class LKDynamicItem {
   /// 作品卡自己带的勇者标记。目录探测确认前，未知作品保持 false。
   final bool bookMarkedBrave;
   final List<LKDynamicMedia> media;
+  final List<LKTopicTag> topicTags;
   final LKDynamicPoll? poll;
   String get displayContent {
     if (summary.trim().isNotEmpty) return summary;
@@ -2356,6 +2441,7 @@ class LKDynamicItem {
     this.bookCover = '',
     this.bookMarkedBrave = false,
     this.media = const [],
+    this.topicTags = const [],
     this.poll,
   });
   factory LKDynamicItem.fromJson(Map<String, dynamic> j) {
@@ -2445,6 +2531,12 @@ class LKDynamicItem {
       bookCover: (brief['cover_url'] ?? '').toString(),
       bookMarkedBrave: bookMarkedBrave,
       media: media,
+      topicTags: LKTopicTag.parseList(
+        j['topic_tags'] ??
+            j['topicTags'] ??
+            brief['topic_tags'] ??
+            brief['topicTags'],
+      ),
       poll: LKDynamicPoll.tryParse(
           j['poll'] ?? j['vote'] ?? j['poll_json'] ?? j['extension']),
     );

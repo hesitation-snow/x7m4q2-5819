@@ -72,6 +72,7 @@ class _DynamicPageState extends State<DynamicPage> {
   bool _errorFromAppend = false;
   String _feedTab = 'mixed';
   String _contentFilter = 'all';
+  LKTopicTag? _topicFilter;
   int _requestSerial = 0;
   int _unreadRequestSerial = 0;
   final Map<int, bool> _likeFallback = {};
@@ -120,6 +121,10 @@ class _DynamicPageState extends State<DynamicPage> {
     final hideBrave = LKStore.hideBraveBooks.value;
     final visible = _items.where((item) {
       if (_contentFilter == 'book' && !item.isWorkPost) return false;
+      if (_topicFilter != null &&
+          !item.topicTags.any((tag) => tag.matches(_topicFilter!))) {
+        return false;
+      }
       if (hideBrave && !_dynamicShowsBook(item)) return false;
       return true;
     }).toList();
@@ -402,6 +407,29 @@ class _DynamicPageState extends State<DynamicPage> {
     if (_contentFilter == filter) return;
     setState(() {
       _contentFilter = filter;
+      if (filter == 'book') _topicFilter = null;
+      _rebuildVisibleItems();
+    });
+    _topBarFrac.value = 1.0;
+  }
+
+  void _toggleTopicFilter(LKTopicTag tag) {
+    setState(() {
+      if (_topicFilter != null && _topicFilter!.matches(tag)) {
+        _topicFilter = null;
+      } else {
+        _topicFilter = tag;
+        _contentFilter = 'all';
+      }
+      _rebuildVisibleItems();
+    });
+    _topBarFrac.value = 1.0;
+  }
+
+  void _selectTopicFilter(LKTopicTag tag) {
+    setState(() {
+      _topicFilter = tag;
+      _contentFilter = 'all';
       _rebuildVisibleItems();
     });
     _topBarFrac.value = 1.0;
@@ -456,29 +484,42 @@ class _DynamicPageState extends State<DynamicPage> {
   }
 
   Widget _feedControls() {
+    final activeTopic = _topicFilter;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
-      child: Row(
-        children: [
-          _pillButton(
-            icon: _feedTab == 'follow'
-                ? Icons.favorite_rounded
-                : Icons.favorite_border_rounded,
-            label: '关注',
-            selected: _feedTab == 'follow',
-            onTap: () =>
-                _switchFeedTab(_feedTab == 'follow' ? 'mixed' : 'follow'),
-          ),
-          const SizedBox(width: 8),
-          _pillButton(
-            icon: Icons.menu_book_rounded,
-            label: '仅作品',
-            selected: _contentFilter == 'book',
-            onTap: () =>
-                _switchContentFilter(_contentFilter == 'book' ? 'all' : 'book'),
-          ),
-          const Spacer(),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _pillButton(
+              icon: _feedTab == 'follow'
+                  ? Icons.favorite_rounded
+                  : Icons.favorite_border_rounded,
+              label: '关注',
+              selected: _feedTab == 'follow',
+              onTap: () =>
+                  _switchFeedTab(_feedTab == 'follow' ? 'mixed' : 'follow'),
+            ),
+            const SizedBox(width: 8),
+            _pillButton(
+              icon: Icons.menu_book_rounded,
+              label: '仅作品',
+              selected: _contentFilter == 'book',
+              onTap: () => _switchContentFilter(
+                  _contentFilter == 'book' ? 'all' : 'book'),
+            ),
+            if (activeTopic != null) ...[
+              const SizedBox(width: 8),
+              M3ChoiceChip(
+                key: const ValueKey('dynamic-active-topic-filter'),
+                icon: Icons.tag_rounded,
+                label: '# ${activeTopic.name}',
+                selected: true,
+                onSelected: (_) => _toggleTopicFilter(activeTopic),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -507,7 +548,8 @@ class _DynamicPageState extends State<DynamicPage> {
                         final published = await Navigator.push<bool>(
                           context,
                           MaterialPageRoute(
-                              builder: (_) => const DynamicPublishPage()),
+                              builder: (_) => DynamicPublishPage(
+                                  initialTopic: _topicFilter)),
                         );
                         if (published == true && mounted) _load();
                       },
@@ -726,7 +768,43 @@ class _DynamicPageState extends State<DynamicPage> {
                       ),
                     ],
                   )
-                : visibleItems.isEmpty && !_hasMore && !_loading
+                : visibleItems.isEmpty && _topicFilter != null && !_loading
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          SizedBox(
+                            height: 260,
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    '已加载动态中暂无 # ${_topicFilter!.name} 相关内容',
+                                    style: const TextStyle(color: Colors.grey),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Wrap(
+                                    spacing: 8,
+                                    children: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            _toggleTopicFilter(_topicFilter!),
+                                        child: const Text('清除话题筛选'),
+                                      ),
+                                      if (_hasMore)
+                                        TextButton(
+                                          onPressed: () => _load(append: true),
+                                          child: const Text('加载更多'),
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    : visibleItems.isEmpty && !_hasMore && !_loading
                     ? _emptyState(_contentFilter == 'book'
                         ? '暂无作品发布动态'
                         : LKStore.hideBraveBooks.value && _items.isNotEmpty
@@ -777,6 +855,10 @@ class _DynamicPageState extends State<DynamicPage> {
                                                   builder: (_) => CommentsPage(
                                                     dynamicId: d.dynamicId,
                                                     dynamicPreview: d,
+                                                    onTopicTap: (tag) {
+                                                      Navigator.pop(context);
+                                                      _selectTopicFilter(tag);
+                                                    },
                                                   ),
                                                 ),
                                               )
@@ -916,6 +998,43 @@ class _DynamicPageState extends State<DynamicPage> {
                                                   fontSize: 14.5,
                                                   fontWeight: FontWeight.w700,
                                                 ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                            ],
+                                            if (d.topicTags.isNotEmpty) ...[
+                                              Wrap(
+                                                spacing: 8,
+                                                runSpacing: 4,
+                                                children: [
+                                                  for (final tag in d.topicTags)
+                                                    InkWell(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              6),
+                                                      onTap: () =>
+                                                          _toggleTopicFilter(
+                                                              tag),
+                                                      child: Padding(
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .symmetric(
+                                                                vertical: 1),
+                                                        child: Text(
+                                                          '# ${tag.name}',
+                                                          style: TextStyle(
+                                                            fontSize: 12.5,
+                                                            fontWeight:
+                                                                FontWeight.w500,
+                                                            color: Theme.of(
+                                                                    context)
+                                                                .colorScheme
+                                                                .primary,
+                                                            height: 1.3,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
                                               ),
                                               const SizedBox(height: 4),
                                             ],

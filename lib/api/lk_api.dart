@@ -13,6 +13,14 @@ import 'store.dart';
 class LKApi {
   static LKClient client = LKClient.shared;
   static final Map<String, Future<LKChapterDetail>> _chapterDetailInFlight = {};
+  static List<LKTopicTag> _cachedTopicTags = const [];
+
+  static List<LKTopicTag> get cachedTopicTags =>
+      List.unmodifiable(_cachedTopicTags);
+
+  static void clearTopicTagsCache() {
+    _cachedTopicTags = const [];
+  }
 
   static Future<void> _invalidateOwnPublicProfile() async {
     final uid = client.session.uid;
@@ -814,20 +822,49 @@ class LKApi {
     return LKDynamicMedia.fromJson(d);
   }
 
+  static Future<List<LKTopicTag>> dynamicTopicTags(
+      {String q = '', int limit = 50}) async {
+    final query = q.trim();
+    try {
+      final d = await client.post('/api/dynamic/get-topic-tags-v1', {
+        'q': query,
+        'limit': limit.clamp(1, 100),
+      });
+      final tags = LKTopicTag.parseList(
+        d['list'] ?? d['items'] ?? d['topic_tags'] ?? const [],
+      );
+      if (query.isEmpty && tags.isNotEmpty) {
+        _cachedTopicTags = List.unmodifiable(tags);
+      }
+      return tags;
+    } catch (_) {
+      if (_cachedTopicTags.isNotEmpty) {
+        if (query.isEmpty) return _cachedTopicTags;
+        final lower = query.toLowerCase();
+        return _cachedTopicTags
+            .where((tag) => tag.name.toLowerCase().contains(lower))
+            .toList(growable: false);
+      }
+      rethrow;
+    }
+  }
+
   static Future<LKDynamicItem> publishShortDynamic(String content,
-      {List<LKDynamicMedia> media = const []}) async {
+      {List<LKDynamicMedia> media = const [], LKTopicTag? topic}) async {
+    final payload = <String, dynamic>{
+      'title': '',
+      'summary': content,
+      'content': content,
+      'media_json': jsonEncode(media.map(_mediaJson).toList()),
+      'target_type': '',
+      if (topic != null && topic.isUsable)
+        'topic_tags': [topic.toPublishJson()],
+      'feed_scope': 'follow',
+      'visibility': 'public',
+      'request_id': 'short-post-${DateTime.now().millisecondsSinceEpoch}',
+    };
     final d = await client.post(
-        '/api/dynamic/publish-short-post-v1',
-        client.authed({
-          'title': '',
-          'summary': content,
-          'content': content,
-          'media_json': jsonEncode(media.map(_mediaJson).toList()),
-          'target_type': '',
-          'feed_scope': 'follow',
-          'visibility': 'public',
-          'request_id': 'short-post-${DateTime.now().millisecondsSinceEpoch}',
-        }));
+        '/api/dynamic/publish-short-post-v1', client.authed(payload));
     final raw = d['dynamic'] ?? d;
     if (raw is! Map) throw LKException(-1, '发布动态响应格式错误');
     await Future.wait([
