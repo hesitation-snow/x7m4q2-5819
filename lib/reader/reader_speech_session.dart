@@ -58,6 +58,7 @@ abstract interface class SpeechFilesHandler {
   Future<void> playFiles(List<File> files,
       {required String title,
       String? artist,
+      Uri? artUri,
       required int startIndex,
       required FutureOr<void> Function(int) onSegmentChanged,
       required FutureOr<void> Function() onCompleted});
@@ -187,20 +188,24 @@ class ReaderSpeechSession extends ChangeNotifier {
       {required this.handler,
       required this.synthesizer,
       SpeechAudioCache? cache,
-      this.prefetchCount = 2})
+      this.prefetchCount = 2,
+      this.bufferingDelay = const Duration(milliseconds: 600)})
       : cache = cache ?? SpeechAudioCache() {
     if (prefetchCount < 0) throw ArgumentError.value(prefetchCount);
+    if (bufferingDelay.isNegative) throw ArgumentError.value(bufferingDelay);
   }
   final SpeechFilesHandler handler;
   final SpeechAudioSynthesizer synthesizer;
   final SpeechAudioCache cache;
   final int prefetchCount;
+  final Duration bufferingDelay;
   final Map<String, Future<File>> _pendingFiles = {};
   List<TtsSegment> _segments = const [];
   String _account = '';
   SpeechSynthesisConfig? _config;
   String _title = '朗读';
   String? _artist;
+  Uri? _artUri;
   int _generation = 0;
   int _position = 0;
   int _utterance = 0;
@@ -210,11 +215,13 @@ class ReaderSpeechSession extends ChangeNotifier {
   Duration _gap = Duration.zero;
   Timer? _gapTimer;
   Timer? _sleepTimer;
+  Timer? _bufferingTimer;
   PlaybackSleepTimer _sleepMode = PlaybackSleepTimer.none;
   bool _paused = false;
   bool _stopped = true;
   bool _completed = false;
   bool _loading = false;
+  bool _buffering = false;
   bool _disposed = false;
   String? _error;
 
@@ -227,11 +234,17 @@ class ReaderSpeechSession extends ChangeNotifier {
   bool get isPaused => _paused;
   bool get isStopped => _stopped;
   bool get isLoading => _loading;
+  bool get isBuffering => _buffering;
   bool get isPlaying => !_paused && !_stopped && !_loading;
   bool get isCompleted => _completed;
   String? get error => _error;
   PlaybackSleepTimer get sleepTimer => _sleepMode;
   Duration get segmentInterval => _gap;
+  Uri? get artUri => _artUri;
+
+  void updateArtUri(Uri? artUri) {
+    _artUri = artUri;
+  }
 
   bool _valid(int generation) =>
       !_disposed && !_stopped && generation == _generation;
@@ -241,6 +254,26 @@ class ReaderSpeechSession extends ChangeNotifier {
 
   void _notify() {
     if (!_disposed) notifyListeners();
+  }
+
+  void _beginLoading() {
+    _loading = true;
+    _buffering = false;
+    _bufferingTimer?.cancel();
+    _bufferingTimer = Timer(bufferingDelay, () {
+      _bufferingTimer = null;
+      if (!_disposed && _loading && !_paused && !_stopped) {
+        _buffering = true;
+        _notify();
+      }
+    });
+  }
+
+  void _endLoading() {
+    _bufferingTimer?.cancel();
+    _bufferingTimer = null;
+    _loading = false;
+    _buffering = false;
   }
 
   // Do not bounce our own pause/stop acknowledgements back through the handler,
@@ -273,6 +306,7 @@ class ReaderSpeechSession extends ChangeNotifier {
     Map<int, String> localeByBlock = const {},
     required String title,
     String? artist,
+    Uri? artUri,
   }) async {
     _ensureAlive();
     final filtered = const ReaderLanguageSegments().filter(segments,
@@ -291,12 +325,17 @@ class ReaderSpeechSession extends ChangeNotifier {
     _account = accountId;
     _title = title;
     _artist = artist;
+    _artUri = artUri;
     _position = startAt;
     _paused = false;
     _completed = false;
     _error = null;
     _stopped = filtered.isEmpty;
-    _loading = !_stopped;
+    if (_stopped) {
+      _endLoading();
+    } else {
+      _beginLoading();
+    }
     _notify();
     try {
       if (filtered.isNotEmpty && handler is SeamlessSpeechFilesHandler) {
@@ -341,17 +380,18 @@ class ReaderSpeechSession extends ChangeNotifier {
     await handler.playFiles([file],
         title: _title,
         artist: _artist,
+        artUri: _artUri,
         startIndex: 0,
         onSegmentChanged: (_) {
           if (_valid(generation) && !_paused) {
             _position = index;
-            _loading = false;
+            _endLoading();
             _notify();
           }
         },
         onCompleted: () => _onCompleted(index, generation, utterance));
     if (!_valid(generation) || _paused) return;
-    _loading = false;
+    _endLoading();
     _notify();
     unawaited(_prefetch(generation, index + 1, account, config));
   }
@@ -378,7 +418,7 @@ class ReaderSpeechSession extends ChangeNotifier {
       return;
     }
     ++_utterance; // reject duplicate completion before notifying listeners
-    _loading = false;
+    _endLoading();
     if (index + 1 >= _segments.length) {
       _stopped = true;
       _paused = false;
@@ -422,7 +462,11 @@ class ReaderSpeechSession extends ChangeNotifier {
     _error = null;
     _completed = false;
     _stopped = false;
-    _loading = !_paused;
+    if (_paused) {
+      _endLoading();
+    } else {
+      _beginLoading();
+    }
     _notify();
     try {
       if (!_paused) {
@@ -484,7 +528,7 @@ class ReaderSpeechSession extends ChangeNotifier {
     ++_generation;
     ++_utterance;
     _paused = true;
-    _loading = false;
+    _endLoading();
     _gapTimer?.cancel();
     _notify();
   }
@@ -518,7 +562,7 @@ class ReaderSpeechSession extends ChangeNotifier {
     _sleepMode = PlaybackSleepTimer.none;
     _stopped = true;
     _paused = false;
-    _loading = false;
+    _endLoading();
     _completed = false;
     _pendingAdvance = null;
   }
@@ -540,7 +584,7 @@ class ReaderSpeechSession extends ChangeNotifier {
     _error = error.toString();
     _stopped = true;
     _paused = false;
-    _loading = false;
+    _endLoading();
     _gapTimer?.cancel();
     _sleepTimer?.cancel();
     unawaited(_controlStop(handler.stop).catchError((Object _) {}));
@@ -581,6 +625,8 @@ class ReaderSpeechSession extends ChangeNotifier {
     ++_utterance;
     _gapTimer?.cancel();
     _sleepTimer?.cancel();
+    _bufferingTimer?.cancel();
+    _bufferingTimer = null;
     super.dispose();
   }
 }

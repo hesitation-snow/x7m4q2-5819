@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -36,6 +38,110 @@ class _ListeningDockState extends State<ListeningDock> {
     setState(() => _pressed = value);
   }
 
+  Widget _buildDockBadge(
+    BuildContext context, {
+    required ColorScheme scheme,
+    required bool dark,
+    required bool hasError,
+    required Color badgeAccent,
+    required double? progress,
+    required String coverUrl,
+    required int bookId,
+  }) {
+    final fallback = Stack(
+      alignment: Alignment.center,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: hasError
+                ? scheme.errorContainer.withValues(alpha: dark ? 0.55 : 0.85)
+                : scheme.primary.withValues(alpha: dark ? 0.24 : 0.14),
+          ),
+          child: const SizedBox.expand(),
+        ),
+        Icon(
+          hasError ? Icons.error_outline_rounded : Icons.headphones_rounded,
+          size: 18,
+          color: badgeAccent,
+        ),
+      ],
+    );
+
+    final trimmedCover = coverUrl.trim();
+    Widget inner = fallback;
+    if (!hasError && trimmedCover.isNotEmpty) {
+      final cacheWidth =
+          (31 * MediaQuery.devicePixelRatioOf(context)).round().clamp(32, 256);
+      inner = ValueListenableBuilder<bool>(
+        valueListenable: LKStore.dataSaverMode,
+        builder: (context, dataSaver, _) {
+          if (dataSaver) return fallback;
+          return ValueListenableBuilder<CoverBlurMode>(
+            valueListenable: LKStore.coverBlurMode,
+            builder: (context, blurMode, _) {
+              return ValueListenableBuilder<int>(
+                valueListenable: LKStore.braveBookRevision,
+                builder: (context, _, __) {
+                  final shouldBlur = switch (blurMode) {
+                    CoverBlurMode.all => true,
+                    CoverBlurMode.brave =>
+                      bookId > 0 && LKStore.isBraveBook(bookId),
+                    CoverBlurMode.none => false,
+                  };
+                  Widget artwork = CachedNetworkImage(
+                    key: const ValueKey('listening-dock-cover'),
+                    imageUrl: trimmedCover,
+                    width: 31,
+                    height: 31,
+                    memCacheWidth: cacheWidth,
+                    fit: BoxFit.cover,
+                    fadeInDuration: AppMotion.duration(context, 200),
+                    fadeOutDuration: AppMotion.duration(context, 200),
+                    placeholder: (_, __) => fallback,
+                    errorWidget: (_, __, ___) => fallback,
+                  );
+                  if (shouldBlur) {
+                    artwork = ImageFiltered(
+                      imageFilter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                      child: artwork,
+                    );
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.all(2.5),
+                    child: ClipOval(child: artwork),
+                  );
+                },
+              );
+            },
+          );
+        },
+      );
+    }
+
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned.fill(child: inner),
+          Positioned.fill(
+            child: CircularProgressIndicator(
+              value: progress,
+              strokeWidth: 2,
+              strokeCap: StrokeCap.round,
+              color: badgeAccent,
+              backgroundColor: badgeAccent.withValues(
+                alpha: dark ? 0.18 : 0.12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -56,13 +162,13 @@ class _ListeningDockState extends State<ListeningDock> {
 
         final error = session.error;
         final hasError = error != null && error.isNotEmpty;
-        final sentence = session.currentSegment?.text ?? '正在准备下一段';
+        final sentence = session.currentSegment?.text ?? '';
         final subtitleText = hasError
             ? '朗读失败，点击查看'
-            : session.isLoading
-                ? '正在准备语音…'
-                : sentence;
-        final double? progress = session.isLoading
+            : sentence.isNotEmpty
+                ? sentence
+                : '正在准备语音…';
+        final double? progress = session.isBuffering
             ? (reduceMotion ? 0.25 : null)
             : session.segmentCount > 0
                 ? ((session.position + 1) / session.segmentCount)
@@ -82,43 +188,15 @@ class _ListeningDockState extends State<ListeningDock> {
               padding: const EdgeInsets.fromLTRB(9, 0, 8, 0),
               child: Row(
                 children: [
-                  SizedBox(
-                    width: 36,
-                    height: 36,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        DecoratedBox(
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: hasError
-                                ? scheme.errorContainer
-                                    .withValues(alpha: dark ? 0.55 : 0.85)
-                                : scheme.primary
-                                    .withValues(alpha: dark ? 0.24 : 0.14),
-                          ),
-                          child: const SizedBox.expand(),
-                        ),
-                        Positioned.fill(
-                          child: CircularProgressIndicator(
-                            value: progress,
-                            strokeWidth: 2,
-                            strokeCap: StrokeCap.round,
-                            color: badgeAccent,
-                            backgroundColor: badgeAccent.withValues(
-                              alpha: dark ? 0.18 : 0.12,
-                            ),
-                          ),
-                        ),
-                        Icon(
-                          hasError
-                              ? Icons.error_outline_rounded
-                              : Icons.headphones_rounded,
-                          size: 18,
-                          color: badgeAccent,
-                        ),
-                      ],
-                    ),
+                  _buildDockBadge(
+                    context,
+                    scheme: scheme,
+                    dark: dark,
+                    hasError: hasError,
+                    badgeAccent: badgeAccent,
+                    progress: progress,
+                    coverUrl: now.coverUrl,
+                    bookId: now.bookId,
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -337,7 +415,7 @@ class ListeningMenu extends StatelessWidget {
                         : (now.bookTitle.isEmpty ? '正在听书' : now.bookTitle);
                     final statusText = hasError
                         ? '朗读失败：$error'
-                        : session.isLoading
+                        : session.isBuffering
                             ? '正在准备语音…'
                             : session.isPaused
                                 ? '已暂停 · 第 ${session.position + 1}/${session.segmentCount} 段'
@@ -354,7 +432,7 @@ class ListeningMenu extends StatelessWidget {
                             position: session.position,
                             segmentCount: session.segmentCount,
                             text: sentence,
-                            loading: session.isLoading,
+                            loading: session.isBuffering,
                             hasError: hasError,
                           ),
                           const SizedBox(height: 16),
@@ -421,6 +499,7 @@ class ListeningMenu extends StatelessWidget {
                                               builder: (_) => ReaderPage(
                                                 bookId: now.bookId,
                                                 bookTitle: now.bookTitle,
+                                                bookCoverUrl: now.coverUrl,
                                                 chapterId: now.chapterId,
                                                 chapterTitle: now.chapterTitle,
                                                 volumeId: now.volumeId,

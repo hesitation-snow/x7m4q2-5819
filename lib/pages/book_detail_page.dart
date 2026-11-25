@@ -485,6 +485,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
           volumeId: volume.volumeId,
           volumeTitle: volume.title,
           bookTitle: book.title,
+          bookCoverUrl: book.coverUrl,
           totalChapterCount: _chapterTotalFor(volume),
           currentChapterId: _readChapterId,
           volumes: _volumes,
@@ -563,6 +564,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
             builder: (_) => ReaderPage(
                   bookId: b.bookId,
                   bookTitle: b.title,
+                  bookCoverUrl: b.coverUrl,
                   chapterId: chapterId,
                   chapterTitle: _readChapterTitle,
                   volumeId: volumeId,
@@ -1454,6 +1456,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
         builder: (_) => ReaderPage(
           bookId: book.bookId,
           bookTitle: book.title,
+          bookCoverUrl: book.coverUrl,
           chapterId: chapterId,
           chapterTitle: chapterTitle,
           volumeId: volume.volumeId,
@@ -1582,6 +1585,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                     builder: (_) => ReaderPage(
                           bookId: book.bookId,
                           bookTitle: book.title,
+                          bookCoverUrl: book.coverUrl,
                           chapterId: c.chapterId,
                           chapterTitle: c.title,
                           volumeId: v.volumeId,
@@ -1628,6 +1632,7 @@ class ChaptersPage extends StatefulWidget {
   final int volumeId;
   final String volumeTitle;
   final String bookTitle;
+  final String bookCoverUrl;
   final int totalChapterCount;
   final int currentChapterId;
   final List<LKVolume> volumes;
@@ -1637,6 +1642,7 @@ class ChaptersPage extends StatefulWidget {
     required this.volumeId,
     required this.volumeTitle,
     required this.bookTitle,
+    this.bookCoverUrl = '',
     this.totalChapterCount = 0,
     this.currentChapterId = 0,
     this.volumes = const [],
@@ -1980,6 +1986,7 @@ class _ChaptersPageState extends State<ChaptersPage> {
                                   builder: (_) => ReaderPage(
                                         bookId: widget.bookId,
                                         bookTitle: widget.bookTitle,
+                                        bookCoverUrl: widget.bookCoverUrl,
                                         chapterId: c.chapterId,
                                         chapterTitle: c.title,
                                         volumeId: _volumeId,

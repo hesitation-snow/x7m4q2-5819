@@ -16,12 +16,14 @@ class ListeningSessionTransfer {
     required this.config,
     required this.accountId,
     required this.releaseResources,
+    this.coverUrl = '',
   });
 
   final ReaderSpeechSession session;
   final SpeechSynthesisConfig? config;
   final String accountId;
   final Future<void> Function()? releaseResources;
+  final String coverUrl;
 }
 
 /// Playback that outlives the reader page. Leaving a chapter keeps the
@@ -41,6 +43,7 @@ class ListeningNow extends ChangeNotifier {
   String accountId = '';
   String bookTitle = '';
   String chapterTitle = '';
+  String coverUrl = '';
   int bookId = 0;
   int chapterId = 0;
   int volumeId = 0;
@@ -56,13 +59,16 @@ class ListeningNow extends ChangeNotifier {
     required int bookId,
     required int chapterId,
     required int volumeId,
+    String coverUrl = '',
     SpeechSynthesisConfig? config,
     String accountId = '',
     Future<void> Function()? releaseResources,
   }) {
+    final trimmedCover = coverUrl.trim();
     if (identical(_session, session)) {
       this.bookTitle = bookTitle;
       this.chapterTitle = chapterTitle;
+      if (trimmedCover.isNotEmpty) this.coverUrl = trimmedCover;
       this.config = config;
       this.accountId = accountId;
       notifyListeners();
@@ -76,6 +82,7 @@ class ListeningNow extends ChangeNotifier {
     this.accountId = accountId;
     this.bookTitle = bookTitle;
     this.chapterTitle = chapterTitle;
+    this.coverUrl = trimmedCover;
     this.bookId = bookId;
     this.chapterId = chapterId;
     this.volumeId = volumeId;
@@ -130,14 +137,25 @@ class ListeningNow extends ChangeNotifier {
       config: config,
       accountId: this.accountId,
       releaseResources: _releaseResources,
+      coverUrl: coverUrl,
     );
     _session = null;
     _releaseResources = null;
     _lastSavedResumeKey = null;
     config = null;
+    coverUrl = '';
     this.accountId = '';
     notifyListeners();
     return transfer;
+  }
+
+  void updateCoverUrl(String url, {int? bookId}) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty || !active) return;
+    if (bookId != null && this.bookId != bookId) return;
+    if (coverUrl == trimmed) return;
+    coverUrl = trimmed;
+    notifyListeners();
   }
 
   void _saveResumeProgress(ReaderSpeechSession session) {
@@ -253,6 +271,7 @@ class ListeningNow extends ChangeNotifier {
       _releaseResources = null;
       _lastSavedResumeKey = null;
       config = null;
+      coverUrl = '';
       accountId = '';
       session.removeListener(_onSession);
       notifyListeners();
@@ -299,6 +318,7 @@ class ListeningNow extends ChangeNotifier {
     _releaseResources = null;
     _lastSavedResumeKey = null;
     config = null;
+    coverUrl = '';
     accountId = '';
     session?.removeListener(_onSession);
     try {

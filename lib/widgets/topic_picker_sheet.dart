@@ -148,6 +148,13 @@ class _TopicPickerSheetState extends State<_TopicPickerSheet> {
                 M3SheetHeader(
                   title: widget.title,
                   icon: Icons.tag_rounded,
+                  action: selected == null
+                      ? null
+                      : TextButton(
+                          key: const ValueKey('topic-picker-clear'),
+                          onPressed: () => Navigator.pop(context, selected),
+                          child: const Text('清除'),
+                        ),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),

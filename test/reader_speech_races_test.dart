@@ -44,6 +44,7 @@ class _Handler implements SpeechFilesHandler {
   Future<void> playFiles(List<File> files,
       {required String title,
       String? artist,
+      Uri? artUri,
       required int startIndex,
       required FutureOr<void> Function(int) onSegmentChanged,
       required FutureOr<void> Function() onCompleted}) async {

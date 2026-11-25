@@ -282,4 +282,228 @@ void main() {
       });
     }
   });
+
+  testWidgets(
+      'manual scroll pauses TTS auto-follow and resumes via button or inactivity timeout',
+      (tester) async {
+    ReaderPage.ttsFollowAutoResumeDelay = const Duration(milliseconds: 800);
+    addTearDown(
+        () => ReaderPage.ttsFollowAutoResumeDelay = const Duration(seconds: 6));
+
+    const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
+    const wakeChannel =
+        'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle';
+    const ttsChannel = MethodChannel('moe.yutro.yomiru/tts');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final spokenTexts = <String>[];
+    String? lastUtteranceId;
+
+    Directory? root;
+    await tester.runAsync(() async {
+      root = await Directory.systemTemp.createTemp('yomiru_tts_pause_');
+    });
+
+    messenger.setMockMethodCallHandler(pathChannel, (_) async => root!.path);
+    messenger.setMockMessageHandler(wakeChannel,
+        (_) async => const StandardMessageCodec().encodeMessage([null]));
+    messenger.setMockMethodCallHandler(
+        ReaderVolumeKeys.channel, (_) async => null);
+    messenger.setMockMethodCallHandler(ttsChannel, (call) async {
+      if (call.method == 'getEngines') {
+        return [
+          {'name': 'test.engine', 'label': '测试引擎', 'isSystem': true}
+        ];
+      }
+      if (call.method == 'getVoices') {
+        return [
+          {'id': 'zh-CN-test', 'name': '测试中文', 'locale': 'zh-CN'}
+        ];
+      }
+      if (call.method == 'setLanguage') return {'available': true};
+      if (call.method == 'setVoice' || call.method == 'setSpeechRate') {
+        return true;
+      }
+      if (call.method == 'speak') {
+        final args = call.arguments as Map;
+        spokenTexts.add(args['text'] as String);
+        lastUtteranceId = args['utteranceId'] as String?;
+        return {'accepted': true, 'utteranceId': lastUtteranceId};
+      }
+      return null;
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'r_paged': false,
+      'r_vol_turn': false,
+    });
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    LKStore.animationsEnabled.value = false;
+    LKClient.shared.session.clear();
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      final data = <String, dynamic>{};
+      if (request.url.path.endsWith('/get-chapter-detail')) {
+        data.addAll({
+          'chapter_id': 318000,
+          'volume_id': 1,
+          'chapter_no': 1,
+          'title': 'TTS pause fixture',
+          'body_snapshot': {
+            'body_html': List.generate(
+              60,
+              (i) =>
+                  '<p>段落编号$i：这是一段用于验证听书滚动暂停跟随与恢复聚焦的测试正文内容。</p>',
+            ).join(),
+          },
+        });
+      }
+      return http.Response(jsonEncode({'code': 0, 'data': data}), 200,
+          headers: {'content-type': 'application/json'});
+    }));
+
+    try {
+      await tester.runAsync(ReaderContentCache.clear);
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [readerRouteObserver],
+          theme: ThemeData(pageTransitionsTheme: AppMotion.noPageTransitions),
+          home: const ReaderPage(
+            bookId: 1338,
+            bookTitle: 'fixture',
+            chapterId: 318000,
+            chapterTitle: 'TTS pause fixture',
+            volumeId: 1,
+            initialTtsSource: 'system',
+          ),
+        ),
+      );
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)));
+      }
+
+      final scrollable = find.byType(Scrollable).first;
+      final scrollState = tester.state<ScrollableState>(scrollable);
+      final viewportRect = tester.getRect(find.byType(CustomScrollView).first);
+      final viewportCenterY = viewportRect.center.dy;
+
+      scrollState.position.jumpTo(1400);
+      await tester.pumpAndSettle();
+
+      await tester.tapAt(viewportRect.center);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('系统朗读'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+          find.byKey(const ValueKey('listening-source-system')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('listening-source-system')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byTooltip('从当前位置朗读'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('从当前位置朗读'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('关闭朗读'));
+      await tester.pumpAndSettle();
+
+      final firstMatch = RegExp(r'段落编号(\d+)：').firstMatch(spokenTexts.last);
+      expect(firstMatch, isNotNull);
+      final firstBlockIndex = int.parse(firstMatch!.group(1)!);
+      expect(
+          find.byKey(const ValueKey('reader-tts-resume-follow')), findsNothing);
+
+      // Manually drag down (scroll upward in document) so we move away from the spoken line.
+      final beforeDragPixels = scrollState.position.pixels;
+      await tester.drag(find.byType(CustomScrollView).first, const Offset(0, 320));
+      await tester.pumpAndSettle();
+      final afterDragPixels = scrollState.position.pixels;
+      expect(afterDragPixels, lessThan(beforeDragPixels - 150));
+
+      final pillFinder = find.byKey(const ValueKey('reader-tts-resume-follow'));
+      expect(pillFinder, findsOneWidget);
+      expect(find.text('回到朗读位置'), findsOneWidget);
+
+      // Simulate natural progression to next TTS segment while auto-follow is paused.
+      final finishedUtteranceId = lastUtteranceId!;
+      await tester.runAsync(() async {
+        await messenger.handlePlatformMessage(
+          ttsChannel.name,
+          ttsChannel.codec.encodeMethodCall(
+            MethodCall('onComplete', {'utteranceId': finishedUtteranceId}),
+          ),
+          (_) {},
+        );
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(spokenTexts.last, contains('段落编号${firstBlockIndex + 1}：'));
+      expect(
+        (scrollState.position.pixels - afterDragPixels).abs(),
+        lessThan(5),
+        reason: 'Segment progression must not yank scroll while follow is paused',
+      );
+
+      // Tapping the pill re-centers the active spoken line and hides the pill.
+      await tester.tap(pillFinder);
+      await tester.pumpAndSettle();
+
+      Finder readerBlockFinder(int index) => find.descendant(
+            of: find.byType(CustomScrollView).first,
+            matching: find.textContaining('段落编号$index：', findRichText: true),
+          );
+      final resumedBlockFinder = readerBlockFinder(firstBlockIndex + 1);
+      expect(resumedBlockFinder, findsOneWidget);
+      expect(
+        (tester.getCenter(resumedBlockFinder).dy - viewportCenterY).abs(),
+        lessThan(35),
+      );
+      expect(pillFinder, findsNothing);
+
+      // Scroll away again and wait past the inactivity timeout to verify auto-resume.
+      await tester.drag(find.byType(CustomScrollView).first, const Offset(0, 320));
+      await tester.pumpAndSettle();
+      expect(pillFinder, findsOneWidget);
+      expect(scrollState.position.pixels, lessThan(beforeDragPixels - 150));
+
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.pumpAndSettle();
+
+      expect(pillFinder, findsNothing);
+      expect(
+        (tester.getCenter(resumedBlockFinder).dy - viewportCenterY).abs(),
+        lessThan(35),
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await tester.runAsync(ReaderContentCache.clear);
+      LKApi.client = LKClient.shared;
+      LKStore.animationsEnabled.value = true;
+      messenger.setMockMethodCallHandler(pathChannel, null);
+      messenger.setMockMethodCallHandler(ReaderVolumeKeys.channel, null);
+      messenger.setMockMessageHandler(wakeChannel, null);
+      messenger.setMockMethodCallHandler(ttsChannel, null);
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+      debugDefaultTargetPlatformOverride = null;
+      await tester.runAsync(() async {
+        for (var attempt = 0;; attempt++) {
+          try {
+            if (await root!.exists()) await root!.delete(recursive: true);
+            break;
+          } on FileSystemException catch (error) {
+            if (error.osError?.errorCode != 32 || attempt >= 5) rethrow;
+            await Future<void>.delayed(const Duration(milliseconds: 40));
+          }
+        }
+      });
+    }
+  });
 }

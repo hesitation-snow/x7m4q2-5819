@@ -1,4 +1,7 @@
+import 'dart:io' show Platform;
+
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'reader_audio_handler.dart';
 
@@ -9,6 +12,9 @@ Future<ReaderAudioHandler>? _initialization;
 Future<ReaderAudioHandler> ensureReaderAudioHandler() async {
   final active = activeReaderAudioHandler;
   if (active != null) return active;
+  if (kIsWeb || Platform.environment.containsKey('FLUTTER_TEST')) {
+    throw UnsupportedError('AudioService is unavailable in headless tests');
+  }
   if (_initialization != null) return _initialization!;
   final initialization = AudioService.init<ReaderAudioHandler>(
     builder: ReaderAudioHandler.new,

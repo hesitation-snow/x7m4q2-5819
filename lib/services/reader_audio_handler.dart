@@ -90,6 +90,7 @@ class ReaderAudioHandler extends BaseAudioHandler
   int? _lastIndex;
   String _title = 'Yomiru';
   String? _author;
+  Uri? _artUri;
   String? _segment;
   String _status = '停止';
   Duration _reportedPosition = Duration.zero;
@@ -160,6 +161,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     if (_ttsOwnerKey != ownerKey) return false;
     _ttsOwnerKey = null;
     _ttsOwnerCallbacks = null;
+    _artUri = null;
     _reportedPosition = Duration.zero;
     _reportedDuration = null;
     mediaItem.add(null);
@@ -221,6 +223,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     List<File> files, {
     required String title,
     String? artist,
+    Uri? artUri,
     required int startIndex,
     required FutureOr<void> Function(int index) onSegmentChanged,
     required FutureOr<void> Function() onCompleted,
@@ -247,6 +250,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     _continuousSessionPlaying = _speechSessionOwnerKey != null;
     _reportedPosition = Duration.zero;
     _playerDuration = null;
+    _artUri = artUri;
     _files = List<File>.unmodifiable(files);
     _items = List<MediaItem>.generate(
       files.length,
@@ -256,6 +260,7 @@ class ReaderAudioHandler extends BaseAudioHandler
             files.length == 1 ? title : '$title (${index + 1}/${files.length})',
         artist: artist,
         album: title,
+        artUri: artUri,
         displayTitle: title,
         displaySubtitle: artist,
         playable: true,
@@ -318,6 +323,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     Object? ownerKey,
     String? title,
     String? author,
+    Uri? artUri,
     String? segment,
     required String status,
     Duration? position,
@@ -328,10 +334,41 @@ class ReaderAudioHandler extends BaseAudioHandler
         ownerKey: ownerKey,
         title: title,
         author: author,
+        artUri: artUri,
         segment: segment,
         status: status,
         position: position,
         duration: duration);
+  }
+
+  MediaItem _withArtUri(MediaItem item, Uri? artUri) => artUri != null
+      ? item.copyWith(artUri: artUri)
+      : MediaItem(
+          id: item.id,
+          title: item.title,
+          album: item.album,
+          artist: item.artist,
+          duration: item.duration,
+          artUri: null,
+          playable: item.playable,
+          displayTitle: item.displayTitle,
+          displaySubtitle: item.displaySubtitle,
+          extras: item.extras,
+        );
+
+  void updateMediaArtUri(Uri? artUri) {
+    if (_disposed) return;
+    _artUri = artUri;
+    if (_items.isNotEmpty) {
+      _items = _items
+          .map((item) => _withArtUri(item, artUri))
+          .toList(growable: false);
+      queue.add(_items);
+    }
+    final current = mediaItem.valueOrNull;
+    if (current != null) {
+      mediaItem.add(_withArtUri(current, artUri));
+    }
   }
 
   Future<void> _invokeOwner(FutureOr<void> Function()? callback) async {
@@ -368,6 +405,7 @@ class ReaderAudioHandler extends BaseAudioHandler
           : '$_title · $_segment',
       artist: _author,
       album: _title,
+      artUri: _artUri,
       playable: old?.playable ?? true,
       extras: extras,
     ));
@@ -446,6 +484,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     _completionSent = false;
     _title = title;
     _author = author;
+    _artUri = null;
     _segment = segment;
     _reportedPosition = Duration.zero;
     _status = autoplay ? '准备播放' : '已就绪';
@@ -502,6 +541,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     Object? ownerKey,
     String? title,
     String? author,
+    Uri? artUri,
     String? segment,
     required String status,
     Duration? position,
@@ -510,9 +550,11 @@ class ReaderAudioHandler extends BaseAudioHandler
     if (_disposed || !_acceptsOwnerUpdate(ownerKey)) return;
     final changedItem = (title != null && title != _title) ||
         (author != null && author != _author) ||
+        (artUri != null && artUri != _artUri) ||
         (segment != null && segment != _segment);
     if (title != null) _title = title;
     if (author != null) _author = author;
+    if (artUri != null) _artUri = artUri;
     if (segment != null) _segment = segment;
     _status = status;
     if (position != null) _reportedPosition = position;

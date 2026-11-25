@@ -560,22 +560,16 @@ class _DynamicPageState extends State<DynamicPage> {
             ),
             const SizedBox(width: 8),
             M3ChoiceChip(
-              key: const ValueKey('dynamic-topic-filter-button'),
+              key: ValueKey(
+                activeTopic == null
+                    ? 'dynamic-topic-filter-button'
+                    : 'dynamic-active-topic-filter',
+              ),
               icon: Icons.tag_rounded,
-              label: '话题',
-              selected: false,
+              label: activeTopic == null ? '话题' : activeTopic.name,
+              selected: activeTopic != null,
               onSelected: (_) => _openTopicFilterSheet(),
             ),
-            if (activeTopic != null) ...[
-              const SizedBox(width: 8),
-              M3ChoiceChip(
-                key: const ValueKey('dynamic-active-topic-filter'),
-                icon: Icons.tag_rounded,
-                label: '# ${activeTopic.name}',
-                selected: true,
-                onSelected: (_) => _toggleTopicFilter(activeTopic),
-              ),
-            ],
           ],
         ),
       ),

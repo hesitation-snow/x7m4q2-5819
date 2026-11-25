@@ -388,6 +388,68 @@ void main() {
         if (await temp.exists()) await temp.delete(recursive: true);
       }
     });
+
+    test(
+        'playFiles, publishTtsState, and updateMediaArtUri propagate and clear artUri on MediaItem',
+        () async {
+      final temp = await Directory.systemTemp.createTemp('yomiru_handler_art_');
+      try {
+        final f1 = File('${temp.path}/seg1.mp3')..writeAsBytesSync([1, 2, 3]);
+        final art1 = Uri.parse('https://example.com/book-cover-1.jpg');
+        final art2 = Uri.parse('https://example.com/book-cover-2.jpg');
+
+        await handler.playFiles(
+          [f1],
+          title: 'Book',
+          artist: 'Chapter 1',
+          artUri: art1,
+          startIndex: 0,
+          onSegmentChanged: (_) {},
+          onCompleted: () {},
+        );
+        expect(handler.mediaItem.valueOrNull?.artUri, art1);
+        expect(handler.queue.value.single.artUri, art1);
+
+        handler.updateMediaArtUri(art2);
+        expect(handler.mediaItem.valueOrNull?.artUri, art2);
+        expect(handler.queue.value.single.artUri, art2);
+
+        handler.updateMediaArtUri(null);
+        expect(handler.mediaItem.valueOrNull?.artUri, isNull);
+
+        handler.bindTtsOwner(
+          ownerKey: 'tts-1',
+          callbacks: TtsMediaCallbacks(
+            onPlay: () {},
+            onPause: () {},
+            onStop: () {},
+            onPrevious: () {},
+            onNext: () {},
+          ),
+        );
+        await handler.publishTtsState(
+          ownerKey: 'tts-1',
+          title: 'Book',
+          author: 'Chapter 1',
+          artUri: art1,
+          segment: 'Line 1',
+          status: 'playing',
+        );
+        expect(handler.mediaItem.valueOrNull?.artUri, art1);
+
+        handler.unbindTtsOwner('tts-1');
+        expect(handler.mediaItem.valueOrNull, isNull);
+
+        await handler.playBytes(
+          Uint8List.fromList([1, 2, 3]),
+          title: 'Preview',
+          autoplay: false,
+        );
+        expect(handler.mediaItem.valueOrNull?.artUri, isNull);
+      } finally {
+        if (await temp.exists()) await temp.delete(recursive: true);
+      }
+    });
   });
 }
 

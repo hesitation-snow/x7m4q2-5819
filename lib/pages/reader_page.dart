@@ -191,8 +191,12 @@ Iterable<_PageItem> _pageAllItems(_Page page) sync* {
 /// - 设置面板三页签:外观/排版/操作
 /// - 点击翻页 / 音量键翻页 / 保持常亮 / 隐藏状态栏 / 指示器
 class ReaderPage extends StatefulWidget {
+  @visibleForTesting
+  static Duration ttsFollowAutoResumeDelay = const Duration(seconds: 6);
+
   final int bookId;
   final String bookTitle;
+  final String bookCoverUrl;
   final int chapterId;
   final String chapterTitle;
   final int volumeId;
@@ -203,6 +207,7 @@ class ReaderPage extends StatefulWidget {
       {super.key,
       required this.bookId,
       required this.bookTitle,
+      this.bookCoverUrl = '',
       required this.chapterId,
       required this.chapterTitle,
       required this.volumeId,
@@ -370,6 +375,11 @@ class _ReaderPageState extends State<ReaderPage>
   bool _speechAutoAdvanceHandled = false;
   bool _autoTtsStarted = false;
   String? _lastSpeechScrollKey;
+  bool _ttsFollowPaused = false;
+  Timer? _ttsFollowResumeTimer;
+  bool _programmaticPageJump = false;
+  String _bookCoverUrl = '';
+  bool _bookCoverResolving = false;
   final ValueNotifier<int> _ttsUiRevision = ValueNotifier<int>(0);
   final SliderHapticFeedback _progressSliderHaptics = SliderHapticFeedback();
   int _ttsContentRevision = 0;
@@ -495,6 +505,7 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void initState() {
     super.initState();
+    _bookCoverUrl = widget.bookCoverUrl.trim();
     _ttsSourceMode = widget.initialTtsSource;
     _ttsContinuousChapter = widget.autoStartTts;
     _systemUi = ReaderSystemUi();
@@ -529,6 +540,60 @@ class _ReaderPageState extends State<ReaderPage>
     _load();
   }
 
+  Uri? _mediaArtUri() {
+    if (LKStore.dataSaverMode.value) return null;
+    final trimmed = _bookCoverUrl.trim();
+    if (trimmed.isEmpty) return null;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || !uri.hasScheme) return null;
+    if (uri.scheme != 'http' &&
+        uri.scheme != 'https' &&
+        uri.scheme != 'file') {
+      return null;
+    }
+    return uri;
+  }
+
+  Future<void> _ensureBookCoverUrl() async {
+    if (_bookCoverUrl.isNotEmpty || _bookCoverResolving || widget.bookId <= 0) {
+      return;
+    }
+    _bookCoverResolving = true;
+    try {
+      final book = await LKApi.bookDetail(
+        widget.bookId,
+        requestTimeout: const Duration(seconds: 6),
+      );
+      final resolved = book.coverUrl.trim();
+      if (resolved.isEmpty) return;
+      _bookCoverUrl = resolved;
+      final artUri = _mediaArtUri();
+      _speechSession?.updateArtUri(artUri);
+      final handler = activeReaderAudioHandler;
+      if (handler != null &&
+          (handler.speechSessionOwnerKey == _speechSessionOwnerKey ||
+              handler.ttsOwnerKey == _ttsMediaOwnerKey)) {
+        handler.updateMediaArtUri(artUri);
+      }
+      if (ListeningNow.instance.active &&
+          ListeningNow.instance.bookId == widget.bookId) {
+        ListeningNow.instance.updateCoverUrl(
+          _bookCoverUrl,
+          bookId: widget.bookId,
+        );
+      }
+      if (mounted &&
+          _speechSession == null &&
+          (_ttsController.status == TtsPlaybackStatus.playing ||
+              _ttsController.status == TtsPlaybackStatus.paused)) {
+        _syncTtsMediaSession();
+      }
+    } catch (_) {
+    } finally {
+      _bookCoverResolving = false;
+    }
+  }
+
   void _syncTtsMediaSession() {
     final handler = activeReaderAudioHandler;
     if (handler == null || !mounted) return;
@@ -553,6 +618,7 @@ class _ReaderPageState extends State<ReaderPage>
         ownerKey: _ttsMediaOwnerKey,
         title: widget.bookTitle,
         author: _title,
+        artUri: _mediaArtUri(),
         segment: segment?.text,
         status: switch (status) {
           TtsPlaybackStatus.playing => 'playing',
@@ -576,7 +642,9 @@ class _ReaderPageState extends State<ReaderPage>
       final key = _speechSegmentScrollKey(segment);
       if (key != _lastSpeechScrollKey) {
         _lastSpeechScrollKey = key;
-        _followSpeechSegment(segment);
+        if (!_ttsFollowPaused) {
+          _followSpeechSegment(segment);
+        }
       }
       if (_positionRestored) {
         _publishPosition(ReadingPosition.text(
@@ -588,6 +656,7 @@ class _ReaderPageState extends State<ReaderPage>
         status != TtsPlaybackStatus.playing &&
         status != TtsPlaybackStatus.paused) {
       _lastSpeechScrollKey = null;
+      _clearTtsFollowPause(notify: false);
     }
     // stop() may notify synchronously while reader content is being replaced
     // inside setState. Schedule the reader highlight update outside that call.
@@ -618,6 +687,8 @@ class _ReaderPageState extends State<ReaderPage>
     _parsedDetail = null;
     _parsedBlocks = null;
     _readingReportTimer?.cancel();
+    _ttsFollowResumeTimer?.cancel();
+    _ttsFollowResumeTimer = null;
     _readingReportTimer = null;
     setState(() => _applyBlocks(const []));
     unawaited(_load());
@@ -1388,6 +1459,8 @@ class _ReaderPageState extends State<ReaderPage>
     _positionRestoreSerial++;
     _scrollProgressGeneration++;
     _readingReportTimer?.cancel();
+    _ttsFollowResumeTimer?.cancel();
+    _ttsFollowResumeTimer = null;
     if (!_finishingReadingSession) {
       LKReadingSession.shared.pause();
       unawaited(_reportReadingProgress(force: true));
@@ -1466,6 +1539,8 @@ class _ReaderPageState extends State<ReaderPage>
     if (_finishingReadingSession) return;
     _finishingReadingSession = true;
     _readingReportTimer?.cancel();
+    _ttsFollowResumeTimer?.cancel();
+    _ttsFollowResumeTimer = null;
     _readingReportTimer = null;
     LKReadingSession.shared.pause();
     await _reportReadingProgress(force: true);
@@ -2568,6 +2643,7 @@ class _ReaderPageState extends State<ReaderPage>
             builder: (_) => ReaderPage(
                   bookId: widget.bookId,
                   bookTitle: widget.bookTitle,
+                  bookCoverUrl: _bookCoverUrl,
                   chapterId: chapterId,
                   chapterTitle: title,
                   volumeId: volumeId ?? _effectiveVolumeId,
@@ -3061,6 +3137,67 @@ class _ReaderPageState extends State<ReaderPage>
     }
   }
 
+  TtsSegment? _activeSpokenSegment() {
+    final speech = _speechSession;
+    if (speech != null && !speech.isStopped) {
+      return speech.currentSegment;
+    }
+    final status = _ttsController.status;
+    if (status == TtsPlaybackStatus.playing ||
+        status == TtsPlaybackStatus.paused) {
+      return _ttsController.currentSegment;
+    }
+    return null;
+  }
+
+  void _clearTtsFollowPause({bool notify = true}) {
+    _ttsFollowResumeTimer?.cancel();
+    _ttsFollowResumeTimer = null;
+    if (!_ttsFollowPaused) return;
+    if (notify && mounted) {
+      setState(() => _ttsFollowPaused = false);
+    } else {
+      _ttsFollowPaused = false;
+    }
+  }
+
+  void _scheduleTtsFollowAutoResume() {
+    _ttsFollowResumeTimer?.cancel();
+    if (!_ttsFollowPaused || !_isListeningActive || !mounted) {
+      _ttsFollowResumeTimer = null;
+      return;
+    }
+    _ttsFollowResumeTimer = Timer(ReaderPage.ttsFollowAutoResumeDelay, () {
+      if (!mounted || !_ttsFollowPaused || !_isListeningActive) return;
+      _resumeTtsAutoFollow();
+    });
+  }
+
+  void _pauseTtsAutoFollow({bool scheduleAutoResume = true}) {
+    if (!_isListeningActive) return;
+    if (!_ttsFollowPaused) {
+      if (mounted) {
+        setState(() => _ttsFollowPaused = true);
+      } else {
+        _ttsFollowPaused = true;
+      }
+    }
+    if (scheduleAutoResume) {
+      _scheduleTtsFollowAutoResume();
+    } else {
+      _ttsFollowResumeTimer?.cancel();
+      _ttsFollowResumeTimer = null;
+    }
+  }
+
+  void _resumeTtsAutoFollow({bool animate = true}) {
+    _clearTtsFollowPause();
+    final segment = _activeSpokenSegment();
+    if (segment == null) return;
+    _lastSpeechScrollKey = _speechSegmentScrollKey(segment);
+    _followSpeechSegment(segment, animate: animate);
+  }
+
   void _followSpeechSegment(TtsSegment segment, {bool animate = true}) {
     final anchor = ReadingPosition.text(
       blockIndex: segment.blockIndex,
@@ -3070,7 +3207,12 @@ class _ReaderPageState extends State<ReaderPage>
       final target = _pageForAnchor(anchor);
       if (target != null && _pageController.hasClients) {
         if (target != _pageIndex) {
-          _pageController.jumpToPage(target);
+          _programmaticPageJump = true;
+          try {
+            _pageController.jumpToPage(target);
+          } finally {
+            _programmaticPageJump = false;
+          }
         }
       } else {
         _pendingPagedAnchor = anchor;
@@ -3090,10 +3232,13 @@ class _ReaderPageState extends State<ReaderPage>
       final key = _speechSegmentScrollKey(segment);
       if (key != _lastSpeechScrollKey) {
         _lastSpeechScrollKey = key;
-        _followSpeechSegment(segment);
+        if (!_ttsFollowPaused) {
+          _followSpeechSegment(segment);
+        }
       }
     } else if (session == null || session.isStopped) {
       _lastSpeechScrollKey = null;
+      _clearTtsFollowPause(notify: false);
     }
     if (segment != null && _positionRestored) {
       final anchor = ReadingPosition.text(
@@ -3174,6 +3319,9 @@ class _ReaderPageState extends State<ReaderPage>
     _speechAccountId =
         transfer.accountId.isNotEmpty ? transfer.accountId : accountKey;
     _adoptedSpeechRelease = transfer.releaseResources;
+    if (_bookCoverUrl.isEmpty && transfer.coverUrl.trim().isNotEmpty) {
+      _bookCoverUrl = transfer.coverUrl.trim();
+    }
     _speechAutoAdvanceHandled = false;
     _lastSpeechScrollKey = null;
     _ttsSessionError = session.error;
@@ -3221,13 +3369,16 @@ class _ReaderPageState extends State<ReaderPage>
     setState(() {});
 
     final segment = session.currentSegment;
+    _clearTtsFollowPause(notify: false);
     if (segment != null) {
       _lastSpeechScrollKey = _speechSegmentScrollKey(segment);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !identical(_speechSession, session)) return;
         final current = session.currentSegment ?? segment;
         _lastSpeechScrollKey = _speechSegmentScrollKey(current);
-        _followSpeechSegment(current, animate: false);
+        if (!_ttsFollowPaused) {
+          _followSpeechSegment(current, animate: false);
+        }
       });
     }
   }
@@ -3246,6 +3397,9 @@ class _ReaderPageState extends State<ReaderPage>
     _activeSpeechConfig = null;
     _adoptedSpeechRelease = null;
     final platform = _ttsPlatform;
+    if (_bookCoverUrl.isEmpty) {
+      unawaited(_ensureBookCoverUrl());
+    }
     ListeningNow.instance.adopt(
       session: session,
       bookTitle: widget.bookTitle,
@@ -3253,6 +3407,7 @@ class _ReaderPageState extends State<ReaderPage>
       bookId: widget.bookId,
       chapterId: widget.chapterId,
       volumeId: widget.volumeId,
+      coverUrl: _bookCoverUrl,
       config: config,
       accountId: accountId,
       releaseResources: () async {
@@ -3272,6 +3427,7 @@ class _ReaderPageState extends State<ReaderPage>
   Future<void> _stopSpeechPlayback() async {
     ++_speechStartRevision;
     _speechStarting = false;
+    _clearTtsFollowPause(notify: false);
     final speech = _speechSession;
     if (speech != null) {
       await speech.stop();
@@ -3292,6 +3448,9 @@ class _ReaderPageState extends State<ReaderPage>
       ++_speechStartRevision;
       _speechStarting = false;
     }
+    _ttsFollowResumeTimer?.cancel();
+    _ttsFollowResumeTimer = null;
+    _ttsFollowPaused = false;
     final session = _speechSession;
     final client = _activeSpeechClient;
     final account = _speechAccountId;
@@ -3329,6 +3488,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   Future<void> _toggleTtsAtBlock(int blockIndex) async {
+    _clearTtsFollowPause();
     final speech = _speechSession;
     if (speech != null && speech.currentSegment?.blockIndex == blockIndex) {
       if (speech.isPaused) {
@@ -3367,6 +3527,7 @@ class _ReaderPageState extends State<ReaderPage>
   Future<void> _startSpeechSession({int? startBlock}) async {
     if ((_speechStarting && startBlock == null) || !mounted) return;
     final revision = ++_speechStartRevision;
+    _clearTtsFollowPause(notify: false);
     setState(() {
       _speechStarting = true;
       _ttsSessionError = null;
@@ -3561,6 +3722,9 @@ class _ReaderPageState extends State<ReaderPage>
     );
     _ttsUiRevision.value++;
     setState(() {});
+    if (_bookCoverUrl.isEmpty) {
+      unawaited(_ensureBookCoverUrl());
+    }
     try {
       await speech.start(
         segments,
@@ -3569,6 +3733,7 @@ class _ReaderPageState extends State<ReaderPage>
         languageFilter: _ttsLanguageFilter,
         title: widget.bookTitle,
         artist: _title,
+        artUri: _mediaArtUri(),
       );
     } catch (error) {
       _ttsSessionError = error.toString();
@@ -3803,7 +3968,8 @@ class _ReaderPageState extends State<ReaderPage>
                   ? (_ttsSessionError == null
                       ? _ttsController.status
                       : TtsPlaybackStatus.error)
-                  : speech.isPlaying
+                  : (speech.isPlaying ||
+                          (speech.isLoading && !speech.isBuffering))
                       ? TtsPlaybackStatus.playing
                       : speech.isPaused
                           ? TtsPlaybackStatus.paused
@@ -3817,7 +3983,7 @@ class _ReaderPageState extends State<ReaderPage>
                   speech?.segmentCount ?? _ttsController.segmentCount;
               final error =
                   speech?.error ?? _ttsSessionError ?? _ttsController.error;
-              final loading = _speechStarting || speech?.isLoading == true;
+              final loading = _speechStarting || speech?.isBuffering == true;
               final playing = status == TtsPlaybackStatus.playing;
               final preparing = status == TtsPlaybackStatus.idle ||
                   status == TtsPlaybackStatus.stopped ||
@@ -3848,6 +4014,7 @@ class _ReaderPageState extends State<ReaderPage>
                               position > 0
                           ? () {
                               if (validContent()) {
+                                _clearTtsFollowPause();
                                 final speech = _speechSession;
                                 unawaited(speech != null
                                     ? speech.previous()
@@ -3884,6 +4051,7 @@ class _ReaderPageState extends State<ReaderPage>
                                   await _ttsController.pause();
                                 }
                               } else if (status == TtsPlaybackStatus.paused) {
+                                _clearTtsFollowPause();
                                 _lastSpeechScrollKey = null;
                                 if (speech != null) {
                                   await speech.resume();
@@ -3910,6 +4078,7 @@ class _ReaderPageState extends State<ReaderPage>
                               position + 1 < segmentCount
                           ? () {
                               if (validContent()) {
+                                _clearTtsFollowPause();
                                 final speech = _speechSession;
                                 unawaited(speech != null
                                     ? speech.next()
@@ -5371,11 +5540,36 @@ class _ReaderPageState extends State<ReaderPage>
     );
     return NotificationListener<ScrollNotification>(
       onNotification: (n) {
+        final isUserDrag = (n is ScrollStartNotification &&
+                n.dragDetails != null) ||
+            (n is ScrollUpdateNotification && n.dragDetails != null) ||
+            (n is UserScrollNotification &&
+                n.direction != ScrollDirection.idle);
+        if (isUserDrag && _restoringScrollAnchor) {
+          ++_positionRestoreSerial;
+          _restoringScrollAnchor = false;
+        }
         if (n is ScrollUpdateNotification &&
             _chrome &&
             !_restoringScrollAnchor) {
           setState(() => _chrome = false);
           _applyImmersive();
+        }
+        if (_isListeningActive) {
+          if (isUserDrag) {
+            _pauseTtsAutoFollow(scheduleAutoResume: false);
+          } else if (n is ScrollUpdateNotification &&
+              !_restoringScrollAnchor &&
+              n.scrollDelta != null &&
+              n.scrollDelta!.abs() > 0.5) {
+            _pauseTtsAutoFollow(scheduleAutoResume: true);
+          } else if ((n is ScrollEndNotification ||
+                  (n is UserScrollNotification &&
+                      n.direction == ScrollDirection.idle)) &&
+              !_restoringScrollAnchor &&
+              _ttsFollowPaused) {
+            _scheduleTtsFollowAutoResume();
+          }
         }
         return false;
       },
@@ -5477,12 +5671,38 @@ class _ReaderPageState extends State<ReaderPage>
             }
             return false;
           },
-          child: PageView.builder(
-            controller: _pageController,
-            itemCount: _pages.length,
-            physics: instant
-                ? const NeverScrollableScrollPhysics()
-                : const ClampingScrollPhysics(),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (n) {
+              if (_isListeningActive &&
+                  !_restoringPagedProgress &&
+                  !_programmaticPageJump) {
+                final isUserDrag = (n is ScrollStartNotification &&
+                        n.dragDetails != null) ||
+                    (n is ScrollUpdateNotification &&
+                        n.dragDetails != null) ||
+                    (n is UserScrollNotification &&
+                        n.direction != ScrollDirection.idle);
+                if (isUserDrag) {
+                  _pauseTtsAutoFollow(scheduleAutoResume: false);
+                } else if (n is ScrollUpdateNotification &&
+                    n.scrollDelta != null &&
+                    n.scrollDelta!.abs() > 0.5) {
+                  _pauseTtsAutoFollow(scheduleAutoResume: true);
+                } else if ((n is ScrollEndNotification ||
+                        (n is UserScrollNotification &&
+                            n.direction == ScrollDirection.idle)) &&
+                    _ttsFollowPaused) {
+                  _scheduleTtsFollowAutoResume();
+                }
+              }
+              return false;
+            },
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: _pages.length,
+              physics: instant
+                  ? const NeverScrollableScrollPhysics()
+                  : const ClampingScrollPhysics(),
             onPageChanged: (i) {
               if (!_restoringPagedProgress &&
                   _pendingPagedAnchor == null &&
@@ -5579,6 +5799,7 @@ class _ReaderPageState extends State<ReaderPage>
                 ),
               );
             },
+            ),
           ),
         ),
       ),
@@ -6388,12 +6609,83 @@ class _ReaderPageState extends State<ReaderPage>
 
   Future<void> _turnPrev() async {
     if (_pageIndex <= 0 || !_pageController.hasClients) return;
+    if (_isListeningActive) {
+      _pauseTtsAutoFollow(scheduleAutoResume: true);
+    }
     await AppMotion.pageTo(context, _pageController, _pageIndex - 1);
   }
 
   Future<void> _turnNext() async {
     if (_pageIndex >= _pages.length - 1 || !_pageController.hasClients) return;
+    if (_isListeningActive) {
+      _pauseTtsAutoFollow(scheduleAutoResume: true);
+    }
     await AppMotion.pageTo(context, _pageController, _pageIndex + 1);
+  }
+
+  Widget _ttsResumeFollowPill(
+    BuildContext context, {
+    required bool visible,
+    required double bottomOffset,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return AnimatedPositioned(
+      duration: AppMotion.duration(context, 200),
+      curve: Curves.easeOutCubic,
+      left: 0,
+      right: 0,
+      bottom: visible ? bottomOffset : bottomOffset - 16,
+      child: IgnorePointer(
+        ignoring: !visible,
+        child: Center(
+          child: AnimatedSwitcher(
+            duration: AppMotion.duration(context, 180),
+            child: visible
+                ? Material(
+                    key: const ValueKey('reader-tts-resume-follow'),
+                    color: cs.primaryContainer,
+                    elevation: 3,
+                    shadowColor: cs.shadow.withValues(alpha: 0.25),
+                    shape: StadiumBorder(
+                      side: BorderSide(
+                        color: cs.outlineVariant.withValues(alpha: 0.5),
+                      ),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () => _resumeTtsAutoFollow(),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.my_location_rounded,
+                              size: 18,
+                              color: cs.onPrimaryContainer,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '回到朗读位置',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: cs.onPrimaryContainer,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ),
+      ),
+    );
   }
 
   void _textPointerDown(PointerDownEvent event) {
@@ -6696,6 +6988,17 @@ class _ReaderPageState extends State<ReaderPage>
                       },
                     ),
                   ),
+                // 滚动暂停 TTS 跟随时的恢复聚焦悬浮按钮
+                _ttsResumeFollowPill(
+                  context,
+                  visible: _ttsFollowPaused &&
+                      _isListeningActive &&
+                      !_loading &&
+                      _loadError == null &&
+                      !_isEditingIndicators,
+                  bottomOffset:
+                      (_chrome ? 132.0 : 24.0) + viewBottomPadding,
+                ),
                 // 顶栏
                 AnimatedPositioned(
                   duration: AppMotion.duration(context, 200),

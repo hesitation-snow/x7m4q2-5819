@@ -22,11 +22,12 @@ class _Synth implements SpeechAudioSynthesizer {
 class _Handler implements SpeechFilesHandler {
   final played = <File>[];
   final enqueued = <File>[];
+  final artUris = <Uri?>[];
   FutureOr<void> Function(int)? segmentChanged;
   FutureOr<void> Function()? completed;
   bool paused = false, stopped = false;
   @override
-  Future<void> playFiles(List<File> files, {required String title, String? artist, required int startIndex, required FutureOr<void> Function(int) onSegmentChanged, required FutureOr<void> Function() onCompleted}) async { played.addAll(files); segmentChanged = onSegmentChanged; completed = onCompleted; await onSegmentChanged(0); }
+  Future<void> playFiles(List<File> files, {required String title, String? artist, Uri? artUri, required int startIndex, required FutureOr<void> Function(int) onSegmentChanged, required FutureOr<void> Function() onCompleted}) async { played.addAll(files); artUris.add(artUri); segmentChanged = onSegmentChanged; completed = onCompleted; await onSegmentChanged(0); }
   Future<void> finishCurrent() async { final callback = completed; if (callback != null) await callback(); }
   @override Future<void> pause() async { paused = true; }
   @override Future<void> stop() async { stopped = true; }
@@ -143,6 +144,71 @@ void main() {
     expect(handler.stopped, isTrue);
     session.dispose();
   });
+
+  test('isBuffering stays false during fast transitions and turns true only when delayed',
+      () async {
+    final handler = _Handler();
+    final fastSession = ReaderSpeechSession(
+      handler: handler,
+      synthesizer: _Synth(),
+      cache: cache,
+      bufferingDelay: const Duration(milliseconds: 120),
+    );
+    final fastBufferingValues = <bool>[];
+    fastSession.addListener(() => fastBufferingValues.add(fastSession.isBuffering));
+    await fastSession.start([_seg('fast', 0)], accountId: 'user', config: config, title: 'Book');
+    expect(fastBufferingValues, everyElement(isFalse));
+    fastSession.dispose();
+
+    final slowSynth = _DelayedSynth(const Duration(milliseconds: 140));
+    final slowSession = ReaderSpeechSession(
+      handler: handler,
+      synthesizer: slowSynth,
+      cache: cache,
+      bufferingDelay: const Duration(milliseconds: 40),
+    );
+    final seenBuffering = <bool>[];
+    slowSession.addListener(() => seenBuffering.add(slowSession.isBuffering));
+    await slowSession.start([_seg('slow', 0)], accountId: 'user', config: config, title: 'Book');
+    expect(seenBuffering, contains(true));
+    expect(slowSession.isBuffering, isFalse);
+    slowSession.dispose();
+  });
+
+  test('start and updateArtUri propagate book cover artUri to playFiles', () async {
+    final handler = _Handler();
+    final session = ReaderSpeechSession(handler: handler, synthesizer: _Synth(), cache: cache);
+    final initialArt = Uri.parse('https://example.com/cover1.jpg');
+    final updatedArt = Uri.parse('https://example.com/cover2.jpg');
+
+    await session.start(
+      [_seg('one', 0), _seg('two', 1)],
+      accountId: 'user',
+      config: config,
+      title: 'Book',
+      artUri: initialArt,
+    );
+    expect(handler.artUris.last, initialArt);
+
+    session.updateArtUri(updatedArt);
+    await handler.finishCurrent();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(handler.artUris.last, updatedArt);
+    session.dispose();
+  });
+}
+
+class _DelayedSynth implements SpeechAudioSynthesizer {
+  _DelayedSynth(this.delay);
+  final Duration delay;
+  @override
+  Future<File> synthesize(String text, SpeechSynthesisConfig config, String cachePath) async {
+    await Future<void>.delayed(delay);
+    final file = File(cachePath);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(text);
+    return file;
+  }
 }
 
 class _FailingSynth implements SpeechAudioSynthesizer {

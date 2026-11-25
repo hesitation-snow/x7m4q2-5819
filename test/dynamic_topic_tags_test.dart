@@ -466,19 +466,25 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(feedBodies.any((b) => b['topic_tag_id'] == 27), isTrue);
+      expect(find.byKey(const ValueKey('dynamic-topic-filter-button')), findsNothing);
       expect(find.byKey(const ValueKey('dynamic-active-topic-filter')), findsOneWidget);
+      expect(find.text('吐槽'), findsOneWidget);
+      expect(find.textContaining('# #'), findsNothing);
       expect(find.text('服务端拉回的吐槽动态'), findsOneWidget);
       expect(find.text('主广场默认动态'), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('dynamic-active-topic-filter')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('topic-picker-clear')));
+      await tester.pumpAndSettle();
 
       expect(feedBodies.last.containsKey('topic_tag_id'), isFalse);
+      expect(find.byKey(const ValueKey('dynamic-topic-filter-button')), findsOneWidget);
       expect(find.byKey(const ValueKey('dynamic-active-topic-filter')), findsNothing);
       expect(find.text('主广场默认动态'), findsOneWidget);
     });
 
-    testWidgets('tapping topic filters list via server API and active chip clears filter', (tester) async {
+    testWidgets('tapping topic filters list via server API and re-tapping clears filter', (tester) async {
       final feedBodies = <Map<String, dynamic>>[];
       LKApi.client = LKClient.forTesting(
         httpClient: MockClient((request) async {
@@ -515,14 +521,17 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(feedBodies.any((b) => b['topic_tag_id'] == 301), isTrue);
+      expect(find.byKey(const ValueKey('dynamic-topic-filter-button')), findsNothing);
       expect(find.byKey(const ValueKey('dynamic-active-topic-filter')), findsOneWidget);
+      expect(find.text('日番讨论'), findsOneWidget);
       expect(find.text('讨论新番的动态'), findsOneWidget);
       expect(find.text('讨论轻小说的动态'), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('dynamic-active-topic-filter')));
+      await tester.tap(find.text('# 日番讨论'));
       await tester.pumpAndSettle();
 
       expect(feedBodies.last.containsKey('topic_tag_id'), isFalse);
+      expect(find.byKey(const ValueKey('dynamic-topic-filter-button')), findsOneWidget);
       expect(find.byKey(const ValueKey('dynamic-active-topic-filter')), findsNothing);
       expect(find.text('讨论新番的动态'), findsOneWidget);
       expect(find.text('讨论轻小说的动态'), findsOneWidget);

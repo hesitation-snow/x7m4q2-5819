@@ -36,6 +36,7 @@ class _FakeSpeechHandler implements SpeechFilesHandler {
     List<File> files, {
     required String title,
     String? artist,
+    Uri? artUri,
     required int startIndex,
     required FutureOr<void> Function(int) onSegmentChanged,
     required FutureOr<void> Function() onCompleted,
@@ -107,6 +108,7 @@ Future<({Directory temp, ReaderSpeechSession session})>
     bookId: bookId,
     chapterId: chapterId,
     volumeId: 1,
+    coverUrl: 'https://example.com/adopted-cover.jpg',
     config: config,
     accountId: accountId,
   );
@@ -441,6 +443,43 @@ void main() {
     } finally {
       await session.stop();
       session.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      if (await started.temp.exists()) {
+        await started.temp.delete(recursive: true);
+      }
+    }
+  });
+
+  test('ListeningNow preserves coverUrl across adopt, updateCoverUrl, and take',
+      () async {
+    final started = await _startAndAdoptSession(
+      bookId: 1338,
+      chapterId: 317815,
+      accountId: 'guest',
+    );
+    try {
+      expect(
+        ListeningNow.instance.coverUrl,
+        'https://example.com/adopted-cover.jpg',
+      );
+      ListeningNow.instance.updateCoverUrl(
+        'https://example.com/updated-cover.jpg',
+        bookId: 1338,
+      );
+      expect(
+        ListeningNow.instance.coverUrl,
+        'https://example.com/updated-cover.jpg',
+      );
+      final transfer = ListeningNow.instance.take(
+        bookId: 1338,
+        chapterId: 317815,
+        accountId: 'guest',
+      );
+      expect(transfer?.coverUrl, 'https://example.com/updated-cover.jpg');
+      expect(ListeningNow.instance.coverUrl, isEmpty);
+    } finally {
+      await started.session.stop();
+      started.session.dispose();
       await Future<void>.delayed(const Duration(milliseconds: 40));
       if (await started.temp.exists()) {
         await started.temp.delete(recursive: true);

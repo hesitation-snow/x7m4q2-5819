@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -41,6 +42,7 @@ class _TestSpeechHandler implements SpeechFilesHandler {
     List<File> files, {
     required String title,
     String? artist,
+    Uri? artUri,
     required int startIndex,
     required FutureOr<void> Function(int) onSegmentChanged,
     required FutureOr<void> Function() onCompleted,
@@ -62,7 +64,7 @@ class _TestSpeechHandler implements SpeechFilesHandler {
 }
 
 Future<({Directory temp, ReaderSpeechSession session})>
-    _startListeningSession() async {
+    _startListeningSession({String coverUrl = ''}) async {
   final temp = await Directory.systemTemp.createTemp('yomiru_listening_dock_');
   final cache = SpeechAudioCache(
     temporaryDirectory: () async => temp,
@@ -106,6 +108,7 @@ Future<({Directory temp, ReaderSpeechSession session})>
     bookId: 1001,
     chapterId: 2001,
     volumeId: 10,
+    coverUrl: coverUrl,
   );
   // Let opportunistic segment prefetch and cache eviction settle before tests run.
   await Future<void>.delayed(const Duration(milliseconds: 60));
@@ -601,6 +604,66 @@ void main() {
         const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
         null,
       );
+      await _cleanupListeningSession(tester, temp);
+    }
+  });
+
+  testWidgets(
+      'ListeningDock renders circular book cover when coverUrl is set and falls back on empty or data saver',
+      (tester) async {
+    late Directory temp;
+    await tester.runAsync(() async {
+      final started = await _startListeningSession(
+        coverUrl: 'https://example.com/novel-cover.jpg',
+      );
+      temp = started.temp;
+    });
+    final oldDataSaver = LKStore.dataSaverMode.value;
+    const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(pathChannel, (_) async => temp.path);
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(useMaterial3: true),
+          home: const Scaffold(
+            body: Center(child: ListeningDock()),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final coverFinder = find.byKey(const ValueKey('listening-dock-cover'));
+      expect(coverFinder, findsOneWidget);
+      final coverImage = tester.widget<CachedNetworkImage>(coverFinder);
+      expect(coverImage.imageUrl, 'https://example.com/novel-cover.jpg');
+
+      LKStore.dataSaverMode.value = true;
+      await tester.pump();
+      expect(coverFinder, findsNothing);
+      expect(find.byIcon(Icons.headphones_rounded), findsOneWidget);
+
+      LKStore.dataSaverMode.value = false;
+      ListeningNow.instance.coverUrl = '';
+      ListeningNow.instance.adopt(
+        session: ListeningNow.instance.session!,
+        bookTitle: '败犬女主太多了！',
+        chapterTitle: '第一章',
+        bookId: 1001,
+        chapterId: 2001,
+        volumeId: 10,
+        coverUrl: '',
+      );
+      await tester.pump();
+      expect(coverFinder, findsNothing);
+      expect(find.byIcon(Icons.headphones_rounded), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      LKStore.dataSaverMode.value = oldDataSaver;
+      messenger.setMockMethodCallHandler(pathChannel, null);
       await _cleanupListeningSession(tester, temp);
     }
   });
