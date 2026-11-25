@@ -15,6 +15,7 @@ import '../api/models.dart';
 import '../services/avatar_cache.dart';
 import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
+import '../widgets/emoji_panel.dart';
 import '../widgets/emoji_text.dart';
 import 'media_viewer_page.dart';
 import 'user_profile_page.dart';
@@ -1437,7 +1438,7 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
                 color: Theme.of(context).colorScheme.surfaceContainer,
                 child: SafeArea(
                   top: false,
-                  child: _EmojiPanel(
+                  child: LkEmojiPanel(
                     groups: widget.emojiGroups,
                     onPick: _pickEmoji,
                   ),
@@ -1449,98 +1450,5 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
         ],
       ),
     );
-  }
-}
-
-/// 评论表情选择面板(分组页签 + 网格)
-class _EmojiPanel extends StatefulWidget {
-  final List<LKEmojiGroup> groups;
-  final void Function(String code) onPick;
-  const _EmojiPanel({required this.groups, required this.onPick});
-
-  @override
-  State<_EmojiPanel> createState() => _EmojiPanelState();
-}
-
-class _EmojiPanelState extends State<_EmojiPanel> {
-  int _tab = 0;
-
-  @override
-  Widget build(BuildContext context) {
-    final g = widget.groups[_tab];
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Column(children: [
-      SizedBox(
-        height: 44,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          itemCount: widget.groups.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 6),
-          itemBuilder: (_, i) {
-            final sel = i == _tab;
-            return GestureDetector(
-              onTap: () => setState(() => _tab = i),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: sel
-                      ? Theme.of(context).colorScheme.primary
-                      : (isDark
-                          ? const Color(0xFF2A2C33)
-                          : Colors.grey.shade100),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Text(
-                  widget.groups[i].name,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: sel ? Colors.white : Colors.grey.shade700,
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-      Expanded(
-        child: GridView.builder(
-          padding: const EdgeInsets.all(10),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 8,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-          ),
-          itemCount: g.items.length,
-          itemBuilder: (_, i) {
-            final it = g.items[i];
-            return InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => widget.onPick(it.code),
-              child: it.isImage
-                  ? CachedNetworkImage(
-                      fadeOutDuration: AppMotion.duration(context, 1000),
-                      fadeInDuration: AppMotion.duration(context, 500),
-                      imageUrl: it.url.replaceFirst(
-                          'api.lightnovel.fun/static/',
-                          'static.lightnovel.fun/'),
-                      width: 32,
-                      height: 32,
-                      memCacheWidth: imageCacheDimension(context, 32),
-                      fit: BoxFit.contain,
-                      errorWidget: (_, __, ___) => const Icon(
-                          Icons.broken_image_outlined,
-                          size: 20,
-                          color: Colors.grey),
-                    )
-                  : Center(
-                      child:
-                          Text(it.code, style: const TextStyle(fontSize: 22))),
-            );
-          },
-        ),
-      ),
-    ]);
   }
 }

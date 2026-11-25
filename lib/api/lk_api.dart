@@ -715,13 +715,15 @@ class LKApi {
       bool anonymous = false,
       String cursor = '',
       int page = 1,
-      int pageSize = 20}) async {
+      int pageSize = 20,
+      int topicTagId = 0}) async {
     final payload = <String, dynamic>{
       'tab': tab,
       'cursor': cursor,
       'page': page,
       'page_size': pageSize,
       'pageSize': pageSize,
+      if (topicTagId > 0) 'topic_tag_id': topicTagId,
     };
     final d = await client.post('/api/dynamic/get-feed-v1',
         anonymous ? payload : client.authed(payload));
@@ -737,13 +739,15 @@ class LKApi {
       bool anonymous = false,
       String cursor = '',
       int page = 1,
-      int pageSize = 20}) async {
+      int pageSize = 20,
+      int topicTagId = 0}) async {
     return (await dynamicFeedPage(
             tab: tab,
             anonymous: anonymous,
             cursor: cursor,
             page: page,
-            pageSize: pageSize))
+            pageSize: pageSize,
+            topicTagId: topicTagId))
         .items;
   }
 

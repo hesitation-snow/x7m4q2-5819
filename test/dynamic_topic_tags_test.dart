@@ -193,6 +193,23 @@ void main() {
         },
       ]);
     });
+
+    test('dynamicFeedPage sends topic_tag_id only when positive', () async {
+      final feedBodies = <Map<String, dynamic>>[];
+      LKApi.client = LKClient.forTesting(
+        httpClient: MockClient((request) async {
+          expect(request.url.path.endsWith('/api/dynamic/get-feed-v1'), isTrue);
+          feedBodies.add(jsonDecode(request.body) as Map<String, dynamic>);
+          return _jsonOk({'list': const [], 'has_more': false});
+        }),
+      );
+
+      await LKApi.dynamicFeedPage(tab: 'follow', anonymous: true);
+      expect(feedBodies.last.containsKey('topic_tag_id'), isFalse);
+
+      await LKApi.dynamicFeedPage(tab: 'follow', anonymous: true, topicTagId: 27);
+      expect(feedBodies.last['topic_tag_id'], 27);
+    });
   });
 
   group('DynamicPublishPage topic UI', () {
@@ -386,27 +403,108 @@ void main() {
       expect(find.textContaining('# '), findsOneWidget);
     });
 
-    testWidgets('tapping topic filters list and active chip clears filter', (tester) async {
+    testWidgets('top bar topic button opens picker, fetches server topic feed, and clears filter',
+        (tester) async {
+      final feedBodies = <Map<String, dynamic>>[];
       LKApi.client = LKClient.forTesting(
         httpClient: MockClient((request) async {
-          final data = request.url.path.endsWith('get-feed-v1')
-              ? {
-                  'list': [
-                    {
-                      'dynamic_id': 201,
-                      'summary': '讨论新番的动态',
-                      'topic_tags': [_topicJson(301, '日番讨论', status: null)],
-                    },
-                    {
-                      'dynamic_id': 202,
-                      'summary': '讨论轻小说的动态',
-                      'topic_tags': [_topicJson(302, '轻小说', status: null)],
-                    },
-                  ],
-                  'has_more': false,
-                }
-              : <String, dynamic>{};
-          return _jsonOk(data);
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          if (request.url.path.endsWith('/api/dynamic/get-topic-tags-v1')) {
+            final q = (body['q'] ?? '').toString();
+            final list = q == '吐槽'
+                ? [_topicJson(27, '吐槽', usageCount: 25)]
+                : [
+                    _topicJson(27, '吐槽', usageCount: 25),
+                    _topicJson(108, '这本轻小说真厉害2027', usageCount: 8),
+                  ];
+            return _jsonOk({'list': list});
+          }
+          if (request.url.path.endsWith('get-feed-v1')) {
+            feedBodies.add(body);
+            final topicId = body['topic_tag_id'];
+            if (topicId == 27) {
+              return _jsonOk({
+                'list': [
+                  {
+                    'dynamic_id': 4071,
+                    'summary': '服务端拉回的吐槽动态',
+                    'topic_tags': [_topicJson(27, '吐槽', status: null)],
+                  },
+                ],
+                'has_more': false,
+              });
+            }
+            return _jsonOk({
+              'list': [
+                {
+                  'dynamic_id': 100,
+                  'summary': '主广场默认动态',
+                  'topic_tags': const [],
+                },
+              ],
+              'has_more': false,
+            });
+          }
+          return _jsonOk({});
+        }),
+      );
+
+      await tester.pumpWidget(const MaterialApp(home: DynamicPage()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('主广场默认动态'), findsOneWidget);
+      expect(find.byKey(const ValueKey('dynamic-topic-filter-button')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('dynamic-topic-filter-button')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('topic-search-input')), '吐槽');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(ListTile, '# 吐槽'));
+      await tester.pumpAndSettle();
+
+      expect(feedBodies.any((b) => b['topic_tag_id'] == 27), isTrue);
+      expect(find.byKey(const ValueKey('dynamic-active-topic-filter')), findsOneWidget);
+      expect(find.text('服务端拉回的吐槽动态'), findsOneWidget);
+      expect(find.text('主广场默认动态'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('dynamic-active-topic-filter')));
+      await tester.pumpAndSettle();
+
+      expect(feedBodies.last.containsKey('topic_tag_id'), isFalse);
+      expect(find.byKey(const ValueKey('dynamic-active-topic-filter')), findsNothing);
+      expect(find.text('主广场默认动态'), findsOneWidget);
+    });
+
+    testWidgets('tapping topic filters list via server API and active chip clears filter', (tester) async {
+      final feedBodies = <Map<String, dynamic>>[];
+      LKApi.client = LKClient.forTesting(
+        httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('get-feed-v1')) {
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            feedBodies.add(body);
+            final topicId = body['topic_tag_id'];
+            return _jsonOk({
+              'list': [
+                if (topicId == null || topicId == 301)
+                  {
+                    'dynamic_id': 201,
+                    'summary': '讨论新番的动态',
+                    'topic_tags': [_topicJson(301, '日番讨论', status: null)],
+                  },
+                if (topicId == null)
+                  {
+                    'dynamic_id': 202,
+                    'summary': '讨论轻小说的动态',
+                    'topic_tags': [_topicJson(302, '轻小说', status: null)],
+                  },
+              ],
+              'has_more': false,
+            });
+          }
+          return _jsonOk({});
         }),
       );
 
@@ -416,6 +514,7 @@ void main() {
       await tester.tap(find.text('# 日番讨论'));
       await tester.pumpAndSettle();
 
+      expect(feedBodies.any((b) => b['topic_tag_id'] == 301), isTrue);
       expect(find.byKey(const ValueKey('dynamic-active-topic-filter')), findsOneWidget);
       expect(find.text('讨论新番的动态'), findsOneWidget);
       expect(find.text('讨论轻小说的动态'), findsNothing);
@@ -423,6 +522,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('dynamic-active-topic-filter')));
       await tester.pumpAndSettle();
 
+      expect(feedBodies.last.containsKey('topic_tag_id'), isFalse);
       expect(find.byKey(const ValueKey('dynamic-active-topic-filter')), findsNothing);
       expect(find.text('讨论新番的动态'), findsOneWidget);
       expect(find.text('讨论轻小说的动态'), findsOneWidget);
@@ -430,21 +530,27 @@ void main() {
 
     testWidgets('navigating to CommentsPage shows topic and tapping topic filters back on list',
         (tester) async {
+      final feedBodies = <Map<String, dynamic>>[];
       LKApi.client = LKClient.forTesting(
         httpClient: MockClient((request) async {
           if (request.url.path.endsWith('get-feed-v1')) {
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            feedBodies.add(body);
+            final topicId = body['topic_tag_id'];
             return _jsonOk({
               'list': [
-                {
-                  'dynamic_id': 301,
-                  'summary': '详情带话题的动态',
-                  'topic_tags': [_topicJson(401, '动画化', status: null)],
-                },
-                {
-                  'dynamic_id': 302,
-                  'summary': '另一条不相关的动态',
-                  'topic_tags': [_topicJson(402, '吐槽', status: null)],
-                },
+                if (topicId == null || topicId == 401)
+                  {
+                    'dynamic_id': 301,
+                    'summary': '详情带话题的动态',
+                    'topic_tags': [_topicJson(401, '动画化', status: null)],
+                  },
+                if (topicId == null)
+                  {
+                    'dynamic_id': 302,
+                    'summary': '另一条不相关的动态',
+                    'topic_tags': [_topicJson(402, '吐槽', status: null)],
+                  },
               ],
               'has_more': false,
             });

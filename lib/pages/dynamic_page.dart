@@ -18,6 +18,7 @@ import '../services/emoji_catalog.dart';
 import '../services/dynamic_like_state.dart';
 import '../widgets/common.dart';
 import '../widgets/emoji_text.dart';
+import '../widgets/topic_picker_sheet.dart';
 import 'book_detail_page.dart';
 import 'dynamic_publish_page.dart';
 import 'media_viewer_page.dart';
@@ -284,6 +285,7 @@ class _DynamicPageState extends State<DynamicPage> {
     if (append && (_loading || !_hasMore)) return;
     final requestSerial = ++_requestSerial;
     final feedTab = _feedTab;
+    final topicTagId = _topicFilter?.effectiveId ?? 0;
     final page = append ? _page + 1 : 1;
     final source = dynamicFeedSource(feedTab,
         loggedIn: LKClient.shared.session.isLoggedIn,
@@ -308,7 +310,8 @@ class _DynamicPageState extends State<DynamicPage> {
             anonymous: source.anonymous,
             cursor: cursor,
             page: number,
-            pageSize: 20);
+            pageSize: 20,
+            topicTagId: topicTagId);
         final newKeys = result.items.map(_dynamicKey).toSet();
         final repeated =
             !append && number > 1 && newKeys.difference(refreshKeys).isEmpty;
@@ -326,9 +329,15 @@ class _DynamicPageState extends State<DynamicPage> {
               loadPage: fetchPage,
               keyOf: _dynamicKey,
               targetItems: _items.length.clamp(0, 100),
-              isCurrent: () => mounted && requestSerial == _requestSerial,
+              isCurrent: () =>
+                  mounted &&
+                  requestSerial == _requestSerial &&
+                  topicTagId == (_topicFilter?.effectiveId ?? 0),
             );
-      if (!mounted || requestSerial != _requestSerial || feedTab != _feedTab) {
+      if (!mounted ||
+          requestSerial != _requestSerial ||
+          feedTab != _feedTab ||
+          topicTagId != (_topicFilter?.effectiveId ?? 0)) {
         return;
       }
       final medalUpdates = <int, List<LKMedal>>{};
@@ -367,7 +376,9 @@ class _DynamicPageState extends State<DynamicPage> {
       if (medalUpdates.isNotEmpty) {
         unawaited(LKStore.cacheGlobalMedals(medalUpdates));
       }
-      unawaited(LKStore.cacheDynamicPage(cacheKey, _items));
+      if (topicTagId == 0) {
+        unawaited(LKStore.cacheDynamicPage(cacheKey, _items));
+      }
     } catch (e) {
       if (mounted && requestSerial == _requestSerial) {
         setState(() {
@@ -400,39 +411,78 @@ class _DynamicPageState extends State<DynamicPage> {
       _rebuildVisibleItems();
     });
     _topBarFrac.value = 1.0;
-    unawaited(_startLoad());
+    unawaited(_topicFilter != null ? _load() : _startLoad());
   }
 
   void _switchContentFilter(String filter) {
     if (_contentFilter == filter) return;
+    final clearingTopic = filter == 'book' && _topicFilter != null;
+    if (clearingTopic) {
+      _requestSerial++;
+      setState(() {
+        _contentFilter = filter;
+        _topicFilter = null;
+        _items = [];
+        _visibleItems = const [];
+        _cursor = '';
+        _page = 1;
+        _hasMore = true;
+        _error = null;
+        _errorFromAppend = false;
+        _loading = false;
+        _showingCachedFeed = false;
+      });
+      _topBarFrac.value = 1.0;
+      unawaited(_startLoad());
+      return;
+    }
     setState(() {
       _contentFilter = filter;
-      if (filter == 'book') _topicFilter = null;
       _rebuildVisibleItems();
     });
     _topBarFrac.value = 1.0;
+  }
+
+  void _applyTopicFilter(LKTopicTag? next) {
+    final same = next == null
+        ? _topicFilter == null
+        : (_topicFilter != null && _topicFilter!.matches(next));
+    if (same) return;
+    _requestSerial++;
+    setState(() {
+      _topicFilter = next;
+      if (next != null) _contentFilter = 'all';
+      _items = [];
+      _visibleItems = const [];
+      _cursor = '';
+      _page = 1;
+      _hasMore = true;
+      _error = null;
+      _errorFromAppend = false;
+      _loading = false;
+      _showingCachedFeed = false;
+    });
+    _topBarFrac.value = 1.0;
+    unawaited(next == null ? _startLoad() : _load());
   }
 
   void _toggleTopicFilter(LKTopicTag tag) {
-    setState(() {
-      if (_topicFilter != null && _topicFilter!.matches(tag)) {
-        _topicFilter = null;
-      } else {
-        _topicFilter = tag;
-        _contentFilter = 'all';
-      }
-      _rebuildVisibleItems();
-    });
-    _topBarFrac.value = 1.0;
+    final clearing = _topicFilter != null && _topicFilter!.matches(tag);
+    _applyTopicFilter(clearing ? null : tag);
   }
 
-  void _selectTopicFilter(LKTopicTag tag) {
-    setState(() {
-      _topicFilter = tag;
-      _contentFilter = 'all';
-      _rebuildVisibleItems();
-    });
-    _topBarFrac.value = 1.0;
+  void _selectTopicFilter(LKTopicTag tag) => _applyTopicFilter(tag);
+
+  Future<void> _openTopicFilterSheet() async {
+    final picked = await showTopicPickerSheet(
+      context,
+      initialTopics: LKApi.cachedTopicTags,
+      selectedTopic: _topicFilter,
+      title: '按话题筛选',
+    );
+    if (picked != null && mounted) {
+      _toggleTopicFilter(picked);
+    }
   }
 
   void _showRefreshError() {
@@ -507,6 +557,14 @@ class _DynamicPageState extends State<DynamicPage> {
               selected: _contentFilter == 'book',
               onTap: () => _switchContentFilter(
                   _contentFilter == 'book' ? 'all' : 'book'),
+            ),
+            const SizedBox(width: 8),
+            M3ChoiceChip(
+              key: const ValueKey('dynamic-topic-filter-button'),
+              icon: Icons.tag_rounded,
+              label: '话题',
+              selected: false,
+              onSelected: (_) => _openTopicFilterSheet(),
             ),
             if (activeTopic != null) ...[
               const SizedBox(width: 8),
@@ -779,7 +837,7 @@ class _DynamicPageState extends State<DynamicPage> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    '已加载动态中暂无 # ${_topicFilter!.name} 相关内容',
+                                    '# ${_topicFilter!.name} 暂无相关动态',
                                     style: const TextStyle(color: Colors.grey),
                                   ),
                                   const SizedBox(height: 10),
@@ -787,15 +845,14 @@ class _DynamicPageState extends State<DynamicPage> {
                                     spacing: 8,
                                     children: [
                                       TextButton(
+                                        onPressed: _openTopicFilterSheet,
+                                        child: const Text('切换话题'),
+                                      ),
+                                      TextButton(
                                         onPressed: () =>
                                             _toggleTopicFilter(_topicFilter!),
                                         child: const Text('清除话题筛选'),
                                       ),
-                                      if (_hasMore)
-                                        TextButton(
-                                          onPressed: () => _load(append: true),
-                                          child: const Text('加载更多'),
-                                        ),
                                     ],
                                   ),
                                 ],

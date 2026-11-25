@@ -18,6 +18,7 @@ import 'package:yomiru/pages/home_channel_picker.dart';
 import 'package:yomiru/pages/home_page.dart';
 import 'package:yomiru/pages/search_page.dart';
 import 'package:yomiru/pages/welfare_page.dart';
+import 'package:yomiru/widgets/emoji_panel.dart';
 import 'package:yomiru/widgets/m3_controls.dart';
 import 'package:yomiru/widgets/m3_menu_sheet.dart';
 
@@ -143,7 +144,8 @@ void main() {
     testWidgets('dynamic shared chips remain independent toggles $brightness',
         (tester) async {
       await _pumpPage(tester, const DynamicPage(), brightness);
-      expect(find.byType(M3ChoiceChip), findsNWidgets(2));
+      expect(find.byType(M3ChoiceChip), findsNWidgets(3));
+      expect(_chip('话题'), findsOneWidget);
       await tester.tap(_chip('关注'));
       await tester.pumpAndSettle();
       await tester.tap(_chip('仅作品'));
@@ -183,20 +185,22 @@ void main() {
     });
 
     testWidgets(
-        'emoji sheet shares chrome and close preserves draft $brightness',
+        'inline emoji panel toggles cleanly and preserves draft $brightness',
         (tester) async {
       await _pumpPage(tester, const DynamicPublishPage(), brightness);
       await tester.enterText(find.byType(TextField), '保留的草稿');
       await tester.ensureVisible(find.text('表情'));
       await tester.tap(find.text('表情'));
       await tester.pumpAndSettle();
-      expect(find.byType(M3MenuSheet), findsOneWidget);
-      expect(find.text('选择表情'), findsOneWidget);
-      expect(find.byTooltip('关闭'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await tester.tap(find.byTooltip('关闭'));
-      await tester.pumpAndSettle();
+      expect(find.byType(LkEmojiPanel), findsOneWidget);
       expect(find.byType(M3MenuSheet), findsNothing);
+      expect(find.text('测试表情组'), findsOneWidget);
+      expect(find.text('键盘'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('键盘'));
+      await tester.pumpAndSettle();
+      expect(find.byType(LkEmojiPanel), findsNothing);
+      expect(find.text('表情'), findsOneWidget);
       expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
           '保留的草稿');
     });
