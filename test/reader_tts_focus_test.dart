@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,9 +11,12 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/api/lk_api.dart';
 import 'package:yomiru/api/lk_client.dart';
+import 'package:yomiru/api/models.dart';
 import 'package:yomiru/api/reader_cache.dart';
 import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/reader_page.dart';
+import 'package:yomiru/reader/reader_tts_resume.dart';
+import 'package:yomiru/reader/reading_position.dart';
 import 'package:yomiru/reader/scroll_layout_index.dart';
 import 'package:yomiru/services/app_motion.dart';
 import 'package:yomiru/services/reader_volume_keys.dart';
@@ -481,6 +485,338 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await tester.runAsync(ReaderContentCache.clear);
+      LKApi.client = LKClient.shared;
+      LKStore.animationsEnabled.value = true;
+      messenger.setMockMethodCallHandler(pathChannel, null);
+      messenger.setMockMethodCallHandler(ReaderVolumeKeys.channel, null);
+      messenger.setMockMessageHandler(wakeChannel, null);
+      messenger.setMockMethodCallHandler(ttsChannel, null);
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+      debugDefaultTargetPlatformOverride = null;
+      await tester.runAsync(() async {
+        for (var attempt = 0;; attempt++) {
+          try {
+            if (await root!.exists()) await root!.delete(recursive: true);
+            break;
+          } on FileSystemException catch (error) {
+            if (error.osError?.errorCode != 32 || attempt >= 5) rethrow;
+            await Future<void>.delayed(const Duration(milliseconds: 40));
+          }
+        }
+      });
+    }
+  });
+
+  testWidgets(
+      'autoStartTts ignores stale resume and keeps playing when background cache refresh has same speakable text',
+      (tester) async {
+    const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
+    const wakeChannel =
+        'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle';
+    const ttsChannel = MethodChannel('moe.yutro.yomiru/tts');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final ttsMethods = <String>[];
+    final spokenTexts = <String>[];
+    String? lastUtteranceId;
+    final networkRelease = Completer<void>();
+
+    Directory? root;
+    await tester.runAsync(() async {
+      root = await Directory.systemTemp.createTemp('yomiru_auto_tts_same_');
+    });
+
+    messenger.setMockMethodCallHandler(pathChannel, (_) async => root!.path);
+    messenger.setMockMessageHandler(wakeChannel,
+        (_) async => const StandardMessageCodec().encodeMessage([null]));
+    messenger.setMockMethodCallHandler(
+        ReaderVolumeKeys.channel, (_) async => null);
+    messenger.setMockMethodCallHandler(ttsChannel, (call) async {
+      ttsMethods.add(call.method);
+      if (call.method == 'getEngines') {
+        return [
+          {'name': 'test.engine', 'label': '测试引擎', 'isSystem': true}
+        ];
+      }
+      if (call.method == 'getVoices') {
+        return [
+          {'id': 'zh-CN-test', 'name': '测试中文', 'locale': 'zh-CN'}
+        ];
+      }
+      if (call.method == 'setLanguage') return {'available': true};
+      if (call.method == 'setVoice' || call.method == 'setSpeechRate') {
+        return true;
+      }
+      if (call.method == 'speak') {
+        final args = call.arguments as Map;
+        spokenTexts.add(args['text'] as String);
+        lastUtteranceId = args['utteranceId'] as String?;
+        return {'accepted': true, 'utteranceId': lastUtteranceId};
+      }
+      return null;
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'r_paged': false,
+      'r_vol_turn': false,
+    });
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    LKStore.animationsEnabled.value = false;
+    LKClient.shared.session.clear();
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      final data = <String, dynamic>{};
+      if (request.url.path.endsWith('/get-chapter-detail')) {
+        await networkRelease.future;
+        data.addAll({
+          'chapter_id': 318001,
+          'volume_id': 1,
+          'chapter_no': 2,
+          'title': 'Next chapter fixture',
+          'body_snapshot': {
+            'body_html':
+                '<p data-v="2">第0段：自动下一章开篇句。</p><p>第1段：自动下一章第二句。</p>',
+          },
+        });
+      }
+      return http.Response(jsonEncode({'code': 0, 'data': data}), 200,
+          headers: {'content-type': 'application/json'});
+    }));
+
+    try {
+      await tester.runAsync(() async {
+        await ReaderContentCache.clear();
+        await ReaderContentCache.write(
+          1338,
+          LKChapterDetail(
+            chapterId: 318001,
+            chapterNo: 2,
+            volumeId: 1,
+            title: 'Next chapter fixture',
+            bodyHtml:
+                '<p data-v="1">第0段：自动下一章开篇句。</p><p>第1段：自动下一章第二句。</p>',
+          ),
+          ownerUid: 0,
+        );
+        await ReaderTtsResumeStore.save(
+          accountId: 'guest',
+          bookId: 1338,
+          chapterId: 318001,
+          position: const ReadingPosition.text(blockIndex: 1, offset: 0),
+        );
+        await ReaderPrefs.setReadPosFrac(318001, 0.99);
+        await ReaderPrefs.setPosition(
+          318001,
+          const ReadingPosition.text(blockIndex: 1, offset: 0),
+        );
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [readerRouteObserver],
+          theme: ThemeData(pageTransitionsTheme: AppMotion.noPageTransitions),
+          home: const ReaderPage(
+            bookId: 1338,
+            bookTitle: 'fixture',
+            chapterId: 318001,
+            chapterTitle: 'Next chapter fixture',
+            volumeId: 1,
+            autoStartTts: true,
+            initialTtsSource: 'system',
+          ),
+        ),
+      );
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)));
+      }
+
+      expect(spokenTexts, ['第0段：自动下一章开篇句。']);
+      final speakCallIdx = ttsMethods.lastIndexOf('speak');
+      expect(speakCallIdx, greaterThanOrEqualTo(0));
+
+      // Network refresh finishes after playback started with updated image URL only.
+      networkRelease.complete();
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)));
+      }
+
+      // Playback must NOT be stopped when speakable blocks are identical.
+      expect(ttsMethods.sublist(speakCallIdx + 1), isNot(contains('stop')));
+
+      final firstUtteranceId = lastUtteranceId!;
+      await tester.runAsync(() async {
+        await messenger.handlePlatformMessage(
+          ttsChannel.name,
+          ttsChannel.codec.encodeMethodCall(
+            MethodCall('onComplete', {'utteranceId': firstUtteranceId}),
+          ),
+          (_) {},
+        );
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(spokenTexts, ['第0段：自动下一章开篇句。', '第1段：自动下一章第二句。']);
+      expect(tester.takeException(), isNull);
+    } finally {
+      if (!networkRelease.isCompleted) networkRelease.complete();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await tester.runAsync(ReaderContentCache.clear);
+      LKApi.client = LKClient.shared;
+      LKStore.animationsEnabled.value = true;
+      messenger.setMockMethodCallHandler(pathChannel, null);
+      messenger.setMockMethodCallHandler(ReaderVolumeKeys.channel, null);
+      messenger.setMockMessageHandler(wakeChannel, null);
+      messenger.setMockMethodCallHandler(ttsChannel, null);
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+      debugDefaultTargetPlatformOverride = null;
+      await tester.runAsync(() async {
+        for (var attempt = 0;; attempt++) {
+          try {
+            if (await root!.exists()) await root!.delete(recursive: true);
+            break;
+          } on FileSystemException catch (error) {
+            if (error.osError?.errorCode != 32 || attempt >= 5) rethrow;
+            await Future<void>.delayed(const Duration(milliseconds: 40));
+          }
+        }
+      });
+    }
+  });
+
+  testWidgets(
+      'autoStartTts restarts cleanly when background cache refresh changes speakable text',
+      (tester) async {
+    const pathChannel = MethodChannel('plugins.flutter.io/path_provider');
+    const wakeChannel =
+        'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle';
+    const ttsChannel = MethodChannel('moe.yutro.yomiru/tts');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final spokenTexts = <String>[];
+    final networkRelease = Completer<void>();
+
+    Directory? root;
+    await tester.runAsync(() async {
+      root = await Directory.systemTemp.createTemp('yomiru_auto_tts_diff_');
+    });
+
+    messenger.setMockMethodCallHandler(pathChannel, (_) async => root!.path);
+    messenger.setMockMessageHandler(wakeChannel,
+        (_) async => const StandardMessageCodec().encodeMessage([null]));
+    messenger.setMockMethodCallHandler(
+        ReaderVolumeKeys.channel, (_) async => null);
+    messenger.setMockMethodCallHandler(ttsChannel, (call) async {
+      if (call.method == 'getEngines') {
+        return [
+          {'name': 'test.engine', 'label': '测试引擎', 'isSystem': true}
+        ];
+      }
+      if (call.method == 'getVoices') {
+        return [
+          {'id': 'zh-CN-test', 'name': '测试中文', 'locale': 'zh-CN'}
+        ];
+      }
+      if (call.method == 'setLanguage') return {'available': true};
+      if (call.method == 'setVoice' || call.method == 'setSpeechRate') {
+        return true;
+      }
+      if (call.method == 'speak') {
+        final args = call.arguments as Map;
+        spokenTexts.add(args['text'] as String);
+        return {'accepted': true, 'utteranceId': args['utteranceId']};
+      }
+      return null;
+    });
+
+    SharedPreferences.setMockInitialValues({
+      'r_paged': false,
+      'r_vol_turn': false,
+    });
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    LKStore.animationsEnabled.value = false;
+    LKClient.shared.session.clear();
+    LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+      final data = <String, dynamic>{};
+      if (request.url.path.endsWith('/get-chapter-detail')) {
+        await networkRelease.future;
+        data.addAll({
+          'chapter_id': 318002,
+          'volume_id': 1,
+          'chapter_no': 2,
+          'title': 'Updated chapter fixture',
+          'body_snapshot': {
+            'body_html': '<p>新版第一段内容。</p><p>新版第二段内容。</p>',
+          },
+        });
+      }
+      return http.Response(jsonEncode({'code': 0, 'data': data}), 200,
+          headers: {'content-type': 'application/json'});
+    }));
+
+    try {
+      await tester.runAsync(() async {
+        await ReaderContentCache.clear();
+        await ReaderContentCache.write(
+          1338,
+          LKChapterDetail(
+            chapterId: 318002,
+            chapterNo: 2,
+            volumeId: 1,
+            title: 'Updated chapter fixture',
+            bodyHtml: '<p>旧版第一段内容。</p><p>旧版第二段内容。</p>',
+          ),
+          ownerUid: 0,
+        );
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [readerRouteObserver],
+          theme: ThemeData(pageTransitionsTheme: AppMotion.noPageTransitions),
+          home: const ReaderPage(
+            bookId: 1338,
+            bookTitle: 'fixture',
+            chapterId: 318002,
+            chapterTitle: 'Updated chapter fixture',
+            volumeId: 1,
+            autoStartTts: true,
+            initialTtsSource: 'system',
+          ),
+        ),
+      );
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)));
+      }
+
+      expect(spokenTexts, ['旧版第一段内容。']);
+
+      networkRelease.complete();
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)));
+      }
+
+      expect(spokenTexts, ['旧版第一段内容。', '新版第一段内容。']);
+      expect(tester.takeException(), isNull);
+    } finally {
+      if (!networkRelease.isCompleted) networkRelease.complete();
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
       await tester.runAsync(ReaderContentCache.clear);

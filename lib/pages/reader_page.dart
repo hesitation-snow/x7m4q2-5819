@@ -982,8 +982,23 @@ class _ReaderPageState extends State<ReaderPage>
     return layout.scrollOffsetForItem(index, localOffset: localOffset);
   }
 
+  static bool _sameSpeakableBlocks(List<_BodyBlock> a, List<_BodyBlock> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final left = a[i];
+      final right = b[i];
+      if (left.isDivider != right.isDivider ||
+          (left.image != null) != (right.image != null) ||
+          left.text != right.text) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   void _applyBlocks(List<_BodyBlock> blocks) {
-    if (!identical(blocks, _blocks)) {
+    if (!_sameSpeakableBlocks(_blocks, blocks)) {
       _ttsContentRevision++;
       unawaited(_disposeSpeechSession());
       if (_ttsController.status == TtsPlaybackStatus.playing ||
@@ -1891,6 +1906,9 @@ class _ReaderPageState extends State<ReaderPage>
     final savedPosition = localState[0] as ReadingPosition?;
     final savedFrac = localState[1] as double;
     final restore = (savedFrac > 0.02 && savedFrac < 0.98) ? savedFrac : 0.0;
+    final effectiveSavedPosition =
+        (widget.autoStartTts || savedFrac >= 0.98) ? null : savedPosition;
+    final effectiveRestore = widget.autoStartTts ? 0.0 : restore;
 
     // 先展示本机已经读过的正文,避免每次打开都等待网络。
     final cached = localState[2] as LKChapterDetail?;
@@ -1902,9 +1920,9 @@ class _ReaderPageState extends State<ReaderPage>
     }
     if (cached != null) {
       await _renderDetail(cached,
-          restore: restore,
+          restore: effectiveRestore,
           restorePosition: true,
-          savedPosition: _backgroundListeningAnchor() ?? savedPosition);
+          savedPosition: _backgroundListeningAnchor() ?? effectiveSavedPosition);
       if (!mounted || loadSerial != _loadSerial) return;
       if (_readerCacheOwnerUid != cacheOwnerUid ||
           ReaderContentCache.generation != cacheGeneration) {
@@ -1917,19 +1935,19 @@ class _ReaderPageState extends State<ReaderPage>
       _startAutoTtsIfNeeded();
 
       // 缓存只负责快速展示,仍在后台向服务端刷新,防止正文过期。
-      unawaited(_refreshFromNetwork(restore,
+      unawaited(_refreshFromNetwork(effectiveRestore,
           cacheOwnerUid: cacheOwnerUid,
           cacheGeneration: cacheGeneration,
-          savedPosition: savedPosition));
+          savedPosition: effectiveSavedPosition));
       return;
     }
 
     // 没有缓存时保持原来的在线加载流程。
-    await _refreshFromNetwork(restore,
+    await _refreshFromNetwork(effectiveRestore,
         initialLoad: true,
         cacheOwnerUid: cacheOwnerUid,
         cacheGeneration: cacheGeneration,
-        savedPosition: savedPosition);
+        savedPosition: effectiveSavedPosition);
   }
 
   Future<void> _refreshFromNetwork(double restore,
@@ -1952,6 +1970,15 @@ class _ReaderPageState extends State<ReaderPage>
         return;
       }
       final old = _detail;
+      final activeSpeechBlock = _speechSession?.currentSegment?.blockIndex ??
+          _ttsController.currentSegment?.blockIndex;
+      final shouldResumeSpeech = !initialLoad &&
+          (_speechStarting ||
+              (_speechSession != null &&
+                  !_speechSession!.isStopped &&
+                  !_speechSession!.isPaused) ||
+              (_speechSession == null &&
+                  _ttsController.status == TtsPlaybackStatus.playing));
       if (old == null || !old.hasSameContent(d)) {
         // 首次在线加载恢复上次进度;缓存刷新时不打断用户当前阅读位置。
         await _renderDetail(d,
@@ -1966,6 +1993,16 @@ class _ReaderPageState extends State<ReaderPage>
       }
       if (!mounted) return;
       setState(() => _loading = false);
+      if (shouldResumeSpeech &&
+          !_speechStarting &&
+          _speechSession == null &&
+          _ttsController.status != TtsPlaybackStatus.playing &&
+          _blocks.isNotEmpty) {
+        final resumeBlock = activeSpeechBlock != null
+            ? activeSpeechBlock.clamp(0, _blocks.length - 1)
+            : 0;
+        unawaited(_startSpeechSession(startBlock: resumeBlock));
+      }
       if (initialLoad) {
         _reclaimBackgroundSpeechIfNeeded();
         _startAutoTtsIfNeeded();
@@ -2061,7 +2098,9 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   void _updateDetailState(LKChapterDetail d, {List<_BodyBlock>? blocks}) {
-    if (_detail != null && (_locked != d.locked || _unlocked != d.unlocked)) {
+    final wasLockedBody = _locked && !_unlocked;
+    final isLockedBody = d.locked && !d.unlocked;
+    if (_detail != null && wasLockedBody != isLockedBody) {
       _ttsContentRevision++;
       unawaited(_disposeSpeechSession());
       if (_ttsController.status == TtsPlaybackStatus.playing ||
@@ -2626,10 +2665,14 @@ class _ReaderPageState extends State<ReaderPage>
     _resetExitConfirmation();
     _ttsContentRevision++;
     _refreshTtsSheet();
-    unawaited(_disposeSpeechSession());
+    try {
+      await _disposeSpeechSession();
+    } catch (_) {}
     if (_ttsController.status == TtsPlaybackStatus.playing ||
         _ttsController.status == TtsPlaybackStatus.paused) {
-      unawaited(_ttsController.stop());
+      try {
+        await _ttsController.stop();
+      } catch (_) {}
     }
     try {
       await _finishReadingSession();
@@ -2941,7 +2984,8 @@ class _ReaderPageState extends State<ReaderPage>
       return;
     }
     _autoTtsStarted = true;
-    unawaited(_loadTtsPreferences().then((_) => _startSpeechSession()));
+    unawaited(
+        _loadTtsPreferences().then((_) => _startSpeechSession(startBlock: 0)));
   }
 
   bool _savingOwnTtsPrefs = false;
