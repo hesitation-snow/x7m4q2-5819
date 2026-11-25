@@ -4,10 +4,15 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yomiru/pages/reader_page.dart';
+import 'package:yomiru/reader/reader_language_segments.dart'
+    show PlaybackSleepTimer;
 import 'package:yomiru/reader/reader_speech_session.dart';
 import 'package:yomiru/reader/reader_tts_core.dart';
+import 'package:yomiru/reader/reader_tts_resume.dart';
 import 'package:yomiru/services/listening_now.dart';
+import 'package:yomiru/services/reader_tts_preferences.dart';
 
 import 'reader_controls_test.dart' as fixture;
 
@@ -386,6 +391,60 @@ void main() {
       );
     } finally {
       await _cleanupAdopted(tester, session, temp);
+    }
+  });
+
+  test('ListeningNow persists background resume progress and applies updated preferences',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    final started = await _startAndAdoptSession(
+      bookId: 1338,
+      chapterId: 317815,
+      accountId: 'uid:42',
+    );
+    final session = started.session;
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      var saved = await ReaderTtsResumeStore.read(
+        accountId: 'uid:42',
+        bookId: 1338,
+        chapterId: 317815,
+      );
+      expect(saved?.blockIndex, 20);
+
+      await session.next();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      saved = await ReaderTtsResumeStore.read(
+        accountId: 'uid:42',
+        bookId: 1338,
+        chapterId: 317815,
+      );
+      expect(saved?.blockIndex, 35);
+
+      await ReaderTtsPreferences.save(
+        const ReaderTtsPreferences(
+          sourceMode: 'online',
+          rate: 1.5,
+          segmentInterval: Duration(milliseconds: 250),
+          sleepTimer: PlaybackSleepTimer.minutes30,
+          edgeVoiceByLanguage: {'chinese': 'zh-CN-YunxiNeural'},
+        ),
+        accountKey: 'uid:42',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(session.segmentInterval, const Duration(milliseconds: 250));
+      expect(session.sleepTimer, PlaybackSleepTimer.minutes30);
+      final edgeVoices =
+          ListeningNow.instance.config?.options['voiceByLanguage'] as Map?;
+      expect(edgeVoices?['chinese'], 'zh-CN-YunxiNeural');
+    } finally {
+      await session.stop();
+      session.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      if (await started.temp.exists()) {
+        await started.temp.delete(recursive: true);
+      }
     }
   });
 }

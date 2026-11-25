@@ -6,7 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart' as ja;
 import 'package:path_provider/path_provider.dart';
 
-import '../reader/reader_speech_session.dart' show SpeechFilesHandler;
+import '../reader/reader_speech_session.dart'
+    show SeamlessSpeechFilesHandler;
 
 /// Shared application media session, initialized once from main.dart.
 ReaderAudioHandler? activeReaderAudioHandler;
@@ -37,12 +38,19 @@ class TtsMediaCallbacks {
 /// Call [playBytes] for each synthesized in-memory MP3/WAV segment and use
 /// [updateSpeechStatus] to keep OS media surfaces in sync with TTS progress.
 class ReaderAudioHandler extends BaseAudioHandler
-    implements SpeechFilesHandler {
+    implements SeamlessSpeechFilesHandler {
   ReaderAudioHandler({
     ReaderAudioPlayer? player,
     Future<Directory> Function()? temporaryDirectory,
     @visibleForTesting bool configureAudioSession = true,
-  })  : _player = player ?? JustAudioReaderPlayer(ja.AudioPlayer()),
+  })  : _player = player ??
+            JustAudioReaderPlayer(
+              ja.AudioPlayer(
+                handleInterruptions: false,
+                handleAudioSessionActivation: false,
+                androidApplyAudioAttributes: true,
+              ),
+            ),
         _temporaryDirectory = temporaryDirectory ?? getTemporaryDirectory,
         _configureSession = configureAudioSession {
     _subscriptions.addAll([
@@ -70,6 +78,7 @@ class ReaderAudioHandler extends BaseAudioHandler
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   bool _sessionConfigured = false;
   bool _sessionActive = false;
+  bool _continuousSessionPlaying = false;
   List<File> _files = const [];
   List<MediaItem> _items = const [];
   bool _disposed = false;
@@ -181,7 +190,19 @@ class ReaderAudioHandler extends BaseAudioHandler
     if (_speechSessionOwnerKey != ownerKey) return false;
     _speechSessionOwnerKey = null;
     _speechSessionCallbacks = null;
+    _continuousSessionPlaying = false;
     return true;
+  }
+
+  @override
+  Future<void> prepareSegmentTransition() async {
+    if (_disposed) return;
+    ++_sourceGeneration;
+    ++_controlRevision;
+    _loadingSource = true;
+    _completionSent = true;
+    _onQueueCompleted = null;
+    await _player.pause();
   }
 
   Object? get ttsOwnerKey => _ttsOwnerKey;
@@ -223,7 +244,9 @@ class ReaderAudioHandler extends BaseAudioHandler
     }
     _ttsOwnerKey = null;
     _ttsOwnerCallbacks = null;
+    _continuousSessionPlaying = _speechSessionOwnerKey != null;
     _reportedPosition = Duration.zero;
+    _playerDuration = null;
     _files = List<File>.unmodifiable(files);
     _items = List<MediaItem>.generate(
       files.length,
@@ -233,6 +256,8 @@ class ReaderAudioHandler extends BaseAudioHandler
             files.length == 1 ? title : '$title (${index + 1}/${files.length})',
         artist: artist,
         album: title,
+        displayTitle: title,
+        displaySubtitle: artist,
         playable: true,
         extras: <String, Object?>{'segmentIndex': index},
       ),
@@ -249,16 +274,21 @@ class ReaderAudioHandler extends BaseAudioHandler
     queueTitle.add(title);
     mediaItem.add(_items[startIndex]);
     try {
-      await _activateSession();
+      await _activateSession(force: true);
       if (_disposed || generation != _sourceGeneration) return;
+      if (_continuousSessionPlaying && controlRevision == _controlRevision) {
+        _status = '播放中';
+        _publishState(processingState: AudioProcessingState.ready);
+      }
       await _player.setFiles(_files, initialIndex: startIndex);
       if (_disposed || generation != _sourceGeneration) return;
       await _player.setSpeed(_playbackRate);
       _loadingSource = false;
       _completionSent = false;
       final current = mediaItem.valueOrNull;
-      if (current != null) {
-        mediaItem.add(current.copyWith(duration: _playerDuration));
+      final duration = _playerDuration;
+      if (current != null && duration != null) {
+        mediaItem.add(current.copyWith(duration: duration));
       }
       await onSegmentChanged(startIndex);
       if (_disposed ||
@@ -270,6 +300,9 @@ class ReaderAudioHandler extends BaseAudioHandler
     } catch (error) {
       if (!_disposed && generation == _sourceGeneration) {
         _loadingSource = false;
+        _continuousSessionPlaying = false;
+        _status = '播放失败';
+        _publishState(processingState: AudioProcessingState.error);
         rethrow;
       }
     }
@@ -313,6 +346,7 @@ class ReaderAudioHandler extends BaseAudioHandler
   }
 
   Future<void> _stopLocalPlayer() async {
+    _continuousSessionPlaying = false;
     await _player.stop();
     _status = '已停止';
     _reportedPosition = Duration.zero;
@@ -339,7 +373,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     ));
   }
 
-  Future<void> _activateSession() async {
+  Future<void> _activateSession({bool force = false}) async {
     if (!_configureSession || _disposed) return;
     final session = await AudioSession.instance;
     if (!_sessionConfigured) {
@@ -349,6 +383,7 @@ class ReaderAudioHandler extends BaseAudioHandler
       _subscriptions.add(
         session.interruptionEventStream.listen((event) {
           if (event.begin && !_disposed) {
+            _sessionActive = false;
             unawaited(pause());
           }
         }),
@@ -361,7 +396,7 @@ class ReaderAudioHandler extends BaseAudioHandler
         }),
       );
     }
-    if (!_sessionActive) {
+    if (force || !_sessionActive) {
       _sessionActive = await session.setActive(true);
     }
   }
@@ -403,6 +438,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     _ttsOwnerCallbacks = null;
     _speechSessionOwnerKey = null;
     _speechSessionCallbacks = null;
+    _continuousSessionPlaying = false;
     _files = const [];
     _items = const [];
     _onSegmentChanged = null;
@@ -440,7 +476,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     final previous = _previewFile;
     _previewFile = file;
     try {
-      await _activateSession();
+      await _activateSession(force: true);
       if (_disposed || generation != _sourceGeneration) return;
       await _player.setSource(ja.AudioSource.file(file.path));
       if (_disposed || generation != _sourceGeneration) return;
@@ -518,7 +554,10 @@ class ReaderAudioHandler extends BaseAudioHandler
         revision != _controlRevision) {
       return;
     }
-    await _activateSession();
+    if (_speechSessionOwnerKey != null) {
+      _continuousSessionPlaying = true;
+    }
+    await _activateSession(force: true);
     if (_disposed ||
         generation != _sourceGeneration ||
         revision != _controlRevision) {
@@ -528,6 +567,7 @@ class ReaderAudioHandler extends BaseAudioHandler
       if (!_disposed &&
           generation == _sourceGeneration &&
           revision == _controlRevision) {
+        _continuousSessionPlaying = false;
         _status = '播放失败';
         _speechSessionCallbacks?.onError?.call(error);
         _publishState(processingState: AudioProcessingState.error);
@@ -541,6 +581,7 @@ class ReaderAudioHandler extends BaseAudioHandler
   Future<void> pause() async {
     if (_disposed) return;
     ++_controlRevision;
+    _continuousSessionPlaying = false;
     final ownerCallback = _ttsOwnerCallbacks?.onPause;
     if (ownerCallback != null) {
       await _invokeOwner(ownerCallback);
@@ -559,6 +600,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     if (_disposed) return;
     ++_sourceGeneration;
     ++_controlRevision;
+    _continuousSessionPlaying = false;
     _loadingSource = false;
     _completionSent = true;
     _onQueueCompleted = null;
@@ -631,6 +673,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     _ttsOwnerCallbacks = null;
     _speechSessionOwnerKey = null;
     _speechSessionCallbacks = null;
+    _continuousSessionPlaying = false;
     for (final subscription in _subscriptions) {
       await subscription.cancel();
     }
@@ -684,7 +727,7 @@ class ReaderAudioHandler extends BaseAudioHandler
     final effectivePosition = currentPosition > _reportedPosition
         ? currentPosition
         : _reportedPosition;
-    final processing = processingState ??
+    final rawProcessing = processingState ??
         (externalTts
             ? _externalTtsProcessingState
             : switch (_player.processingState) {
@@ -694,12 +737,26 @@ class ReaderAudioHandler extends BaseAudioHandler
                 ja.ProcessingState.ready => AudioProcessingState.ready,
                 ja.ProcessingState.completed => AudioProcessingState.completed,
               });
+    final keepPlaying = !externalTts &&
+        _continuousSessionPlaying &&
+        processingState != AudioProcessingState.idle &&
+        processingState != AudioProcessingState.error;
+    final processing = keepPlaying &&
+            (_loadingSource ||
+                rawProcessing == AudioProcessingState.idle ||
+                rawProcessing == AudioProcessingState.loading ||
+                rawProcessing == AudioProcessingState.buffering ||
+                rawProcessing == AudioProcessingState.completed)
+        ? AudioProcessingState.ready
+        : rawProcessing;
     final playing = externalTts
         ? _externalTtsPlaying
-        : _player.playing &&
-            processing != AudioProcessingState.completed &&
-            processing != AudioProcessingState.idle &&
-            processing != AudioProcessingState.error;
+        : keepPlaying
+            ? true
+            : _player.playing &&
+                processing != AudioProcessingState.completed &&
+                processing != AudioProcessingState.idle &&
+                processing != AudioProcessingState.error;
     playbackState.add(PlaybackState(
       processingState: processing,
       playing: playing,
@@ -710,7 +767,15 @@ class ReaderAudioHandler extends BaseAudioHandler
         MediaControl.stop,
       ],
       androidCompactActionIndices: const [0, 1, 2],
-      systemActions: const {MediaAction.seek},
+      systemActions: const {
+        MediaAction.play,
+        MediaAction.pause,
+        MediaAction.playPause,
+        MediaAction.skipToPrevious,
+        MediaAction.skipToNext,
+        MediaAction.stop,
+        MediaAction.seek,
+      },
       updatePosition: effectivePosition,
       bufferedPosition: _player.bufferedPosition,
       speed: _playbackRate,

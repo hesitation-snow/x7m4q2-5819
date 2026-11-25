@@ -67,6 +67,13 @@ abstract interface class SpeechFilesHandler {
   Future<void> skipToPrevious();
 }
 
+/// Optional extension for handlers that can silence audio for the next
+/// segment without dropping the OS media session out of playing state.
+abstract interface class SeamlessSpeechFilesHandler
+    implements SpeechFilesHandler {
+  Future<void> prepareSegmentTransition();
+}
+
 class SpeechAudioCache {
   SpeechAudioCache(
       {Future<Directory> Function()? temporaryDirectory,
@@ -292,7 +299,12 @@ class ReaderSpeechSession extends ChangeNotifier {
     _loading = !_stopped;
     _notify();
     try {
-      await _controlStop(handler.stop);
+      if (filtered.isNotEmpty && handler is SeamlessSpeechFilesHandler) {
+        await (handler as SeamlessSpeechFilesHandler)
+            .prepareSegmentTransition();
+      } else {
+        await _controlStop(handler.stop);
+      }
       if (!_valid(generation)) return;
       await _loadAndPlay(startAt, generation);
     } catch (error) {
@@ -384,19 +396,19 @@ class ReaderSpeechSession extends ChangeNotifier {
       return;
     }
     if (_gap == Duration.zero) {
-      await seek(index + 1);
+      await seek(index + 1, seamless: true);
     } else {
       _gapTimer?.cancel();
       _gapTimer = Timer(_gap, () {
         if (_valid(generation) && !_paused && _pendingAdvance != null) {
-          unawaited(seek(_pendingAdvance!));
+          unawaited(seek(_pendingAdvance!, seamless: true));
         }
       });
       _notify();
     }
   }
 
-  Future<void> seek(int index) async {
+  Future<void> seek(int index, {bool seamless = false}) async {
     _ensureAlive();
     if (index < 0 || index >= _segments.length) {
       throw RangeError.index(index, _segments);
@@ -413,10 +425,19 @@ class ReaderSpeechSession extends ChangeNotifier {
     _loading = !_paused;
     _notify();
     try {
-      await _controlPause(
-          handler.pause); // silence old audio before awaiting synthesis
-      if (!_valid(generation) || _paused) return;
-      await _loadAndPlay(index, generation);
+      if (!_paused) {
+        if (!seamless) {
+          if (handler is SeamlessSpeechFilesHandler) {
+            await (handler as SeamlessSpeechFilesHandler)
+                .prepareSegmentTransition();
+          } else {
+            await _controlPause(
+                handler.pause); // silence old audio before awaiting synthesis
+          }
+        }
+        if (!_valid(generation) || _paused) return;
+        await _loadAndPlay(index, generation);
+      }
     } catch (error) {
       _fail(error, generation);
     }
@@ -522,6 +543,7 @@ class ReaderSpeechSession extends ChangeNotifier {
     _loading = false;
     _gapTimer?.cancel();
     _sleepTimer?.cancel();
+    unawaited(_controlStop(handler.stop).catchError((Object _) {}));
     _notify();
   }
 

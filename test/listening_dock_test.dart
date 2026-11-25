@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,6 +16,7 @@ import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/home_page.dart';
 import 'package:yomiru/reader/reader_speech_session.dart';
 import 'package:yomiru/reader/reader_tts_core.dart';
+import 'package:yomiru/services/app_background.dart';
 import 'package:yomiru/services/listening_now.dart';
 import 'package:yomiru/widgets/liquid_glass_bottom_bar.dart';
 import 'package:yomiru/widgets/listening_dock.dart';
@@ -512,6 +514,93 @@ void main() {
         expect(tester.takeException(), isNull);
       }
     } finally {
+      await _cleanupListeningSession(tester, temp);
+    }
+  });
+
+  testWidgets(
+      'HomePage PopScope moves app to background on Android back while listening is active',
+      (tester) async {
+    late Directory temp;
+    late ReaderSpeechSession session;
+    await tester.runAsync(() async {
+      final started = await _startListeningSession();
+      temp = started.temp;
+      session = started.session;
+    });
+
+    final oldClient = LKApi.client;
+    final oldGlassEnabled = LKStore.liquidGlassBottomBarEnabled.value;
+    final oldUpdate = LKStore.autoCheckUpdateEnabled.value;
+    var backgroundCalls = 0;
+
+    try {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      AppBackground.overrideMoveToBackground = () async {
+        backgroundCalls++;
+        return true;
+      };
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+        (_) async => null,
+      );
+      LKApi.client = LKClient.forTesting(
+        httpClient: MockClient(
+          (_) async => http.Response(
+            '{"code":0,"data":{"list":[],"has_more":false}}',
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          ),
+        ),
+      );
+      LKStore.autoCheckUpdateEnabled.value = false;
+      LKStore.liquidGlassBottomBarEnabled.value = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(useMaterial3: true),
+          home: const HomePage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      PopScope<dynamic> homePopScope() => tester.widget<PopScope<dynamic>>(
+            find
+                .descendant(
+                  of: find.byType(HomePage),
+                  matching: find.byWidgetPredicate((w) => w is PopScope),
+                )
+                .first,
+          );
+
+      expect(ListeningNow.instance.isPlayingOrLoading, isTrue);
+      expect(homePopScope().canPop, isFalse);
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(backgroundCalls, 1);
+      expect(find.byType(HomePage), findsOneWidget);
+
+      await session.pause();
+      await tester.pump();
+      expect(ListeningNow.instance.isPlayingOrLoading, isFalse);
+      expect(homePopScope().canPop, isTrue);
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(backgroundCalls, 1);
+    } finally {
+      AppBackground.overrideMoveToBackground = null;
+      debugDefaultTargetPlatformOverride = null;
+      LKApi.client = oldClient;
+      LKStore.liquidGlassBottomBarEnabled.value = oldGlassEnabled;
+      LKStore.autoCheckUpdateEnabled.value = oldUpdate;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+        null,
+      );
       await _cleanupListeningSession(tester, temp);
     }
   });

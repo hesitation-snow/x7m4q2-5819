@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,7 @@ import '../api/home_channels.dart';
 import '../api/models.dart';
 import '../api/pagination.dart';
 import '../api/store.dart';
+import '../services/app_background.dart';
 import '../services/avatar_cache.dart';
 import '../services/app_update_service.dart';
 import '../services/listening_now.dart';
@@ -250,13 +252,29 @@ class _HomePageState extends State<HomePage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final padTop = MediaQuery.of(context).padding.top;
     final pageColor = Theme.of(context).scaffoldBackgroundColor;
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle(
-        statusBarColor: pageColor,
-        statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-        statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
-      ),
-      child: ValueListenableBuilder<bool>(
+    return ListenableBuilder(
+      listenable: ListeningNow.instance,
+      builder: (context, child) {
+        final keepInBackground =
+            defaultTargetPlatform == TargetPlatform.android &&
+                ListeningNow.instance.isPlayingOrLoading;
+        return PopScope(
+          canPop: !keepInBackground,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop && keepInBackground) {
+              unawaited(AppBackground.moveToBackground());
+            }
+          },
+          child: child!,
+        );
+      },
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle(
+          statusBarColor: pageColor,
+          statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+          statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+        ),
+        child: ValueListenableBuilder<bool>(
         valueListenable: LKStore.liquidGlassBottomBarEnabled,
         builder: (context, useLiquidGlass, _) {
           final outerBottomPadding = MediaQuery.paddingOf(context).bottom;
@@ -608,6 +626,7 @@ class _HomePageState extends State<HomePage> {
                   ),
           );
         },
+        ),
       ),
     );
   }

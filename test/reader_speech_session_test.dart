@@ -128,4 +128,26 @@ void main() {
     expect(handler.played, hasLength(1));
     session.dispose();
   });
+
+  test('synthesis failure stops handler cleanly so OS media service never hangs', () async {
+    final handler = _Handler();
+    final session = ReaderSpeechSession(
+      handler: handler,
+      synthesizer: _FailingSynth(),
+      cache: cache,
+    );
+    await session.start([_seg('boom', 0)], accountId: 'user', config: config, title: 'Book');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.isStopped, isTrue);
+    expect(session.error, contains('synth failed'));
+    expect(handler.stopped, isTrue);
+    session.dispose();
+  });
+}
+
+class _FailingSynth implements SpeechAudioSynthesizer {
+  @override
+  Future<File> synthesize(String text, SpeechSynthesisConfig config, String cachePath) async {
+    throw StateError('synth failed');
+  }
 }

@@ -244,6 +244,150 @@ void main() {
               title: 'x', contentType: 'audio/ogg'),
           throwsArgumentError);
     });
+
+    test(
+        'continuous speech session stays playing without idle or pause flaps across transitions',
+        () async {
+      final temp = await Directory.systemTemp.createTemp('yomiru_handler_');
+      try {
+        final f1 = File('${temp.path}/seg1.mp3')..writeAsBytesSync([1, 2, 3]);
+        final f2 = File('${temp.path}/seg2.mp3')..writeAsBytesSync([4, 5, 6]);
+        final emitted = <PlaybackState>[];
+        final sub = handler.playbackState.listen(emitted.add);
+
+        handler.bindSpeechSessionControls(
+          ownerKey: 'speech-1',
+          callbacks: TtsMediaCallbacks(
+            onPlay: () {},
+            onPause: () {},
+            onStop: () {},
+            onPrevious: () {},
+            onNext: () {},
+          ),
+        );
+
+        await handler.playFiles(
+          [f1],
+          title: '章节名',
+          artist: '书名',
+          startIndex: 0,
+          onSegmentChanged: (_) {},
+          onCompleted: () {},
+        );
+        emitted.clear();
+
+        // Simulate natural completion -> seamless transition -> transient idle/loading -> next sentence.
+        player.processingController.add(ja.ProcessingState.completed);
+        await player.pause();
+        await handler.prepareSegmentTransition();
+        player.processingController.add(ja.ProcessingState.idle);
+        player.processingController.add(ja.ProcessingState.loading);
+        await handler.playFiles(
+          [f2],
+          title: '章节名',
+          artist: '书名',
+          startIndex: 0,
+          onSegmentChanged: (_) {},
+          onCompleted: () {},
+        );
+
+        expect(emitted, isNotEmpty);
+        expect(
+          emitted.any((s) => !s.playing),
+          isFalse,
+        );
+        expect(
+          emitted.any((s) => s.processingState == AudioProcessingState.idle),
+          isFalse,
+        );
+        final latest = handler.playbackState.value;
+        expect(latest.playing, isTrue);
+        expect(latest.processingState, AudioProcessingState.ready);
+        expect(
+          latest.systemActions,
+          containsAll(const {
+            MediaAction.play,
+            MediaAction.pause,
+            MediaAction.playPause,
+            MediaAction.skipToPrevious,
+            MediaAction.skipToNext,
+            MediaAction.stop,
+            MediaAction.seek,
+          }),
+        );
+
+        await handler.pause();
+        expect(handler.playbackState.value.playing, isFalse);
+        expect(
+          handler.playbackState.value.processingState,
+          AudioProcessingState.ready,
+        );
+
+        await handler.stop();
+        expect(handler.playbackState.value.playing, isFalse);
+        expect(
+          handler.playbackState.value.processingState,
+          AudioProcessingState.idle,
+        );
+        await sub.cancel();
+      } finally {
+        if (await temp.exists()) await temp.delete(recursive: true);
+      }
+    });
+
+    test(
+        'playFiles clears previous segment duration and resets continuous playing state on setFiles failure',
+        () async {
+      final temp = await Directory.systemTemp.createTemp('yomiru_handler_');
+      try {
+        final f1 = File('${temp.path}/seg1.mp3')..writeAsBytesSync([1, 2, 3]);
+        final f2 = File('${temp.path}/seg2.mp3')..writeAsBytesSync([4, 5, 6]);
+
+        handler.bindSpeechSessionControls(
+          ownerKey: 'speech-fail',
+          callbacks: TtsMediaCallbacks(
+            onPlay: () {},
+            onPause: () {},
+            onStop: () {},
+            onPrevious: () {},
+            onNext: () {},
+          ),
+        );
+
+        await handler.playFiles(
+          [f1],
+          title: '章节名',
+          artist: '书名',
+          startIndex: 0,
+          onSegmentChanged: (_) {},
+          onCompleted: () {},
+        );
+        player.durationController.add(const Duration(seconds: 9));
+        expect(handler.mediaItem.valueOrNull?.duration, const Duration(seconds: 9));
+
+        player.throwOnSetFiles = true;
+        await expectLater(
+          handler.playFiles(
+            [f2],
+            title: '章节名',
+            artist: '书名',
+            startIndex: 0,
+            onSegmentChanged: (_) {},
+            onCompleted: () {},
+          ),
+          throwsStateError,
+        );
+
+        expect(handler.mediaItem.valueOrNull?.duration, isNull);
+        expect(handler.playbackState.value.playing, isFalse);
+        expect(
+          handler.playbackState.value.processingState,
+          AudioProcessingState.error,
+        );
+      } finally {
+        if (await temp.exists()) await temp.delete(recursive: true);
+      }
+    });
   });
 }
 
@@ -264,6 +408,7 @@ class FakeReaderAudioPlayer implements ReaderAudioPlayer {
   Duration buffered = Duration.zero;
   ja.AudioSource? source;
   int playCount = 0;
+  bool throwOnSetFiles = false;
 
   @override
   Stream<bool> get playingStream => playingController.stream;
@@ -298,6 +443,7 @@ class FakeReaderAudioPlayer implements ReaderAudioPlayer {
 
   @override
   Future<void> setFiles(List<File> value, {required int initialIndex}) async {
+    if (throwOnSetFiles) throw StateError('decoder init failed');
     files = List<File>.of(value);
     _currentIndex = initialIndex;
     _processing = ja.ProcessingState.ready;

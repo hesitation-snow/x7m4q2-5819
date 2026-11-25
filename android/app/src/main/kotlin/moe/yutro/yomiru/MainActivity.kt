@@ -13,6 +13,7 @@ import java.io.File
 class MainActivity : AudioServiceActivity() {
     private var readerChannel: MethodChannel? = null
     private var epubChannel: MethodChannel? = null
+    private var lifecycleChannel: MethodChannel? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var volumePaging = false
     private var readerOwner = -1
@@ -85,6 +86,19 @@ class MainActivity : AudioServiceActivity() {
                         pendingSourceFilePath = null
                         result.error("ACTIVITY_NOT_FOUND", e.message, null)
                     }
+                } else {
+                    result.notImplemented()
+                }
+            }
+        }
+
+        lifecycleChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "moe.yutro.yomiru/app_lifecycle"
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                if (call.method == "moveToBackground") {
+                    result.success(moveTaskToBack(true))
                 } else {
                     result.notImplemented()
                 }
@@ -171,6 +185,8 @@ class MainActivity : AudioServiceActivity() {
         readerChannel = null
         epubChannel?.setMethodCallHandler(null)
         epubChannel = null
+        lifecycleChannel?.setMethodCallHandler(null)
+        lifecycleChannel = null
         pendingSaveResult?.error("ACTIVITY_DESTROYED", "Activity engine was cleaned up before save completed", null)
         pendingSaveResult = null
         pendingSourceFilePath = null

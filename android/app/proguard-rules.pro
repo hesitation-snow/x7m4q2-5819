@@ -6,9 +6,10 @@
 -keep class io.flutter.embedding.**  { *; }
 -dontwarn io.flutter.embedding.**
 
-# Flutter Plugins (Security, KeyStore, Preferences)
+# Flutter Plugins (Security, KeyStore, Preferences, AudioService)
 -keep class androidx.security.crypto.** { *; }
 -keep class com.it_nomads.fluttersecurestorage.** { *; }
+-keep class com.ryanheise.audioservice.** { *; }
 
 # Serialization & Annotations
 -keepattributes *Annotation*

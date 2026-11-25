@@ -1,6 +1,14 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../reader/reader_speech_session.dart';
+import '../reader/reader_tts_resume.dart';
+import '../reader/reading_position.dart';
+import 'edge_speech.dart';
+import 'reader_audio_handler.dart';
+import 'reader_tts_preferences.dart';
 
 class ListeningSessionTransfer {
   const ListeningSessionTransfer({
@@ -19,12 +27,15 @@ class ListeningSessionTransfer {
 /// Playback that outlives the reader page. Leaving a chapter keeps the
 /// current session running and exposes it to the home dock.
 class ListeningNow extends ChangeNotifier {
-  ListeningNow._();
+  ListeningNow._() {
+    ReaderTtsPreferences.revision.addListener(_onPreferencesChanged);
+  }
   static final ListeningNow instance = ListeningNow._();
 
   ReaderSpeechSession? _session;
   Future<void> Function()? _releaseResources;
   Future<void>? _stopFuture;
+  String? _lastSavedResumeKey;
 
   SpeechSynthesisConfig? config;
   String accountId = '';
@@ -36,6 +47,7 @@ class ListeningNow extends ChangeNotifier {
 
   ReaderSpeechSession? get session => _session;
   bool get active => _session != null && !_session!.isStopped;
+  bool get isPlayingOrLoading => active && !(_session?.isPaused ?? true);
 
   void adopt({
     required ReaderSpeechSession session,
@@ -68,6 +80,8 @@ class ListeningNow extends ChangeNotifier {
     this.chapterId = chapterId;
     this.volumeId = volumeId;
     session.addListener(_onSession);
+    _lastSavedResumeKey = null;
+    _saveResumeProgress(session);
     notifyListeners();
     if (previous != null) {
       previous.removeListener(_onSession);
@@ -119,10 +133,115 @@ class ListeningNow extends ChangeNotifier {
     );
     _session = null;
     _releaseResources = null;
+    _lastSavedResumeKey = null;
     config = null;
     this.accountId = '';
     notifyListeners();
     return transfer;
+  }
+
+  void _saveResumeProgress(ReaderSpeechSession session) {
+    if (accountId.isEmpty || bookId <= 0 || chapterId <= 0) return;
+    final segment = session.currentSegment;
+    if (segment == null) return;
+    final key = '$bookId:$chapterId:${segment.blockIndex}:${segment.startOffset}';
+    if (key == _lastSavedResumeKey) return;
+    _lastSavedResumeKey = key;
+    unawaited(
+      ReaderTtsResumeStore.save(
+        accountId: accountId,
+        bookId: bookId,
+        chapterId: chapterId,
+        position: ReadingPosition.text(
+          blockIndex: segment.blockIndex,
+          offset: segment.startOffset,
+        ),
+      ).catchError((Object _) {}),
+    );
+  }
+
+  void _onPreferencesChanged() {
+    if (!active || _session == null || _stopFuture != null) return;
+    unawaited(_applyUpdatedPreferences());
+  }
+
+  Future<void> _applyUpdatedPreferences() async {
+    final session = _session;
+    if (session == null || session.isStopped || _stopFuture != null) return;
+    final currentConfig = config;
+    final acc = accountId.isNotEmpty
+        ? accountId
+        : ReaderTtsPreferences.currentAccountKey();
+    final prefs = await ReaderTtsPreferences.loadOrNull(acc);
+    if (prefs == null ||
+        !identical(_session, session) ||
+        session.isStopped ||
+        _stopFuture != null) {
+      return;
+    }
+    session.setSegmentInterval(prefs.segmentInterval);
+    if (session.sleepTimer != prefs.sleepTimer) {
+      session.setSleepTimer(prefs.sleepTimer);
+    }
+    if (currentConfig != null) {
+      if (currentConfig.source == 'edge') {
+        try {
+          await activeReaderAudioHandler?.setPlaybackRate(prefs.rate);
+        } catch (_) {}
+        if (!identical(_session, session) || session.isStopped) return;
+        final nextConfig =
+            edgeSpeechConfig(voiceByLanguage: prefs.edgeVoiceByLanguage);
+        if (jsonEncode(nextConfig.options) !=
+            jsonEncode(currentConfig.options)) {
+          config = nextConfig;
+          await session.updateConfig(nextConfig);
+        }
+      } else if (currentConfig.source == 'system') {
+        try {
+          await activeReaderAudioHandler?.setPlaybackRate(1.0);
+        } catch (_) {}
+        if (!identical(_session, session) || session.isStopped) return;
+        final nextVoice = prefs.systemVoiceId ?? currentConfig.voice;
+        final nextOptions = <String, Object?>{
+          ...currentConfig.options,
+          'voiceByLanguage':
+              Map<String, String>.unmodifiable(prefs.systemVoiceByLanguage),
+        };
+        if (prefs.rate != currentConfig.rate ||
+            nextVoice != currentConfig.voice ||
+            jsonEncode(nextOptions) != jsonEncode(currentConfig.options)) {
+          final nextConfig = SpeechSynthesisConfig(
+            source: currentConfig.source,
+            voice: nextVoice,
+            language: currentConfig.language,
+            rate: prefs.rate,
+            fileExtension: currentConfig.fileExtension,
+            options: nextOptions,
+          );
+          config = nextConfig;
+          await session.updateConfig(nextConfig);
+        }
+      } else if (currentConfig.source == 'custom' &&
+          prefs.rate != currentConfig.rate) {
+        try {
+          await activeReaderAudioHandler?.setPlaybackRate(1.0);
+        } catch (_) {}
+        if (!identical(_session, session) || session.isStopped) return;
+        final nextConfig = SpeechSynthesisConfig(
+          source: currentConfig.source,
+          voice: currentConfig.voice,
+          language: currentConfig.language,
+          rate: prefs.rate,
+          fileExtension: currentConfig.fileExtension,
+          options: currentConfig.options,
+        );
+        config = nextConfig;
+        await session.updateConfig(nextConfig);
+      }
+    }
+    if (identical(_session, session)) {
+      notifyListeners();
+    }
   }
 
   void _onSession() {
@@ -132,6 +251,7 @@ class ListeningNow extends ChangeNotifier {
       final release = _releaseResources;
       _session = null;
       _releaseResources = null;
+      _lastSavedResumeKey = null;
       config = null;
       accountId = '';
       session.removeListener(_onSession);
@@ -144,6 +264,7 @@ class ListeningNow extends ChangeNotifier {
       });
       return;
     }
+    _saveResumeProgress(session);
     notifyListeners();
   }
 
@@ -176,6 +297,7 @@ class ListeningNow extends ChangeNotifier {
     final release = _releaseResources;
     _session = null;
     _releaseResources = null;
+    _lastSavedResumeKey = null;
     config = null;
     accountId = '';
     session?.removeListener(_onSession);

@@ -3247,6 +3247,7 @@ class _ReaderPageState extends State<ReaderPage>
     final config = _activeSpeechConfig;
     final accountId = _speechAccountId;
     final previousRelease = _adoptedSpeechRelease;
+    final ownerKey = _speechSessionOwnerKey;
     _activeSpeechClient = null;
     _activeSpeechConfig = null;
     _adoptedSpeechRelease = null;
@@ -3261,6 +3262,10 @@ class _ReaderPageState extends State<ReaderPage>
       config: config,
       accountId: accountId,
       releaseResources: () async {
+        final handler = activeReaderAudioHandler;
+        if (handler?.speechSessionOwnerKey == ownerKey) {
+          handler?.unbindSpeechSessionControls(ownerKey);
+        }
         try {
           await previousRelease?.call();
         } catch (_) {}
@@ -3398,6 +3403,12 @@ class _ReaderPageState extends State<ReaderPage>
     }
     await _loadTtsPreferences();
     if (!mounted || startRevision != _speechStartRevision) return;
+    if (activeReaderAudioHandler == null) {
+      try {
+        await ensureReaderAudioHandler().timeout(const Duration(seconds: 5));
+      } catch (_) {}
+      if (!mounted || startRevision != _speechStartRevision) return;
+    }
     final handler = activeReaderAudioHandler;
     final accountKey = _currentTtsAccountKey();
     final accountRevision = LKClient.sessionRev.value;
