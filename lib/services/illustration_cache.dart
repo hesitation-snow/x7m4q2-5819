@@ -183,22 +183,34 @@ class YomiruIllustrationCache {
       final fileInfo = await manager.getFileFromCache(keyFor(clean));
       final file = fileInfo?.file;
       if (file != null && await file.exists()) {
-        final bytes = await file.openRead(0, 131072).expand((b) => b).toList();
+        final raf = await file.open();
+        final List<int> bytes;
+        try {
+          bytes = await raf.read(65536);
+        } finally {
+          await raf.close();
+        }
         final aspect = parseAspectFromBytes(bytes);
         if (aspect != null) {
           setAspect(clean, aspect);
           return aspect;
         }
+        ui.Codec? codec;
+        ui.FrameInfo? frame;
         try {
           final allBytes = await file.readAsBytes();
-          final codec = await ui.instantiateImageCodec(allBytes);
-          final frame = await codec.getNextFrame();
+          codec = await ui.instantiateImageCodec(allBytes);
+          frame = await codec.getNextFrame();
           final nativeAspect = frame.image.width / frame.image.height;
           if (nativeAspect > 0 && nativeAspect.isFinite) {
             setAspect(clean, nativeAspect);
             return nativeAspect;
           }
-        } catch (_) {}
+        } catch (_) {
+        } finally {
+          frame?.image.dispose();
+          codec?.dispose();
+        }
       }
     } catch (_) {}
     return null;
@@ -274,11 +286,12 @@ class YomiruIllustrationCache {
 
   /// 批量检测已缓存于本地的插画 URL 集合
   static Future<Set<String>> filterCached(Iterable<String> urls) async {
+    final list = urls.toList(growable: false);
+    if (list.isEmpty) return const <String>{};
+    final hits = await Future.wait(list.map(isCached));
     final cached = <String>{};
-    for (final u in urls) {
-      if (await isCached(u)) {
-        cached.add(u);
-      }
+    for (var i = 0; i < list.length; i++) {
+      if (hits[i]) cached.add(list[i]);
     }
     return cached;
   }

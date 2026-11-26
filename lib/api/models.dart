@@ -6,8 +6,10 @@ export 'book_access.dart'
 
 // 数据模型(手写 fromJson,字段与服务端 snake_case 一一对应)
 
-Map<String, dynamic>? _jsonMap(dynamic value) =>
-    value is Map ? Map<String, dynamic>.from(value) : null;
+Map<String, dynamic>? _jsonMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  return value is Map ? Map<String, dynamic>.from(value) : null;
+}
 
 Map<String, dynamic>? _firstJsonMap(dynamic value) {
   final direct = _jsonMap(value);
@@ -56,53 +58,57 @@ String _bookAuthorName(Map<String, dynamic> json) {
   return raw.toString();
 }
 
-String _bookPublisherName(Map<String, dynamic> json) {
-  final publisher = _bookPublisher(json);
+String _bookPublisherName(Map<String, dynamic> json,
+    {Map<String, dynamic>? publisher}) {
+  final pub = publisher ?? _bookPublisher(json);
   final rawPublisher = json['publisher'];
   final raw = json['publisher_name'] ??
       json['publisher_nickname'] ??
       (rawPublisher is String ? rawPublisher : null) ??
-      publisher['nickname'] ??
-      publisher['username'] ??
-      publisher['name'] ??
+      pub['nickname'] ??
+      pub['username'] ??
+      pub['name'] ??
       '';
   return raw.toString();
 }
 
-int _bookPublisherUid(Map<String, dynamic> json) {
-  final publisher = _bookPublisher(json);
+int _bookPublisherUid(Map<String, dynamic> json,
+    {Map<String, dynamic>? publisher}) {
+  final pub = publisher ?? _bookPublisher(json);
   return _jsonInt(json['publisher_uid'] ??
       json['publisher_id'] ??
       json['publisher_user_id'] ??
       json['publisherUserId'] ??
-      publisher['uid'] ??
-      publisher['user_id'] ??
-      publisher['userId'] ??
-      publisher['id']);
+      pub['uid'] ??
+      pub['user_id'] ??
+      pub['userId'] ??
+      pub['id']);
 }
 
-String _bookPublisherAvatar(Map<String, dynamic> json) {
-  final publisher = _bookPublisher(json);
+String _bookPublisherAvatar(Map<String, dynamic> json,
+    {Map<String, dynamic>? publisher}) {
+  final pub = publisher ?? _bookPublisher(json);
   return (json['publisher_avatar'] ??
           json['publisher_avatar_url'] ??
-          publisher['avatar'] ??
-          publisher['avatar_url'] ??
+          pub['avatar'] ??
+          pub['avatar_url'] ??
           '')
       .toString();
 }
 
-bool _bookPublisherFollowed(Map<String, dynamic> json) {
-  final publisher = _bookPublisher(json);
+bool _bookPublisherFollowed(Map<String, dynamic> json,
+    {Map<String, dynamic>? publisher}) {
+  final pub = publisher ?? _bookPublisher(json);
   final relation = (json['publisher_relation_state'] ??
-          publisher['relation_state'] ??
-          publisher['relationState'] ??
+          pub['relation_state'] ??
+          pub['relationState'] ??
           '')
       .toString()
       .trim()
       .toLowerCase();
   return _jsonFlag(json['publisher_followed'] ??
-          publisher['followed'] ??
-          publisher['is_followed']) ||
+          pub['followed'] ??
+          pub['is_followed']) ||
       relation == 'following' ||
       relation == 'followed';
 }
@@ -1153,35 +1159,41 @@ class LKBook {
     bool isBrave = false,
     this._accessStatus = BookAccessStatus.unknown,
   }) : _braveFlag = isBrave;
-  factory LKBook.fromJson(Map<String, dynamic> j) => LKBook(
-        bookId: bookIdentityFromJson(j),
-        title: (j['title'] as String?) ?? '',
-        authorName: _bookAuthorName(j),
-        publisherUid: _bookPublisherUid(j),
-        publisherName: _bookPublisherName(j),
-        publisherAvatar: _bookPublisherAvatar(j),
-        publisherFollowed: _bookPublisherFollowed(j),
-        coverUrl: (j['cover_url'] as String?) ?? '',
-        summary:
-            (j['summary'] as String?) ?? (j['summary_short'] as String?) ?? '',
-        tags:
-            (j['tags'] as List?)?.map((e) => e.toString()).toList() ?? const [],
-        wordCount: (j['word_count'] as num?)?.toInt() ?? 0,
-        volumeCount: (j['volume_count'] as num?)?.toInt() ?? 0,
-        chapterCount: (j['chapter_count'] as num?)?.toInt() ?? 0,
-        defaultVolumeId: (j['default_volume_id'] as num?)?.toInt() ?? 0,
-        defaultChapterId: (j['default_chapter_id'] as num?)?.toInt() ?? 0,
-        serialStatus: _bookSerialStatus(j),
-        isCompleted: _jsonFlag(j['is_completed'] ?? j['isCompleted']),
-        lastReadChapterTitle: (j['last_read_chapter_title'] as String?) ?? '',
-        unreadChapterCount: (j['unread_chapter_count'] as num?)?.toInt() ?? 0,
-        ratingScore: (j['rating_score'] as num?)?.toDouble() ?? 0,
-        updatedAt: (j['latest_book_updated_at'] as String?) ??
-            (j['updated_at'] as String?) ??
-            '',
-        isBrave: _isBraveBook(j),
-        accessStatus: classifyBookAccess(j),
-      );
+  factory LKBook.fromJson(Map<String, dynamic> j) {
+    final id = bookIdentityFromJson(j);
+    final publisher = _bookPublisher(j);
+    final accessStatus = classifyBookAccess(j);
+    final isBrave = accessStatus == BookAccessStatus.brave ||
+        (id > 0 && (_externalBraveChecker?.call(id) ?? false));
+    return LKBook(
+      bookId: id,
+      title: (j['title'] as String?) ?? '',
+      authorName: _bookAuthorName(j),
+      publisherUid: _bookPublisherUid(j, publisher: publisher),
+      publisherName: _bookPublisherName(j, publisher: publisher),
+      publisherAvatar: _bookPublisherAvatar(j, publisher: publisher),
+      publisherFollowed: _bookPublisherFollowed(j, publisher: publisher),
+      coverUrl: (j['cover_url'] as String?) ?? '',
+      summary:
+          (j['summary'] as String?) ?? (j['summary_short'] as String?) ?? '',
+      tags: (j['tags'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+      wordCount: (j['word_count'] as num?)?.toInt() ?? 0,
+      volumeCount: (j['volume_count'] as num?)?.toInt() ?? 0,
+      chapterCount: (j['chapter_count'] as num?)?.toInt() ?? 0,
+      defaultVolumeId: (j['default_volume_id'] as num?)?.toInt() ?? 0,
+      defaultChapterId: (j['default_chapter_id'] as num?)?.toInt() ?? 0,
+      serialStatus: _bookSerialStatus(j),
+      isCompleted: _jsonFlag(j['is_completed'] ?? j['isCompleted']),
+      lastReadChapterTitle: (j['last_read_chapter_title'] as String?) ?? '',
+      unreadChapterCount: (j['unread_chapter_count'] as num?)?.toInt() ?? 0,
+      ratingScore: (j['rating_score'] as num?)?.toDouble() ?? 0,
+      updatedAt: (j['latest_book_updated_at'] as String?) ??
+          (j['updated_at'] as String?) ??
+          '',
+      isBrave: isBrave,
+      accessStatus: accessStatus,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'book_id': bookId,
@@ -2444,6 +2456,38 @@ class LKDynamicItem {
     this.topicTags = const [],
     this.poll,
   });
+
+  LKDynamicItem copyWith({
+    int? likeCount,
+    bool? liked,
+    bool? hasLikedState,
+  }) =>
+      LKDynamicItem(
+        dynamicId: dynamicId,
+        authorUid: authorUid,
+        targetType: targetType,
+        eventType: eventType,
+        nickname: nickname,
+        avatar: avatar,
+        authorMedals: authorMedals,
+        title: title,
+        summary: summary,
+        likeCount: likeCount ?? this.likeCount,
+        commentCount: commentCount,
+        favoriteCount: favoriteCount,
+        liked: liked ?? this.liked,
+        hasLikedState: hasLikedState ?? this.hasLikedState,
+        favorited: favorited,
+        read: read,
+        time: time,
+        bookId: bookId,
+        bookTitle: bookTitle,
+        bookCover: bookCover,
+        bookMarkedBrave: bookMarkedBrave,
+        media: media,
+        topicTags: topicTags,
+        poll: poll,
+      );
   factory LKDynamicItem.fromJson(Map<String, dynamic> j) {
     final author = _jsonMap(j['author']) ?? const <String, dynamic>{};
     final stats = _jsonMap(j['stats']) ?? const <String, dynamic>{};

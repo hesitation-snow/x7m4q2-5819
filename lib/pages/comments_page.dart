@@ -1212,6 +1212,7 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
   bool _keyboardTransitioning = false;
   double _transitionHeight = 0;
   Timer? _transitionTimer;
+  Timer? _keyboardHeightSaveTimer;
 
   @override
   void initState() {
@@ -1229,6 +1230,7 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
   @override
   void dispose() {
     _transitionTimer?.cancel();
+    _keyboardHeightSaveTimer?.cancel();
     _focus.dispose();
     super.dispose();
   }
@@ -1316,13 +1318,15 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
     final theme = Theme.of(context);
     final media = MediaQuery.of(context);
     final inset = media.viewInsets.bottom;
-    if (inset > 150) {
-      if (inset > _globalKeyboardHeight) {
-        _globalKeyboardHeight = inset;
+    if (inset > 150 && inset > _globalKeyboardHeight) {
+      _globalKeyboardHeight = inset;
+      _keyboardHeightSaveTimer?.cancel();
+      final savedHeight = inset;
+      _keyboardHeightSaveTimer = Timer(const Duration(milliseconds: 300), () {
         SharedPreferences.getInstance().then((p) {
-          p.setDouble('last_keyboard_height', inset);
+          p.setDouble('last_keyboard_height', savedHeight);
         });
-      }
+      });
     }
     if (_keyboardTransitioning && inset >= _transitionHeight - 1.0) {
       _keyboardTransitioning = false;

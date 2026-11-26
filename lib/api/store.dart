@@ -340,6 +340,9 @@ class LKStore {
   /// 自动检查更新开关，默认开启
   static final ValueNotifier<bool> autoCheckUpdateEnabled = ValueNotifier(true);
 
+  /// 首页/榜单默认排版模式（预加载避免首帧 Grid -> List 闪烁）
+  static final ValueNotifier<bool> feedListMode = ValueNotifier(false);
+
   /// 已确认需勇者权限的小说 ID 缓存（内置预置 14162 标杆书籍）
   static final Set<int> _braveBookIds = {14162};
 
@@ -353,6 +356,7 @@ class LKStore {
   static final Map<int, String> _verifiedNoBraveFingerprints = {};
   static Future<void> _verifiedNoBraveWrites = Future<void>.value();
   static int _verifiedNoBraveWriteEpoch = 0;
+  static Timer? _verifiedNoBraveWriteTimer;
 
   static bool isBraveBook(int bookId) => _braveBookIds.contains(bookId);
 
@@ -360,6 +364,37 @@ class LKStore {
     if (bookId <= 0 || fingerprint.isEmpty) return false;
     final stored = _verifiedNoBraveFingerprints[bookId];
     return stored != null && stored == fingerprint;
+  }
+
+  static void _scheduleVerifiedNoBravePersist() {
+    _verifiedNoBraveWriteTimer?.cancel();
+    final epoch = _verifiedNoBraveWriteEpoch;
+    _verifiedNoBraveWriteTimer = Timer(const Duration(milliseconds: 600), () {
+      _flushVerifiedNoBraveNow(epoch);
+    });
+  }
+
+  static Future<void> _flushVerifiedNoBraveNow(int epoch) {
+    if (epoch != _verifiedNoBraveWriteEpoch) return _verifiedNoBraveWrites;
+    final snapshot = {
+      for (final e in _verifiedNoBraveFingerprints.entries)
+        e.key.toString(): e.value,
+    };
+    final write = _verifiedNoBraveWrites.then((_) async {
+      if (epoch != _verifiedNoBraveWriteEpoch) return;
+      final preferences = await SharedPreferences.getInstance();
+      if (epoch != _verifiedNoBraveWriteEpoch) return;
+      await preferences.setString(_verifiedNoBraveKey, jsonEncode(snapshot));
+    });
+    _verifiedNoBraveWrites = write.catchError((Object _) {});
+    return _verifiedNoBraveWrites;
+  }
+
+  @visibleForTesting
+  static Future<void> flushVerifiedNoBraveWrites() async {
+    _verifiedNoBraveWriteTimer?.cancel();
+    _verifiedNoBraveWriteTimer = null;
+    await _flushVerifiedNoBraveNow(_verifiedNoBraveWriteEpoch);
   }
 
   static Future<void> markBookVerifiedNoBrave(
@@ -374,19 +409,7 @@ class LKStore {
       _verifiedNoBraveFingerprints
           .remove(_verifiedNoBraveFingerprints.keys.first);
     }
-    final epoch = _verifiedNoBraveWriteEpoch;
-    final snapshot = {
-      for (final e in _verifiedNoBraveFingerprints.entries)
-        e.key.toString(): e.value,
-    };
-    final write = _verifiedNoBraveWrites.then((_) async {
-      if (epoch != _verifiedNoBraveWriteEpoch) return;
-      final preferences = await SharedPreferences.getInstance();
-      if (epoch != _verifiedNoBraveWriteEpoch) return;
-      await preferences.setString(_verifiedNoBraveKey, jsonEncode(snapshot));
-    });
-    _verifiedNoBraveWrites = write.catchError((Object _) {});
-    await _verifiedNoBraveWrites;
+    _scheduleVerifiedNoBravePersist();
   }
 
   static Future<void> markBookBrave(int bookId) => markBooksBrave([bookId]);
@@ -402,17 +425,7 @@ class LKStore {
     }
     setBraveBookChecker(isBraveBook);
     if (removedVerified) {
-      final epoch = _verifiedNoBraveWriteEpoch;
-      final snapshot = {
-        for (final e in _verifiedNoBraveFingerprints.entries)
-          e.key.toString(): e.value,
-      };
-      _verifiedNoBraveWrites = _verifiedNoBraveWrites.then((_) async {
-        if (epoch != _verifiedNoBraveWriteEpoch) return;
-        final preferences = await SharedPreferences.getInstance();
-        if (epoch != _verifiedNoBraveWriteEpoch) return;
-        await preferences.setString(_verifiedNoBraveKey, jsonEncode(snapshot));
-      }).catchError((Object _) {});
+      _scheduleVerifiedNoBravePersist();
     }
     if (!changed) return;
     braveBookRevision.value++;
@@ -433,6 +446,8 @@ class LKStore {
   static void resetBraveBookIdsForTesting([Set<int>? seed]) {
     ++_braveBookWriteEpoch;
     ++_verifiedNoBraveWriteEpoch;
+    _verifiedNoBraveWriteTimer?.cancel();
+    _verifiedNoBraveWriteTimer = null;
     _verifiedNoBraveFingerprints.clear();
     _braveBookIds
       ..clear()
@@ -452,22 +467,6 @@ class LKStore {
     final operation = _sessionWrites.then((_) => action());
     _sessionWrites = operation.catchError((Object _) {});
     return operation;
-  }
-
-  /// Remove identifiers left by versions that reported automatic usage data.
-  /// Run asynchronously after runApp so cleanup never delays startup.
-  static Future<void> removeLegacyUsageIdentifier() async {
-    try {
-      final p = await SharedPreferences.getInstance();
-      await p.remove('anonymous_telemetry_reported_v1');
-    } catch (_) {
-      // Best effort: preferences may be temporarily unavailable.
-    }
-    try {
-      await _secure.delete(key: 'anonymous_telemetry_installation_id_v1');
-    } catch (_) {
-      // Retry on a future launch if secure storage is unavailable.
-    }
   }
 
   static Future<void> load() {
@@ -554,6 +553,7 @@ class LKStore {
         p.getBool('reader_enhanced_content_style') ?? true;
     autoCheckUpdateEnabled.value =
         p.getBool('auto_check_update_enabled') ?? true;
+    feedListMode.value = p.getBool('feed_list') ?? false;
     setBraveBookChecker(isBraveBook);
     final storedBraveIds = p.getStringList('known_brave_book_ids');
     if (storedBraveIds != null) {
@@ -1469,8 +1469,10 @@ class ReaderPrefs {
 
   static Future<bool> feedListMode() async =>
       (await _p()).getBool('feed_list') ?? false;
-  static Future<void> setFeedListMode(bool v) async =>
-      (await _p()).setBool('feed_list', v);
+  static Future<void> setFeedListMode(bool v) async {
+    LKStore.feedListMode.value = v;
+    await (await _p()).setBool('feed_list', v);
+  }
 
   static Future<int> gridColumnCount() async =>
       (await _p()).getInt('grid_column_count') ?? 0;

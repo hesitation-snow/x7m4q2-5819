@@ -40,12 +40,13 @@ void main() async {
   LKClient.sessionExpiredRev.addListener(_showSessionExpiredNotice);
   PaintingBinding.instance.imageCache.maximumSizeBytes = 128 * 1024 * 1024;
   runApp(const LKApp());
-  unawaited(ensureReaderAudioHandler().then<void>((_) {},
-      onError: (Object _, StackTrace __) {
-    debugPrint('Yomiru: media service unavailable; audio can be retried.');
-  }));
-  unawaited(LKClient.shared.warmErrorCodeHints());
-  unawaited(LKStore.removeLegacyUsageIdentifier());
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(ensureReaderAudioHandler().then<void>((_) {},
+        onError: (Object _, StackTrace __) {
+      debugPrint('Yomiru: media service unavailable; audio can be retried.');
+    }));
+    unawaited(LKClient.shared.warmErrorCodeHints());
+  });
 }
 
 class LKApp extends StatelessWidget {

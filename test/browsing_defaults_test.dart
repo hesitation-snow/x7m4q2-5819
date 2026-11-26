@@ -61,27 +61,4 @@ void main() {
     expect(LKStore.landscapeEnabled.value, isFalse);
     expect(dynamicFeedColumnCount(const Size(800, 1200)), 2);
   });
-
-  test('legacy usage identifier and preference are removed', () async {
-    SharedPreferences.setMockInitialValues({
-      'anonymous_telemetry_reported_v1': true,
-    });
-    String? deletedKey;
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
-      (call) async {
-        if (call.method == 'delete') {
-          deletedKey = (call.arguments as Map)['key'] as String?;
-        }
-        return null;
-      },
-    );
-
-    await LKStore.removeLegacyUsageIdentifier();
-
-    final preferences = await SharedPreferences.getInstance();
-    expect(preferences.containsKey('anonymous_telemetry_reported_v1'), isFalse);
-    expect(deletedKey, 'anonymous_telemetry_installation_id_v1');
-  });
 }

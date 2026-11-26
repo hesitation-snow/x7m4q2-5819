@@ -62,7 +62,7 @@ class _HomePageState extends State<HomePage> {
   late List<String> _channelOrder;
   late String _channelCode;
   late final PageController _channelPager;
-  bool _listMode = false;
+  bool _listMode = LKStore.feedListMode.value;
 
   @override
   void initState() {
@@ -825,7 +825,7 @@ class _FeedTabState extends State<FeedTab>
         _error = null;
       });
     }
-    await _load(1, false, silent: _items.isNotEmpty);
+    await _load(1, false, silent: _items.isNotEmpty, singlePage: true);
   }
 
   void _onSessionChanged() {
@@ -898,7 +898,9 @@ class _FeedTabState extends State<FeedTab>
   }
 
   Future<void> _load(int page, bool append,
-      {bool silent = false, bool forceRefresh = false}) async {
+      {bool silent = false,
+      bool forceRefresh = false,
+      bool singlePage = false}) async {
     if (append && _loading) return;
     final serial = append ? _requestSerial : ++_requestSerial;
     final path = widget.path;
@@ -929,12 +931,14 @@ class _FeedTabState extends State<FeedTab>
 
       final result = append
           ? await fetchPage(page, '')
-          : await refreshPageWindow(
-              loadPage: fetchPage,
-              keyOf: (book) => book.bookId,
-              targetItems: _items.length.clamp(0, 100),
-              isCurrent: () => mounted && serial == _requestSerial,
-            );
+          : singlePage
+              ? await fetchPage(1, '')
+              : await refreshPageWindow(
+                  loadPage: fetchPage,
+                  keyOf: (book) => book.bookId,
+                  targetItems: _items.length.clamp(0, 100),
+                  isCurrent: () => mounted && serial == _requestSerial,
+                );
       if (!mounted || serial != _requestSerial) return;
       final items = append
           ? mergePagedItems(_items, result.items, keyOf: (book) => book.bookId)
@@ -2084,6 +2088,10 @@ class _MyTabState extends State<MyTab> {
     }
     final messageSummaryFuture = _reloadMessageSummary(request);
     if (!waitForMessages) unawaited(messageSummaryFuture);
+    // 并行触发网络拉取与本地缓存读取，缩短“我的”页面首次就绪延迟。
+    final profileFuture = LKApi.myProfile();
+    unawaited(profileFuture.catchError((Object _) => LKMyProfile()));
+    final medalsFuture = _loadMedalsSafely();
     final cached = await Future.wait<Object?>([
       LKStore.cachedMyProfile(session.uid),
       LKStore.cachedMedals(session.uid),
@@ -2097,9 +2105,8 @@ class _MyTabState extends State<MyTab> {
       _profileLoading = true;
       _profileError = null;
     });
-    final medalsFuture = _loadMedalsSafely();
     try {
-      final profile = await LKApi.myProfile();
+      final profile = await profileFuture;
       if (mounted) {
         YomiruAvatarCache.precache(context, [profile.avatar, session.avatar]);
       }

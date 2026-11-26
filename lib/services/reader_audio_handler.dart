@@ -56,7 +56,6 @@ class ReaderAudioHandler extends BaseAudioHandler
     _subscriptions.addAll([
       _player.playingStream.listen((_) => _publishState()),
       _player.processingStateStream.listen(_onProcessingState),
-      _player.positionStream.listen((_) => _publishState()),
       _player.bufferedPositionStream.listen((_) => _publishState()),
       _player.durationStream.listen((duration) {
         _playerDuration = duration;

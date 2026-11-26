@@ -213,10 +213,13 @@ class _DynamicPageState extends State<DynamicPage> {
     final uid = LKClient.shared.session.uid;
     final feedTab = _feedTab;
     final cacheKey = _dynamicCacheKey(uid: uid, feedTab: feedTab);
-    final cached = await LKStore.cachedDynamicPage(cacheKey);
-    final likes = await DynamicLikeState.load(
-            LKClient.shared.session.isLoggedIn ? uid : 0)
-        .catchError((_) => <int, bool>{});
+    final results = await Future.wait<Object?>([
+      LKStore.cachedDynamicPage(cacheKey),
+      DynamicLikeState.load(LKClient.shared.session.isLoggedIn ? uid : 0)
+          .catchError((_) => <int, bool>{}),
+    ]);
+    final cached = results[0] as List<LKDynamicItem>?;
+    final likes = results[1] as Map<int, bool>;
     if (!mounted ||
         request != _requestSerial ||
         uid != LKClient.shared.session.uid ||
@@ -1251,6 +1254,23 @@ class _DynamicPageState extends State<DynamicPage> {
     return '${parsed.year}-${two(parsed.month)}-${two(parsed.day)} ${two(parsed.hour)}:${two(parsed.minute)}';
   }
 
+  void _applyLocalDynamicLike(
+    int dynamicId,
+    bool nextLiked, {
+    required bool previousLiked,
+  }) {
+    final index = _items.indexWhere((e) => e.dynamicId == dynamicId);
+    if (index < 0) return;
+    final item = _items[index];
+    final delta = nextLiked == previousLiked ? 0 : (nextLiked ? 1 : -1);
+    _items[index] = item.copyWith(
+      liked: nextLiked,
+      hasLikedState: true,
+      likeCount: (item.likeCount + delta).clamp(0, 1 << 30),
+    );
+    _rebuildVisibleItems();
+  }
+
   void _actions(LKDynamicItem d) {
     if (d.dynamicId <= 0) return;
     final loggedIn = LKClient.shared.session.isLoggedIn;
@@ -1328,6 +1348,11 @@ class _DynamicPageState extends State<DynamicPage> {
                               setState(() {
                                 _likeFallback[d.dynamicId] = !liked;
                                 _likeActions[d.dynamicId] = !liked;
+                                _applyLocalDynamicLike(
+                                  d.dynamicId,
+                                  !liked,
+                                  previousLiked: liked,
+                                );
                               });
                             }
                             try {
@@ -1335,10 +1360,6 @@ class _DynamicPageState extends State<DynamicPage> {
                                   uid, d.dynamicId, !liked);
                             } catch (_) {
                               // The server action succeeded; retain the in-memory state.
-                            }
-                            if (mounted &&
-                                revision == LKClient.sessionRev.value) {
-                              await _load();
                             }
                           } catch (_) {
                             if (mounted &&

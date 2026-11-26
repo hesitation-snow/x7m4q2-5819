@@ -1083,12 +1083,18 @@ class _ReaderPageState extends State<ReaderPage>
         _diskCachedImages.addAll(cached);
         updated = true;
       }
-      for (final b in blocks) {
-        final u = b.image;
-        if (u != null && b.aspect == null) {
-          final aspect = await YomiruIllustrationCache.resolveAspect(u);
-          if (aspect != null && b.aspect == null) {
-            b.aspect = aspect;
+      final targets = blocks
+          .where((b) => b.image != null && b.aspect == null)
+          .toList(growable: false);
+      if (targets.isNotEmpty) {
+        final aspects = await Future.wait(
+          targets.map((b) => YomiruIllustrationCache.resolveAspect(b.image!)),
+        );
+        if (!mounted) return;
+        for (var i = 0; i < targets.length; i++) {
+          final aspect = aspects[i];
+          if (aspect != null && targets[i].aspect == null) {
+            targets[i].aspect = aspect;
             updated = true;
             aspectUpdated = true;
           }
@@ -2675,7 +2681,7 @@ class _ReaderPageState extends State<ReaderPage>
       } catch (_) {}
     }
     try {
-      await _finishReadingSession();
+      unawaited(_finishReadingSession());
       if (!mounted || ModalRoute.of(context)?.isCurrent == false) {
         _chapterSwitching = false;
         return;
@@ -5379,7 +5385,10 @@ class _ReaderPageState extends State<ReaderPage>
       return;
     }
     if (!_aspectListeningUrls.add(imageUrl)) return;
-    final provider = YomiruIllustrationCache.provider(imageUrl);
+    final provider = YomiruIllustrationCache.provider(
+      imageUrl,
+      maxWidth: imageCacheDimension(context, _scrollContentWidth()),
+    );
     final stream = provider.resolve(ImageConfiguration.empty);
     late ImageStreamListener listener;
     late (ImageStream, ImageStreamListener) entry;

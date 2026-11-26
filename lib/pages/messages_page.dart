@@ -94,19 +94,18 @@ class _MessagesPageState extends State<_MessagesPageBody>
     };
     _tabs = MotionTabController(length: _messageCategories.length, vsync: this)
       ..addListener(_handleTabChanged);
-    unawaited(_preloadAll());
+    unawaited(_loadInitial());
   }
 
-  Future<void> _preloadAll() async {
+  Future<void> _loadInitial() async {
     unawaited(_loadSummary());
-    for (final category in _messageCategories) {
-      if (category.type == 'dm') {
-        if (_conversations.isEmpty && !_dmLoading) unawaited(_loadDm());
-      } else {
-        final feed = _feeds[category.type];
-        if (feed != null && feed.items.isEmpty && !feed.loading) {
-          unawaited(_loadNotification(category.type));
-        }
+    final category = _messageCategories[_activeIndex];
+    if (category.type == 'dm') {
+      if (_conversations.isEmpty && !_dmLoading) unawaited(_loadDm());
+    } else {
+      final feed = _feeds[category.type];
+      if (feed != null && feed.items.isEmpty && !feed.loading) {
+        unawaited(_loadNotification(category.type));
       }
     }
   }

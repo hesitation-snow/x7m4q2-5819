@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+Object? _decodeUtf8Json(Uint8List bytes) => jsonDecode(utf8.decode(bytes));
+
 /// 接口异常(code != 0 / HTTP 错误 / 网络错误)
 class LKException implements Exception {
   final int code;
@@ -120,8 +122,11 @@ class LKClient {
       }
     }
     final cacheVersion = cacheKey == null ? 0 : (_cacheVersions[cacheKey] ?? 0);
+    final shouldReadDiskCache = cacheKey != null &&
+        !forceRefresh &&
+        (_validatedCacheKeys.contains(cacheKey) || allowCachedFallback);
     final cachedCandidate =
-        cacheKey == null ? null : await _readCached(cacheKey);
+        shouldReadDiskCache ? await _readCached(cacheKey) : null;
     final cached =
         cacheKey == null || (_cacheVersions[cacheKey] ?? 0) == cacheVersion
             ? cachedCandidate
@@ -167,7 +172,9 @@ class LKClient {
       }
       final Object? obj;
       try {
-        obj = jsonDecode(utf8.decode(resp.bodyBytes));
+        obj = resp.bodyBytes.length > 65536
+            ? await compute(_decodeUtf8Json, resp.bodyBytes)
+            : jsonDecode(utf8.decode(resp.bodyBytes));
       } catch (_) {
         throw LKException(-1, '响应解析失败');
       }
@@ -442,6 +449,9 @@ class LKClient {
     return next;
   }
 
+  static final RegExp _savedAtHeaderRe =
+      RegExp(r'^\{"saved_at":(\d+),"data":\{');
+
   Future<Map<String, ({int savedAt, int bytes})>> _readDiskCacheIndex(
       SharedPreferences prefs) async {
     final existing = _diskCacheIndex;
@@ -452,12 +462,17 @@ class LKClient {
         .where((key) => key.startsWith(_responseCachePrefix))) {
       final raw = prefs.getString(key) ?? '';
       var savedAt = 0;
-      try {
-        final value = jsonDecode(raw);
-        if (value is Map && value['data'] is Map) {
-          savedAt = (value['saved_at'] as num?)?.toInt() ?? 0;
-        }
-      } catch (_) {}
+      final headerMatch = _savedAtHeaderRe.firstMatch(raw);
+      if (headerMatch != null) {
+        savedAt = int.tryParse(headerMatch.group(1) ?? '') ?? 0;
+      } else {
+        try {
+          final value = jsonDecode(raw);
+          if (value is Map && value['data'] is Map) {
+            savedAt = (value['saved_at'] as num?)?.toInt() ?? 0;
+          }
+        } catch (_) {}
+      }
       index[key] = (savedAt: savedAt, bytes: utf8.encode(raw).length);
     }
     return _diskCacheIndex = index;

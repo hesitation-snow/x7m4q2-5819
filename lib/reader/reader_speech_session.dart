@@ -83,6 +83,8 @@ class SpeechAudioCache {
   final Future<Directory> Function() _temporaryDirectory;
   final int budgetBytes;
   Future<Directory>? _rootFuture;
+  int _writesSinceEvict = 0;
+  Future<void>? _evictInFlight;
   Future<Directory> _root() =>
       _rootFuture ??= _temporaryDirectory().then((d) async {
         final dir = Directory('${d.path}/reader_speech_cache_v2');
@@ -141,8 +143,22 @@ class SpeechAudioCache {
     } finally {
       if (await temp.exists()) await temp.delete();
     }
-    await _evict(root);
+    _writesSinceEvict++;
+    if (_writesSinceEvict >= 8 || budgetBytes <= 2 * 1024 * 1024) {
+      _writesSinceEvict = 0;
+      unawaited(_scheduleEvict(root));
+    }
     return target;
+  }
+
+  Future<void> _scheduleEvict(Directory root) {
+    final active = _evictInFlight;
+    if (active != null) return active;
+    final task = _evict(root).catchError((Object _) {});
+    _evictInFlight = task;
+    return task.whenComplete(() {
+      if (identical(_evictInFlight, task)) _evictInFlight = null;
+    });
   }
 
   Future<void> clear(String account) async {
@@ -160,15 +176,20 @@ class SpeechAudioCache {
     final records = <(File, int, DateTime)>[];
     var total = 0;
     for (final file in files) {
-      final s = await file.stat();
-      total += s.size;
-      records.add((file, s.size, s.modified));
+      try {
+        final s = await file.stat();
+        if (s.type == FileSystemEntityType.notFound) continue;
+        total += s.size;
+        records.add((file, s.size, s.modified));
+      } catch (_) {}
     }
     records.sort((a, b) => a.$3.compareTo(b.$3));
     for (final item in records) {
       if (total <= budgetBytes) break;
-      if (await item.$1.exists()) await item.$1.delete();
-      total -= item.$2;
+      try {
+        if (await item.$1.exists()) await item.$1.delete();
+        total -= item.$2;
+      } catch (_) {}
     }
   }
 

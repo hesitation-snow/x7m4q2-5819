@@ -1152,6 +1152,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                   image: hasLocalFile
                                       ? Image.file(
                                           File(_selectedCoverPath!),
+                                          cacheWidth:
+                                              imageCacheDimension(context, 64),
                                           fit: BoxFit.cover,
                                           errorBuilder: (_, __, ___) =>
                                               _buildPlaceholderCover(),
@@ -1198,6 +1200,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                 },
                                 image: Image.file(
                                   File(illPath),
+                                  cacheWidth: imageCacheDimension(context, 64),
                                   fit: BoxFit.cover,
                                   errorBuilder: (_, __, ___) =>
                                       _buildPlaceholderCover(),
@@ -1274,6 +1277,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
     if (path != null && path.isNotEmpty && File(path).existsSync()) {
       imageWidget = Image.file(
         File(path),
+        cacheWidth: imageCacheDimension(context, 120),
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _buildPlaceholderCover(),
       );
@@ -1281,6 +1285,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
         File(task.customCoverPath!).existsSync()) {
       imageWidget = Image.file(
         File(task.customCoverPath!),
+        cacheWidth: imageCacheDimension(context, 120),
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _buildPlaceholderCover(),
       );
@@ -1349,6 +1354,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
         File(task.customCoverPath!).existsSync()) {
       return Image.file(
         File(task.customCoverPath!),
+        cacheWidth: imageCacheDimension(context, 64),
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _buildPlaceholderCover(),
       );

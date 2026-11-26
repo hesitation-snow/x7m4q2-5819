@@ -19,7 +19,7 @@ class YomiruAvatarCache {
 
   static ImageProvider provider(String url) =>
       ResizeImage(CachedNetworkImageProvider(url, cacheManager: manager),
-          width: 256, height: 256, policy: ResizeImagePolicy.fit);
+          width: 128, height: 128, policy: ResizeImagePolicy.fit);
 
   static ImageProvider? providerOrNull(String url) {
     if (LKStore.dataSaverMode.value || url.trim().isEmpty) return null;
@@ -50,7 +50,7 @@ class YomiruMedalCache {
 
   static ImageProvider provider(String url) =>
       ResizeImage(CachedNetworkImageProvider(url, cacheManager: manager),
-          width: 256, height: 256, policy: ResizeImagePolicy.fit);
+          width: 128, height: 128, policy: ResizeImagePolicy.fit);
 
   static ImageProvider? providerOrNull(String url) {
     if (LKStore.dataSaverMode.value || url.trim().isEmpty) return null;
