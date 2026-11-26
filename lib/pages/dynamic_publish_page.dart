@@ -25,8 +25,11 @@ class DynamicPublishPage extends StatefulWidget {
 }
 
 class _DynamicPublishPageState extends State<DynamicPublishPage> {
+  final _titleController = TextEditingController();
+  final _titleFocusNode = FocusNode();
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
+  bool _composerFocused = false;
   final _picker = ImagePicker();
   final _media = <LKDynamicMedia>[];
   List<LKEmojiGroup> _emojiGroups = const [];
@@ -43,6 +46,8 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
   @override
   void initState() {
     super.initState();
+    _titleFocusNode.addListener(_handleComposerFocusChange);
+    _focusNode.addListener(_handleComposerFocusChange);
     final initial = widget.initialTopic;
     if (initial != null && initial.isUsable) {
       _selectedTopic = initial;
@@ -53,10 +58,23 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
     _loadTopics();
   }
 
+  void _handleComposerFocusChange() {
+    final focused = _focusNode.hasFocus || _titleFocusNode.hasFocus;
+    if (focused != _composerFocused && mounted) {
+      setState(() => _composerFocused = focused);
+    }
+  }
+
   @override
   void dispose() {
     _transitionTimer?.cancel();
-    _focusNode.dispose();
+    _titleFocusNode
+      ..removeListener(_handleComposerFocusChange)
+      ..dispose();
+    _focusNode
+      ..removeListener(_handleComposerFocusChange)
+      ..dispose();
+    _titleController.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -239,6 +257,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
     } else {
       _transitionTimer?.cancel();
       _keyboardTransitioning = false;
+      _titleFocusNode.unfocus();
       _focusNode.unfocus();
       setState(() {
         _showEmoji = true;
@@ -277,6 +296,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
         content,
         media: _media,
         topic: topic,
+        title: _titleController.text.trim(),
       );
       if (topic != null && topic.isUsable) {
         unawaited(LKStore.recordRecentTopicTag(topic));
@@ -348,6 +368,179 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildComposerCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return AnimatedContainer(
+      duration: AppMotion.duration(context, 160),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: _composerFocused
+              ? scheme.primary.withValues(alpha: 0.55)
+              : scheme.outlineVariant.withValues(alpha: 0.45),
+          width: _composerFocused ? 1.5 : 1.0,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: TextField(
+                  key: const ValueKey('dynamic-title-input'),
+                  controller: _titleController,
+                  focusNode: _titleFocusNode,
+                  maxLines: 1,
+                  maxLength: 48,
+                  textInputAction: TextInputAction.next,
+                  onTap: () {
+                    if (_showEmoji) {
+                      _hideEmojiPanel();
+                    }
+                  },
+                  onSubmitted: (_) => _focusNode.requestFocus(),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: '好的标题更容易获得支持，选填 20 字',
+                    hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: scheme.onSurfaceVariant.withValues(alpha: 0.52),
+                    ),
+                    filled: false,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.fromLTRB(16, 15, 8, 12),
+                    counterText: '',
+                  ),
+                ),
+              ),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _titleController,
+                builder: (context, value, _) {
+                  final len = value.text.characters.length;
+                  if (len == 0) {
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: ShapeDecoration(
+                          color: scheme.surfaceContainerHigh,
+                          shape: const StadiumBorder(),
+                        ),
+                        child: Text(
+                          '选填',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontSize: 11,
+                            color:
+                                scheme.onSurfaceVariant.withValues(alpha: 0.72),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '$len/48',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: len >= 44
+                                ? scheme.error
+                                : scheme.onSurfaceVariant
+                                    .withValues(alpha: 0.72),
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          key: const ValueKey('dynamic-title-clear'),
+                          tooltip: '清空标题',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                          onPressed: _titleController.clear,
+                          icon: Icon(
+                            Icons.cancel_rounded,
+                            size: 17,
+                            color:
+                                scheme.onSurfaceVariant.withValues(alpha: 0.68),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Divider(
+              height: 1,
+              thickness: 0.8,
+              color: scheme.outlineVariant.withValues(alpha: 0.35),
+            ),
+          ),
+          TextField(
+            key: const ValueKey('dynamic-content-input'),
+            controller: _controller,
+            focusNode: _focusNode,
+            minLines: 7,
+            maxLines: null,
+            maxLength: 2000,
+            autofocus: true,
+            onTap: () {
+              if (_showEmoji) {
+                _returnToKeyboard();
+              }
+            },
+            style: theme.textTheme.bodyLarge?.copyWith(
+              fontSize: 16.5,
+              height: 1.65,
+              color: scheme.onSurface,
+            ),
+            decoration: InputDecoration(
+              hintText: '分享此刻想说的话…',
+              hintStyle: theme.textTheme.bodyLarge?.copyWith(
+                fontSize: 16.5,
+                color: scheme.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+              filled: false,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              counterText: '',
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -688,37 +881,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                   children: [
                     _buildAuthorHeader(context),
                     const SizedBox(height: 14),
-                    TextField(
-                      controller: _controller,
-                      focusNode: _focusNode,
-                      minLines: 7,
-                      maxLines: null,
-                      maxLength: 2000,
-                      autofocus: true,
-                      onTap: () {
-                        if (_showEmoji) {
-                          _returnToKeyboard();
-                        }
-                      },
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        fontSize: 16.5,
-                        height: 1.65,
-                        color: scheme.onSurface,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: '分享此刻想说的话…',
-                        hintStyle: theme.textTheme.bodyLarge?.copyWith(
-                          fontSize: 16.5,
-                          color:
-                              scheme.onSurfaceVariant.withValues(alpha: 0.6),
-                        ),
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        contentPadding: EdgeInsets.zero,
-                        counterText: '',
-                      ),
-                    ),
+                    _buildComposerCard(context),
                     _buildMediaGrid(context),
                   ],
                 ),

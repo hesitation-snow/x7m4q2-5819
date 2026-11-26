@@ -188,7 +188,8 @@ void main() {
         'inline emoji panel toggles cleanly and preserves draft $brightness',
         (tester) async {
       await _pumpPage(tester, const DynamicPublishPage(), brightness);
-      await tester.enterText(find.byType(TextField), '保留的草稿');
+      final contentInput = find.byKey(const ValueKey('dynamic-content-input'));
+      await tester.enterText(contentInput, '保留的草稿');
       await tester.ensureVisible(find.text('表情'));
       await tester.tap(find.text('表情'));
       await tester.pumpAndSettle();
@@ -201,7 +202,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(LkEmojiPanel), findsNothing);
       expect(find.text('表情'), findsOneWidget);
-      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      expect(tester.widget<TextField>(contentInput).controller!.text,
           '保留的草稿');
     });
 

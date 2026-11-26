@@ -854,9 +854,11 @@ class LKApi {
   }
 
   static Future<LKDynamicItem> publishShortDynamic(String content,
-      {List<LKDynamicMedia> media = const [], LKTopicTag? topic}) async {
+      {List<LKDynamicMedia> media = const [],
+      LKTopicTag? topic,
+      String title = ''}) async {
     final payload = <String, dynamic>{
-      'title': '',
+      'title': title.trim(),
       'summary': content,
       'content': content,
       'media_json': jsonEncode(media.map(_mediaJson).toList()),

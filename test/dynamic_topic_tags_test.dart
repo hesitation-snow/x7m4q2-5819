@@ -308,7 +308,8 @@ void main() {
       final yearChip = find.widgetWithText(FilterChip, '# 这本轻小说真厉害2027');
       await tester.tap(yearChip);
       await tester.pump();
-      await tester.enterText(find.byType(TextField).first, '推荐这本');
+      await tester.enterText(
+          find.byKey(const ValueKey('dynamic-content-input')), '推荐这本');
       await tester.tap(find.widgetWithText(FilledButton, '发布'));
       await tester.pumpAndSettle();
 
@@ -353,7 +354,8 @@ void main() {
       final publishButton = find.widgetWithText(FilledButton, '发布');
       expect(tester.widget<FilledButton>(publishButton).onPressed, isNotNull);
 
-      await tester.enterText(find.byType(TextField).first, '无话题也能发');
+      await tester.enterText(
+          find.byKey(const ValueKey('dynamic-content-input')), '无话题也能发');
       await tester.tap(publishButton);
       await tester.pumpAndSettle();
 
@@ -662,7 +664,8 @@ void main() {
       expect(tester.widget<FilterChip>(initialChip).selected, isTrue);
       expect(find.widgetWithText(FilterChip, '# 最近话题'), findsOneWidget);
 
-      await tester.enterText(find.byType(TextField).first, '带着预选话题发一条');
+      await tester.enterText(
+          find.byKey(const ValueKey('dynamic-content-input')), '带着预选话题发一条');
       await tester.tap(find.widgetWithText(FilledButton, '发布'));
       await tester.pumpAndSettle();
 
