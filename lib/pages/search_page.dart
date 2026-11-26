@@ -10,6 +10,7 @@ import '../api/lk_api.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import '../widgets/filtered_list_continuation.dart';
 import '../widgets/m3_controls.dart';
 import 'book_detail_page.dart';
@@ -303,7 +304,6 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       body: MotionRefreshIndicator(
         onRefresh: _refresh,
@@ -318,24 +318,34 @@ class _SearchPageState extends State<SearchPage> {
               title: Container(
                 constraints: const BoxConstraints(minHeight: 38),
                 margin: const EdgeInsets.only(right: 8),
-                child: TextField(
-                  controller: _controller,
-                  autofocus: true,
-                  textInputAction: TextInputAction.search,
-                  onChanged: _onQueryChanged,
-                  onSubmitted: (_) => _search(0, false),
-                  style: const TextStyle(fontSize: 14),
-                  decoration: InputDecoration(
-                    hintText: '搜索书名 / 作者 / 标签',
-                    isDense: true,
-                    fillColor: isDark ? const Color(0xFF2A2C33) : Colors.white,
-                    prefixIcon: const Icon(Icons.search_rounded, size: 19),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide.none,
+                child: Builder(builder: (context) {
+                  final scheme = Theme.of(context).colorScheme;
+                  final searchBorder = OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    borderSide: BorderSide.none,
+                  );
+                  return TextField(
+                    controller: _controller,
+                    autofocus: true,
+                    textInputAction: TextInputAction.search,
+                    onChanged: _onQueryChanged,
+                    onSubmitted: (_) => _search(0, false),
+                    style: const TextStyle(fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: '搜索书名 / 作者 / 标签',
+                      isDense: true,
+                      fillColor: scheme.surfaceContainerHigh,
+                      prefixIcon: const Icon(Icons.search_rounded, size: 19),
+                      border: searchBorder,
+                      enabledBorder: searchBorder,
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide:
+                            BorderSide(color: scheme.primary, width: 1.5),
+                      ),
                     ),
-                  ),
-                ),
+                  );
+                }),
               ),
               actions: [
                 TextButton(
@@ -421,7 +431,7 @@ class _SearchPageState extends State<SearchPage> {
 
   List<Widget> _resultSlivers(BuildContext context) {
     if (_error != null && _items.isEmpty) {
-      return [_messageSliver(_error!)];
+      return [_messageSliver(_error!, onRetry: () => _search(0, false))];
     }
     if (_items.isEmpty && _loading) {
       return const [
@@ -489,12 +499,15 @@ class _SearchPageState extends State<SearchPage> {
     ];
   }
 
-  Widget _messageSliver(String message) => SliverFillRemaining(
+  Widget _messageSliver(String message, {VoidCallback? onRetry}) =>
+      SliverFillRemaining(
         hasScrollBody: false,
-        child: Center(
-          child: Text(message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey)),
+        child: ContentStateView(
+          message: message,
+          icon: onRetry != null
+              ? Icons.error_outline_rounded
+              : Icons.search_rounded,
+          onRetry: onRetry,
         ),
       );
 

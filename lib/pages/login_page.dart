@@ -18,6 +18,7 @@ class _LoginPageState extends State<LoginPage> {
   final _user = TextEditingController();
   final _pwd = TextEditingController();
   bool _busy = false;
+  bool _obscurePwd = true;
 
   @override
   void dispose() {
@@ -60,7 +61,8 @@ class _LoginPageState extends State<LoginPage> {
       }
       await LKApi.logout(allDevices: allDevices);
       if (!mounted || session.isLoggedIn) return;
-      showLkError(context, allDevices ? '已退出所有设备' : '已退出本机');
+      showLkSnackBar(context, allDevices ? '已退出所有设备' : '已退出本机',
+          tone: LkNoticeTone.success);
     } catch (_) {
       if (mounted) showLkError(context, '退出失败，请重试或选择“仅退出本机”');
     } finally {
@@ -85,94 +87,108 @@ class _LoginPageState extends State<LoginPage> {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('登录轻之国度')),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Card(
-              elevation: 0,
-              color: scheme.surfaceContainerLow,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 64,
-                      height: 64,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: scheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Icon(Icons.menu_book_outlined,
-                          size: 32, color: scheme.onPrimaryContainer),
-                    ),
-                    const SizedBox(height: 20),
-                    TextField(
-                      controller: _user,
-                      keyboardType: TextInputType.emailAddress,
-                      autofillHints: const [AutofillHints.email],
-                      decoration: const InputDecoration(
-                          labelText: '邮箱',
-                          prefixIcon: Icon(Icons.person_outline)),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _pwd,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                          labelText: '密码',
-                          prefixIcon: Icon(Icons.lock_outline)),
-                      onSubmitted: (_) => _login(),
-                    ),
-                    const SizedBox(height: 24),
-                    FilledButton(
-                      onPressed: _busy ? null : _login,
-                      child: _busy
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: MotionProgressIndicator(strokeWidth: 2))
-                          : Text(s.isLoggedIn ? '重新登录' : '登录'),
-                    ),
-                    Wrap(
-                      alignment: WrapAlignment.spaceBetween,
-                      children: [
-                        for (final register in [true, false])
-                          TextButton(
-                            onPressed: _busy
-                                ? null
-                                : () async {
-                                    final message =
-                                        await Navigator.push<String>(
-                                      context,
-                                      MaterialPageRoute(
-                                          builder: (_) => AccountAccessPage(
-                                              register: register)),
-                                    );
-                                    if (message != null && context.mounted) {
-                                      showLkError(context, message);
-                                    }
-                                  },
-                            child: Text(register ? '注册账号' : '重置密码'),
+      body: SafeArea(
+        top: false,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Card(
+                elevation: 0,
+                color: scheme.surfaceContainerLow,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 64,
+                          height: 64,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: scheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(20),
                           ),
-                      ],
-                    ),
-                    if (s.isLoggedIn) ...[
-                      const SizedBox(height: 8),
-                      OutlinedButton(
-                        onPressed: _busy ? null : _logout,
-                        style: OutlinedButton.styleFrom(
-                            foregroundColor: scheme.error),
-                        child: Text('退出登录(当前: ${s.nickname})'),
+                          child: Icon(Icons.menu_book_outlined,
+                              size: 32, color: scheme.onPrimaryContainer),
+                        ),
                       ),
+                      const SizedBox(height: 20),
+                      TextField(
+                        controller: _user,
+                        keyboardType: TextInputType.emailAddress,
+                        autofillHints: const [AutofillHints.email],
+                        decoration: const InputDecoration(
+                            labelText: '邮箱',
+                            prefixIcon: Icon(Icons.person_outline)),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _pwd,
+                        obscureText: _obscurePwd,
+                        decoration: InputDecoration(
+                          labelText: '密码',
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          suffixIcon: IconButton(
+                            tooltip: _obscurePwd ? '显示密码' : '隐藏密码',
+                            icon: Icon(_obscurePwd
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined),
+                            onPressed: () =>
+                                setState(() => _obscurePwd = !_obscurePwd),
+                          ),
+                        ),
+                        onSubmitted: (_) => _login(),
+                      ),
+                      const SizedBox(height: 24),
+                      FilledButton(
+                        onPressed: _busy ? null : _login,
+                        child: _busy
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: MotionProgressIndicator(strokeWidth: 2))
+                            : Text(s.isLoggedIn ? '重新登录' : '登录'),
+                      ),
+                      Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        children: [
+                          for (final register in [true, false])
+                            TextButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () async {
+                                      final message =
+                                          await Navigator.push<String>(
+                                        context,
+                                        MaterialPageRoute(
+                                            builder: (_) => AccountAccessPage(
+                                                register: register)),
+                                      );
+                                      if (message != null && context.mounted) {
+                                        showLkSnackBar(context, message);
+                                      }
+                                    },
+                              child: Text(register ? '注册账号' : '重置密码'),
+                            ),
+                        ],
+                      ),
+                      if (s.isLoggedIn) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton(
+                          onPressed: _busy ? null : _logout,
+                          style: OutlinedButton.styleFrom(
+                              foregroundColor: scheme.error),
+                          child: Text('退出登录(当前: ${s.nickname})'),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),

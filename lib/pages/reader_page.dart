@@ -2734,6 +2734,7 @@ class _ReaderPageState extends State<ReaderPage>
 
     showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       sheetAnimationStyle: AppMotion.style(context),
       backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
@@ -3982,6 +3983,7 @@ class _ReaderPageState extends State<ReaderPage>
     var changingSource = false;
     await showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       sheetAnimationStyle: AppMotion.style(context),
       backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
@@ -4411,6 +4413,7 @@ class _ReaderPageState extends State<ReaderPage>
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       sheetAnimationStyle: AppMotion.style(context),
       backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
@@ -6142,6 +6145,7 @@ class _ReaderPageState extends State<ReaderPage>
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
       shape: const RoundedRectangleBorder(

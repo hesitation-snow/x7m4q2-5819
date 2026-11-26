@@ -5,6 +5,7 @@ import '../api/lk_api.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import '../widgets/filtered_list_continuation.dart';
 import 'book_detail_page.dart';
 
@@ -102,7 +103,9 @@ class _ChannelPageState extends State<ChannelPage> {
         title: Text(widget.label),
         actions: [
           IconButton(
-            icon: Icon(_listMode ? Icons.grid_view : Icons.view_list),
+            icon: Icon(_listMode
+                ? Icons.grid_view_rounded
+                : Icons.view_agenda_outlined),
             tooltip: _listMode ? '切换到网格' : '切换到列表',
             onPressed: _toggleListMode,
           ),
@@ -116,9 +119,10 @@ class _ChannelPageState extends State<ChannelPage> {
                 children: [
                   SizedBox(
                     height: MediaQuery.sizeOf(context).height * 0.7,
-                    child: Center(
-                        child: Text(_error!,
-                            style: const TextStyle(color: Colors.grey))),
+                    child: ContentStateView(
+                      message: _error!,
+                      onRetry: () => _load(1, false, forceRefresh: true),
+                    ),
                   ),
                 ],
               )
@@ -285,25 +289,35 @@ class _RankPageState extends State<RankPage> {
           ),
         ],
       ),
-      body: _error != null && _items.isEmpty
-          ? Center(
-              child: Text(_error!, style: const TextStyle(color: Colors.grey)))
-          : MotionRefreshIndicator(
-              onRefresh: () => _load(forceRefresh: true),
-              child: visibleItems.isEmpty && _items.isNotEmpty
-                  ? ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: [
-                        SizedBox(
-                          height: MediaQuery.sizeOf(context).height * 0.65,
-                          child: const Center(
-                            child: Text('当前排行榜作品已根据“隐藏勇者书籍”设置过滤',
-                                style: TextStyle(color: Colors.grey)),
-                          ),
+      body: MotionRefreshIndicator(
+        onRefresh: () => _load(forceRefresh: true),
+        child: _error != null && _items.isEmpty
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  SizedBox(
+                    height: MediaQuery.sizeOf(context).height * 0.65,
+                    child: ContentStateView(
+                      message: _error!,
+                      onRetry: () => _load(forceRefresh: true),
+                    ),
+                  ),
+                ],
+              )
+            : visibleItems.isEmpty && _items.isNotEmpty
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.sizeOf(context).height * 0.65,
+                        child: const ContentStateView(
+                          message: '当前排行榜作品已根据“隐藏勇者书籍”设置过滤',
+                          icon: Icons.visibility_off_outlined,
                         ),
-                      ],
-                    )
-                  : _listMode
+                      ),
+                    ],
+                  )
+                : _listMode
                       ? ListView.builder(
                           physics: const AlwaysScrollableScrollPhysics(),
                           padding: EdgeInsets.fromLTRB(8, 8, 8,

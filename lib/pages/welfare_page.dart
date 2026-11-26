@@ -19,6 +19,7 @@ import '../services/daily_task_claims.dart';
 import '../services/treasure_task.dart';
 import '../services/deadline_countdown.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import '../widgets/m3_menu_sheet.dart';
 import 'book_detail_page.dart';
 import 'dynamic_page.dart';
@@ -1975,7 +1976,7 @@ class _WelfarePageState extends State<WelfarePage>
     // 0. 特殊状态判断（如即将开放）
     if (buttonAction == 'none' &&
         (title.contains('商品') || taskKey.contains('goods'))) {
-      showLkError(context, '该功能暂未开放，敬请期待');
+      showFloatingPrompt(context, '该功能暂未开放，敬请期待');
       return;
     }
 
@@ -2124,7 +2125,7 @@ class _WelfarePageState extends State<WelfarePage>
     if (jumpType == 'share' ||
         taskKey.contains('share') ||
         title.contains('分享')) {
-      showLkError(context, '请在小说详情页或阅读器中点击右上角进行分享');
+      showFloatingPrompt(context, '请在小说详情页或阅读器中点击右上角进行分享');
       return;
     }
 
@@ -2133,16 +2134,17 @@ class _WelfarePageState extends State<WelfarePage>
       if (!_signed) {
         await _claimSign();
       } else {
-        showLkError(context, '今日已签到');
+        showFloatingPrompt(context, '今日已签到');
       }
       return;
     }
 
-    showLkError(context, '请完成对应任务后返回领取奖励');
+    showFloatingPrompt(context, '请完成对应任务后返回领取奖励');
   }
 
   Future<void> _handleNotifyTask(Map<String, dynamic> task) async {
     await showDialog<void>(
+      animationStyle: AppMotion.style(context),
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('消息提醒'),
@@ -2174,6 +2176,7 @@ class _WelfarePageState extends State<WelfarePage>
 
     await showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       showDragHandle: false,
       backgroundColor: Colors.transparent,
@@ -2226,7 +2229,8 @@ class _WelfarePageState extends State<WelfarePage>
                           : (code.isNotEmpty ? '邀请码: $code' : '');
                       if (textToCopy.isNotEmpty) {
                         Clipboard.setData(ClipboardData(text: textToCopy));
-                        showLkError(context, '邀请文案已复制到剪贴板');
+                        showLkSnackBar(context, '邀请文案已复制到剪贴板',
+                            tone: LkNoticeTone.success);
                       }
                     },
                     icon: const Icon(Icons.copy_rounded, size: 16),
@@ -3563,6 +3567,7 @@ class _WelfarePageState extends State<WelfarePage>
     final weekPlan = _listFor(_treasureCard, const ['week_plan', 'weekPlan']);
     showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       showDragHandle: false,
       sheetAnimationStyle: AppMotion.style(context),
@@ -4488,6 +4493,7 @@ class _WelfareCoinRecordsPageState extends State<_WelfareCoinRecordsPageBody> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('轻币记录')),
       body: MotionRefreshIndicator(
@@ -4497,13 +4503,25 @@ class _WelfareCoinRecordsPageState extends State<_WelfareCoinRecordsPageBody> {
             : _records.isEmpty
                 ? ScrollableStatus(
                     child: _error != null
-                        ? FilledButton.tonal(
-                            onPressed: _load, child: const Text('加载失败，点击重试'))
-                        : const Text('暂无轻币记录'))
+                        ? ContentStateView(
+                            message: _error!,
+                            onRetry: _load,
+                          )
+                        : const ContentStateView(
+                            message: '暂无轻币记录',
+                            icon: Icons.monetization_on_outlined,
+                          ),
+                  )
                 : ListView.separated(
                     physics: const AlwaysScrollableScrollPhysics(),
+                    padding: EdgeInsets.fromLTRB(
+                      12,
+                      12,
+                      12,
+                      24 + MediaQuery.paddingOf(context).bottom,
+                    ),
                     itemCount: _records.length + (_hasMore ? 1 : 0),
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (_, index) {
                       if (index == _records.length) {
                         if (_error != null) {
@@ -4538,18 +4556,26 @@ class _WelfareCoinRecordsPageState extends State<_WelfareCoinRecordsPageBody> {
                           record['time'] ??
                           record['record_time'] ??
                           '');
-                      return ListTile(
-                        leading: Icon(
-                          _text(amount).startsWith('-')
-                              ? Icons.remove_circle_outline
-                              : Icons.add_circle_outline,
-                          color: _text(amount).startsWith('-')
-                              ? Colors.orange
-                              : Colors.green,
+                      final negative = _text(amount).startsWith('-');
+                      return Card(
+                        clipBehavior: Clip.antiAlias,
+                        child: ListTile(
+                          leading: Icon(
+                            negative
+                                ? Icons.remove_circle_outline
+                                : Icons.add_circle_outline,
+                            color: negative ? scheme.error : scheme.primary,
+                          ),
+                          title: Text(title),
+                          subtitle: time.isEmpty ? null : Text(time),
+                          trailing: Text(
+                            _text(amount),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: negative ? scheme.error : scheme.primary,
+                            ),
+                          ),
                         ),
-                        title: Text(title),
-                        subtitle: time.isEmpty ? null : Text(time),
-                        trailing: Text(_text(amount)),
                       );
                     },
                   ),

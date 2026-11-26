@@ -9,6 +9,7 @@ import '../api/models.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import 'medal_shop_page.dart';
 
 class MedalCenterPage extends StatelessWidget {
@@ -105,7 +106,8 @@ class _MedalCenterPageState extends State<_MedalCenterPageBody> {
     try {
       await LKApi.toggleMedal(medal.medalId, !medal.equipped);
       if (mounted && _session.isCurrent) {
-        showLkError(context, medal.equipped ? '已取下' : '已佩戴');
+        showLkSnackBar(context, medal.equipped ? '已取下' : '已佩戴',
+            tone: LkNoticeTone.success);
         await _load();
       }
     } catch (e) {
@@ -136,19 +138,15 @@ class _MedalCenterPageState extends State<_MedalCenterPageBody> {
       body: _loading && _medals.isEmpty
           ? const LkLoadingIndicator()
           : _error != null && _medals.isEmpty
-              ? Center(
-                  child: FilledButton.tonal(
-                    onPressed: _load,
-                    child: Text(_error!),
-                  ),
-                )
+              ? ContentStateView(message: _error!, onRetry: _load)
               : MotionRefreshIndicator(
                   onRefresh: _load,
                   child: _medals.isEmpty
                       ? const ScrollableStatus(child: Text('暂无已拥有勋章'))
                       : GridView.builder(
                           physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                          padding: EdgeInsets.fromLTRB(12, 12, 12,
+                              24 + MediaQuery.paddingOf(context).bottom),
                           gridDelegate:
                               SliverGridDelegateWithMaxCrossAxisExtent(
                             maxCrossAxisExtent: 220,

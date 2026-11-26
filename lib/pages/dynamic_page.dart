@@ -647,7 +647,13 @@ class _DynamicPageState extends State<DynamicPage> {
         SizedBox(
           height: 260,
           child: Center(
-              child: Text(message, style: const TextStyle(color: Colors.grey))),
+            child: Text(
+              message,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -832,7 +838,11 @@ class _DynamicPageState extends State<DynamicPage> {
                                 children: [
                                   Text(
                                     '# ${_topicFilter!.name} 暂无相关动态',
-                                    style: const TextStyle(color: Colors.grey),
+                                    style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
                                   ),
                                   const SizedBox(height: 10),
                                   Wrap(
@@ -1109,10 +1119,9 @@ class _DynamicPageState extends State<DynamicPage> {
                                                   padding:
                                                       const EdgeInsets.all(8),
                                                   decoration: BoxDecoration(
-                                                    color:
-                                                        activityBookReferenceColor(
-                                                            Theme.of(context)
-                                                                .brightness),
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .surfaceContainerHigh,
                                                     borderRadius:
                                                         BorderRadius.circular(
                                                             6),
@@ -1149,14 +1158,16 @@ class _DynamicPageState extends State<DynamicPage> {
                                                   '赞 ${d.likeCount} · 评论 ${d.commentCount}',
                                                   style: TextStyle(
                                                       fontSize: 12,
-                                                      color: Colors
-                                                          .grey.shade500)),
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurfaceVariant)),
                                               const Spacer(),
                                               Text(_shortTime(d.time),
                                                   style: TextStyle(
                                                       fontSize: 12,
-                                                      color: Colors
-                                                          .grey.shade400)),
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurfaceVariant)),
                                             ]),
                                           ],
                                         ),
@@ -1176,6 +1187,11 @@ class _DynamicPageState extends State<DynamicPage> {
                           ),
                           if (_hasMore)
                             SliverToBoxAdapter(child: _paginationFooter()),
+                          SliverToBoxAdapter(
+                            child: SizedBox(
+                              height: 12 + MediaQuery.paddingOf(context).bottom,
+                            ),
+                          ),
                         ],
                       ),
       ),
@@ -1251,6 +1267,7 @@ class _DynamicPageState extends State<DynamicPage> {
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       showDragHandle: false,
       isScrollControlled: true,
@@ -1280,7 +1297,10 @@ class _DynamicPageState extends State<DynamicPage> {
                   Navigator.pop(sheetContext);
                   await Clipboard.setData(
                       ClipboardData(text: dynamicWebsiteUrl(d.dynamicId)));
-                  if (mounted) showLkError(context, '已复制动态链接');
+                  if (mounted) {
+                    showLkSnackBar(context, '已复制动态链接',
+                        tone: LkNoticeTone.success);
+                  }
                 },
               ),
               if (loggedIn) ...[

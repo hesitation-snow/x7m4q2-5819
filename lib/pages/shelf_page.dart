@@ -1,3 +1,4 @@
+import '../widgets/m3_controls.dart';
 import '../widgets/m3_menu_sheet.dart';
 import '../services/app_motion.dart';
 import '../services/background_work_queue.dart';
@@ -847,84 +848,51 @@ class _ShelfPageState extends State<ShelfPage> {
     if (_removing.isNotEmpty) return;
     final remove = await showModalBottomSheet<bool>(
       context: context,
+      useSafeArea: true,
       sheetAnimationStyle: AppMotion.style(context),
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (sheetCtx) {
-        final scheme = Theme.of(sheetCtx).colorScheme;
-        return M3MenuSheet(
-          title: '书架操作',
-          icon: Icons.library_books_outlined,
-          children: [
-            Material(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: () => Navigator.pop(sheetCtx, true),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                  child: Row(
-                    children: [
-                      Icon(Icons.playlist_remove_rounded,
-                          size: 22, color: scheme.error),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '从书架移除',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: scheme.error,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              book.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right_rounded,
-                          size: 18, color: scheme.onSurfaceVariant),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+      builder: (sheetCtx) => M3MenuSheet(
+        title: '书架操作',
+        icon: Icons.library_books_outlined,
+        children: [
+          M3OptionTile(
+            icon: Icons.playlist_remove_rounded,
+            title: '从书架移除',
+            subtitle: book.title,
+            danger: true,
+            onTap: () => Navigator.pop(sheetCtx, true),
+          ),
+        ],
+      ),
     );
     if (remove != true || !mounted || !_removing.add(book.bookId)) return;
     final local = _localMode;
     final uid = LKClient.shared.session.uid;
     try {
       final confirmed = await showDialog<bool>(
+        animationStyle: AppMotion.style(context),
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('从书架移除？'),
-          content: Text(
-              '将《${book.title}》移出${local ? '本机' : '云端及本机'}书架。\n仅移出书架，不删除阅读记录、正文或下载文件。'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消')),
-            FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('确认移除')),
-          ],
-        ),
+        builder: (dialogContext) {
+          final scheme = Theme.of(dialogContext).colorScheme;
+          return AlertDialog(
+            title: const Text('从书架移除？'),
+            content: Text(
+                '将《${book.title}》移出${local ? '本机' : '云端及本机'}书架。\n仅移出书架，不删除阅读记录、正文或下载文件。'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('取消')),
+              FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: scheme.error,
+                    foregroundColor: scheme.onError,
+                  ),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('确认移除')),
+            ],
+          );
+        },
       );
       if (confirmed != true ||
           !mounted ||

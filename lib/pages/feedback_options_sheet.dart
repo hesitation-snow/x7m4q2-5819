@@ -11,6 +11,7 @@ const telegramFeedbackUrl = 'https://t.me/FurippuFurappazu';
 Future<void> showFeedbackOptions(BuildContext context) async {
   final destination = await showModalBottomSheet<String>(
     context: context,
+    useSafeArea: true,
     sheetAnimationStyle: AppMotion.style(context),
     backgroundColor: Colors.transparent,
     isScrollControlled: true,

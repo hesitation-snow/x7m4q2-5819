@@ -25,6 +25,7 @@ import '../widgets/liquid_glass_bottom_bar.dart';
 import '../widgets/common.dart';
 import '../widgets/filtered_list_continuation.dart';
 import '../widgets/m3_controls.dart';
+import '../widgets/m3_menu_sheet.dart';
 import 'book_detail_page.dart';
 import 'brave_quiz_page.dart';
 import 'channel_page.dart';
@@ -175,6 +176,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _showCategoryPicker() async {
     final result = await showModalBottomSheet<HomeChannelPickerResult>(
       context: context,
+      useSafeArea: true,
       sheetAnimationStyle: AppMotion.style(context),
       backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
       shape: const RoundedRectangleBorder(
@@ -358,8 +360,9 @@ class _HomePageState extends State<HomePage> {
                                                 children: [
                                                   Icon(Icons.search_rounded,
                                                       size: 19,
-                                                      color:
-                                                          Colors.grey.shade500),
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurfaceVariant),
                                                   const SizedBox(width: 8),
                                                   Flexible(
                                                     child: Text(
@@ -369,8 +372,10 @@ class _HomePageState extends State<HomePage> {
                                                           TextOverflow.ellipsis,
                                                       style: TextStyle(
                                                           fontSize: 13.5,
-                                                          color: Colors
-                                                              .grey.shade500),
+                                                          color: Theme.of(
+                                                                  context)
+                                                              .colorScheme
+                                                              .onSurfaceVariant),
                                                     ),
                                                   ),
                                                 ],
@@ -1478,7 +1483,6 @@ class _SectionTabState extends State<SectionTab> {
         ? source?.where((book) => !book.isBrave).toList(growable: false)
         : source;
     if (items == null || items.isEmpty) return const SizedBox.shrink();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     // 高度按字体缩放动态计算,避免 BOTTOM OVERFLOW
     final titleLine = MediaQuery.textScalerOf(context).scale(12) * 1.3;
     final rowH = 191 + 6 + titleLine * 2 + 10;
@@ -1513,11 +1517,10 @@ class _SectionTabState extends State<SectionTab> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          fontSize: 12,
-                          height: 1.3,
-                          color: isDark
-                              ? Colors.white70
-                              : const Color(0xFF37474F)),
+                        fontSize: 12,
+                        height: 1.3,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
                     ),
                   ]),
             ),
@@ -1530,21 +1533,25 @@ class _SectionTabState extends State<SectionTab> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return MotionRefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          16 + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           Text('分区',
               style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: isDark ? Colors.white : const Color(0xFF263238))),
+                  color: scheme.onSurface)),
           const SizedBox(height: 4),
           Text('按类型浏览作品,每类附最新五部',
-              style: TextStyle(fontSize: 12.5, color: Colors.grey.shade500)),
+              style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant)),
           const SizedBox(height: 14),
           ..._sections.map((s) {
             final latest = _latest[s.$4];
@@ -1553,7 +1560,7 @@ class _SectionTabState extends State<SectionTab> {
               padding: const EdgeInsets.only(bottom: 10),
               child: Material(
                 color: Theme.of(context).cardTheme.color,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
                 clipBehavior: Clip.antiAlias,
                 child: Column(children: [
                   InkWell(
@@ -1586,11 +1593,11 @@ class _SectionTabState extends State<SectionTab> {
                                 Text(s.$3,
                                     style: TextStyle(
                                         fontSize: 12,
-                                        color: Colors.grey.shade500)),
+                                        color: scheme.onSurfaceVariant)),
                               ]),
                         ),
                         Icon(Icons.chevron_right_rounded,
-                            color: Colors.grey.shade400),
+                            color: scheme.onSurfaceVariant),
                       ]),
                     ),
                   ),
@@ -1785,10 +1792,12 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     if (_error == '未登录') {
       return Center(
         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Text('登录后可同步网页端阅读记录', style: TextStyle(color: Colors.grey)),
+          Text('登录后可同步网页端阅读记录',
+              style: TextStyle(color: scheme.onSurfaceVariant)),
           const SizedBox(height: 8),
           FilledButton(
               onPressed: () => Navigator.push(context,
@@ -1803,7 +1812,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
     }
     if (_error != null && _items.isEmpty) {
       return Center(
-          child: Text(_error!, style: const TextStyle(color: Colors.grey)));
+          child: Text(_error!, style: TextStyle(color: scheme.onSurfaceVariant)));
     }
     final hideBrave = LKStore.hideBraveBooks.value;
     final visibleItems = _items
@@ -1825,10 +1834,12 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.history_rounded,
-                        size: 48, color: Colors.grey.shade400),
+                        size: 48,
+                        color: scheme.onSurfaceVariant.withValues(alpha: 0.6)),
                     const SizedBox(height: 12),
-                    const Text('暂无阅读历史',
-                        style: TextStyle(color: Colors.grey, fontSize: 14)),
+                    Text('暂无阅读历史',
+                        style: TextStyle(
+                            color: scheme.onSurfaceVariant, fontSize: 14)),
                   ],
                 ),
               ),
@@ -1855,6 +1866,9 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
         onRefresh: _load,
         child: ListView.separated(
           physics: const AlwaysScrollableScrollPhysics(),
+          padding: EdgeInsets.only(
+            bottom: 16 + MediaQuery.paddingOf(context).bottom,
+          ),
           itemCount: visibleItems.length + (showFooter ? 1 : 0),
           separatorBuilder: (_, __) => const SizedBox(height: 2),
           itemBuilder: (_, i) {
@@ -1872,19 +1886,19 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 alignment: Alignment.centerRight,
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.error,
-                  borderRadius: BorderRadius.circular(14),
+                  color: scheme.error,
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.delete_outline_rounded,
-                        color: Colors.white, size: 22),
-                    SizedBox(width: 6),
+                        color: scheme.onError, size: 22),
+                    const SizedBox(width: 6),
                     Text(
                       '删除',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: scheme.onError,
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
                       ),
@@ -1898,10 +1912,10 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Material(
                   color: Theme.of(context).cardTheme.color,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(16),
                   clipBehavior: Clip.antiAlias,
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(16),
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -1938,8 +1952,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.indigo.shade400)),
+                                          fontSize: 12, color: scheme.primary)),
                                 const SizedBox(height: 6),
                                 if (h.progressPercent > 0)
                                   ClipRRect(
@@ -1949,10 +1962,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                                           .clamp(0.0, 1.0),
                                       minHeight: 5,
                                       backgroundColor:
-                                          Theme.of(context).brightness ==
-                                                  Brightness.dark
-                                              ? Colors.grey.shade800
-                                              : Colors.grey.shade200,
+                                          scheme.surfaceContainerHighest,
                                     ),
                                   ),
                                 const SizedBox(height: 5),
@@ -1966,7 +1976,7 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
                                   ].join(' · '),
                                   style: TextStyle(
                                       fontSize: 11,
-                                      color: Colors.grey.shade500),
+                                      color: scheme.onSurfaceVariant),
                                 ),
                               ]),
                         ),
@@ -2253,36 +2263,39 @@ class _MyTabState extends State<MyTab> {
             ),
           ),
           const SizedBox(height: 16),
-          if (s.isLoggedIn)
-            _row(
-                context,
-                Icons.card_giftcard_outlined,
-                '任务中心',
-                () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const WelfarePage()))),
-          if (s.isLoggedIn)
-            _row(context, Icons.chat_bubble_outline, '消息中心', () async {
-              await Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const MessagesPage()));
-              if (mounted) {
-                unawaited(_reloadMessageSummary(_profileRequest));
-              }
-            }, badgeCount: _messageSummary.unreadCount),
-          if (s.isLoggedIn)
-            _row(
-                context,
-                Icons.military_tech_outlined,
-                '勋章中心',
-                () => Navigator.push(
+          AppSettingsGroup(
+            children: [
+              if (s.isLoggedIn) ...[
+                _row(
                     context,
-                    MaterialPageRoute(
-                        builder: (_) => const MedalCenterPage()))),
-          _row(
-              context,
-              Icons.settings_outlined,
-              '设置',
-              () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const SettingsPage()))),
+                    Icons.card_giftcard_outlined,
+                    '任务中心',
+                    () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const WelfarePage()))),
+                _row(context, Icons.chat_bubble_outline, '消息中心', () async {
+                  await Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const MessagesPage()));
+                  if (mounted) {
+                    unawaited(_reloadMessageSummary(_profileRequest));
+                  }
+                }, badgeCount: _messageSummary.unreadCount),
+                _row(
+                    context,
+                    Icons.military_tech_outlined,
+                    '勋章中心',
+                    () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const MedalCenterPage()))),
+              ],
+              _row(
+                  context,
+                  Icons.settings_outlined,
+                  '设置',
+                  () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const SettingsPage()))),
+            ],
+          ),
         ],
       ),
     );
@@ -2291,24 +2304,21 @@ class _MyTabState extends State<MyTab> {
   Widget _row(
       BuildContext context, IconData icon, String title, VoidCallback onTap,
       {String? subtitle, int badgeCount = 0}) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: AppSettingIcon(icon),
-        title: Text(title),
-        subtitle: subtitle == null ? null : Text(subtitle),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (badgeCount > 0) ...[
-              Badge(label: Text(badgeCount > 99 ? '99+' : '$badgeCount')),
-              const SizedBox(width: 8),
-            ],
-            const Icon(Icons.chevron_right),
+    return ListTile(
+      leading: AppSettingIcon(icon),
+      title: Text(title),
+      subtitle: subtitle == null ? null : Text(subtitle),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (badgeCount > 0) ...[
+            Badge(label: Text(badgeCount > 99 ? '99+' : '$badgeCount')),
+            const SizedBox(width: 8),
           ],
-        ),
-        onTap: onTap,
+          const Icon(Icons.chevron_right_rounded),
+        ],
       ),
+      onTap: onTap,
     );
   }
 
@@ -2348,141 +2358,107 @@ class _MyTabState extends State<MyTab> {
   Future<void> _showRankExpSheet(LKRankProgress rank) async {
     await showModalBottomSheet<void>(
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
-      showDragHandle: true,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
       sheetAnimationStyle: AppMotion.style(context),
       builder: (sheetCtx) {
-        final theme = Theme.of(sheetCtx);
-        final scheme = theme.colorScheme;
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(sheetCtx).height * 0.78,
+        final scheme = Theme.of(sheetCtx).colorScheme;
+        return M3MenuSheet(
+          title: '身份组升级经验',
+          icon: Icons.workspace_premium_outlined,
+          description:
+              '当前 ${formatLKExpNumber(rank.exp)} 经验 · ${rank.nextHintText}',
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: rank.totalProgress,
+                minHeight: 6,
+                backgroundColor: scheme.surfaceContainerHighest,
+              ),
             ),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
+            const SizedBox(height: 14),
+            for (final tier in kLKRankTiers)
+              Builder(builder: (_) {
+                final isCurrent = tier.name == rank.current.name;
+                final reached = rank.exp >= tier.minExp;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                  decoration: BoxDecoration(
+                    color: isCurrent
+                        ? scheme.primaryContainer.withValues(alpha: 0.75)
+                        : scheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(12),
+                    border: isCurrent
+                        ? Border.all(
+                            color: scheme.primary.withValues(alpha: 0.5))
+                        : null,
+                  ),
+                  child: Row(
                     children: [
-                      const AppSettingIcon(Icons.workspace_premium_outlined),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('身份组升级经验',
-                                style: theme.textTheme.titleMedium
-                                    ?.copyWith(fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 2),
-                            Text(
-                              '当前 ${formatLKExpNumber(rank.exp)} 经验 · ${rank.nextHintText}',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
+                      Icon(
+                        reached
+                            ? Icons.check_circle_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        size: 18,
+                        color: isCurrent
+                            ? scheme.primary
+                            : (reached
+                                ? scheme.primary.withValues(alpha: 0.7)
+                                : scheme.outline),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        tier.name,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight:
+                              isCurrent ? FontWeight.w700 : FontWeight.w500,
+                          color: isCurrent
+                              ? scheme.onPrimaryContainer
+                              : scheme.onSurface,
+                        ),
+                      ),
+                      if (isCurrent) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: scheme.primary,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '当前',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onPrimary,
                             ),
-                          ],
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                      Text(
+                        '${formatLKExpNumber(tier.minExp)} 经验起',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight:
+                              isCurrent ? FontWeight.w600 : FontWeight.normal,
+                          color: isCurrent
+                              ? scheme.onPrimaryContainer
+                              : scheme.onSurfaceVariant,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: LinearProgressIndicator(
-                      value: rank.totalProgress,
-                      minHeight: 6,
-                      backgroundColor: scheme.surfaceContainerHighest,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  for (final tier in kLKRankTiers) ...[
-                    Builder(builder: (_) {
-                      final isCurrent = tier.name == rank.current.name;
-                      final reached = rank.exp >= tier.minExp;
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 11),
-                        decoration: BoxDecoration(
-                          color: isCurrent
-                              ? scheme.primaryContainer.withValues(alpha: 0.75)
-                              : scheme.surfaceContainerLow,
-                          borderRadius: BorderRadius.circular(12),
-                          border: isCurrent
-                              ? Border.all(
-                                  color: scheme.primary.withValues(alpha: 0.5))
-                              : null,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              reached
-                                  ? Icons.check_circle_rounded
-                                  : Icons.radio_button_unchecked_rounded,
-                              size: 18,
-                              color: isCurrent
-                                  ? scheme.primary
-                                  : (reached
-                                      ? scheme.primary.withValues(alpha: 0.7)
-                                      : scheme.outline),
-                            ),
-                            const SizedBox(width: 10),
-                            Text(
-                              tier.name,
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: isCurrent
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                                color: isCurrent
-                                    ? scheme.onPrimaryContainer
-                                    : scheme.onSurface,
-                              ),
-                            ),
-                            if (isCurrent) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 1.5),
-                                decoration: BoxDecoration(
-                                  color: scheme.primary,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  '当前',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                    color: scheme.onPrimary,
-                                  ),
-                                ),
-                              ),
-                            ],
-                            const Spacer(),
-                            Text(
-                              '${formatLKExpNumber(tier.minExp)} 经验起',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: isCurrent
-                                    ? FontWeight.w600
-                                    : FontWeight.normal,
-                                color: isCurrent
-                                    ? scheme.onPrimaryContainer
-                                    : scheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                  ],
-                ],
-              ),
-            ),
-          ),
+                );
+              }),
+          ],
         );
       },
     );
@@ -2517,7 +2493,7 @@ class _MyTabState extends State<MyTab> {
               _profileChip(
                 profile.isBrave ? Icons.shield_outlined : Icons.person_outline,
                 profile.isBrave ? '勇者' : '普通用户',
-                color: profile.isBrave ? Colors.deepOrange : null,
+                color: profile.isBrave ? scheme.tertiary : null,
                 onTap: profile.isBrave ? null : _confirmOpenBraveQuiz,
               ),
             ],

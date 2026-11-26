@@ -17,6 +17,8 @@ import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
 import '../widgets/emoji_panel.dart';
 import '../widgets/emoji_text.dart';
+import '../widgets/m3_controls.dart';
+import '../widgets/m3_menu_sheet.dart';
 import 'media_viewer_page.dart';
 import 'user_profile_page.dart';
 
@@ -516,17 +518,18 @@ class _CommentsPageState extends State<CommentsPage> {
 
   Widget _likeButton(dynamic c) {
     final liked = c.liked as bool;
+    final scheme = Theme.of(context).colorScheme;
+    final idleColor = scheme.onSurfaceVariant;
     return Row(mainAxisSize: MainAxisSize.min, children: [
       Text('${c.likeCount}',
-          style: TextStyle(
-              fontSize: 11,
-              color: liked ? Colors.redAccent : Colors.grey.shade500)),
+          style:
+              TextStyle(fontSize: 11, color: liked ? scheme.error : idleColor)),
       IconButton(
         visualDensity: VisualDensity.compact,
         icon: Icon(
           liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
           size: 18,
-          color: liked ? Colors.redAccent : Colors.grey.shade500,
+          color: liked ? scheme.error : idleColor,
         ),
         onPressed: () => _toggleLike(c),
       ),
@@ -539,7 +542,9 @@ class _CommentsPageState extends State<CommentsPage> {
     final text = (c.content as String)
         .replaceAll(RegExp(r'\{:[^:]+:\}|\[[a-zA-Z]+:\d+\]'), '');
     await Clipboard.setData(ClipboardData(text: text));
-    if (mounted) showLkError(context, '已复制评论');
+    if (mounted) {
+      showLkSnackBar(context, '已复制评论', tone: LkNoticeTone.success);
+    }
   }
 
   Widget _mediaGallery(List<LKDynamicMedia> media) {
@@ -607,8 +612,9 @@ class _CommentsPageState extends State<CommentsPage> {
                       style: const TextStyle(fontWeight: FontWeight.w600)),
                 ),
                 Text(item.time,
-                    style:
-                        TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant)),
               ]),
               const SizedBox(height: 12),
               if (item.title.trim().isNotEmpty &&
@@ -669,7 +675,9 @@ class _CommentsPageState extends State<CommentsPage> {
               if (poll != null) _pollCard(poll),
               const SizedBox(height: 8),
               Text('评论 ${item.commentCount} · 赞 ${item.likeCount}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
             ],
           ),
         ),
@@ -689,20 +697,25 @@ class _CommentsPageState extends State<CommentsPage> {
     final text = buffer.toString().trim();
     if (text.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: text));
-    if (mounted) showLkError(context, '已复制动态内容');
+    if (mounted) {
+      showLkSnackBar(context, '已复制动态内容', tone: LkNoticeTone.success);
+    }
   }
 
   Future<void> _copyDynamicUrl(LKDynamicItem item) async {
     if (item.dynamicId <= 0) return;
     await Clipboard.setData(
         ClipboardData(text: dynamicWebsiteUrl(item.dynamicId)));
-    if (mounted) showLkError(context, '已复制动态链接');
+    if (mounted) {
+      showLkSnackBar(context, '已复制动态链接', tone: LkNoticeTone.success);
+    }
   }
 
   Widget _pollCard(LKDynamicPoll poll) {
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       margin: const EdgeInsets.only(top: 12),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      color: scheme.surfaceContainerHighest,
       child: Padding(
         padding: const EdgeInsets.all(10),
         child: Column(
@@ -713,25 +726,49 @@ class _CommentsPageState extends State<CommentsPage> {
             if (poll.description.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(poll.description,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                  style:
+                      TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
             ],
             ...poll.options.map((option) {
               final selected = _selectedPollOptions.contains(option.id);
+              final locked = poll.voted || poll.ended;
+              final subtitle = locked
+                  ? Text(
+                      '${option.voteCount} 票${option.percent > 0 ? ' · ${option.percent.toStringAsFixed(1)}%' : ''}')
+                  : null;
+              if (!poll.multiple) {
+                return ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    selected
+                        ? Icons.radio_button_checked_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
+                  title: Text(option.text),
+                  subtitle: subtitle,
+                  enabled: !locked,
+                  onTap: locked
+                      ? null
+                      : () => setState(() {
+                            _selectedPollOptions
+                              ..clear()
+                              ..add(option.id);
+                          }),
+                );
+              }
               return CheckboxListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 value: selected,
                 title: Text(option.text),
-                subtitle: poll.voted || poll.ended
-                    ? Text(
-                        '${option.voteCount} 票${option.percent > 0 ? ' · ${option.percent.toStringAsFixed(1)}%' : ''}')
-                    : null,
-                onChanged: poll.voted || poll.ended
+                subtitle: subtitle,
+                onChanged: locked
                     ? null
                     : (value) {
                         setState(() {
                           if (value == true) {
-                            if (!poll.multiple) _selectedPollOptions.clear();
                             _selectedPollOptions.add(option.id);
                           } else {
                             _selectedPollOptions.remove(option.id);
@@ -841,10 +878,12 @@ class _CommentsPageState extends State<CommentsPage> {
       }
     }
     if (replies.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.only(top: 6),
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
         child: Text('暂时没有可显示的回复',
-            style: TextStyle(fontSize: 12, color: Colors.grey)),
+            style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant)),
       );
     }
     return Container(
@@ -932,18 +971,19 @@ class _CommentsPageState extends State<CommentsPage> {
           ? const Icon(Icons.person)
           : null,
     );
+    final scheme = Theme.of(context).colorScheme;
     final author = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(c.nickname,
-            style: TextStyle(fontSize: 13, color: Colors.indigo.shade400)),
+            style: TextStyle(fontSize: 13, color: scheme.primary)),
         if (c.replyToNickname.isNotEmpty)
           Text('回复 @${c.replyToNickname}',
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
         if (c.time.isNotEmpty)
           Text(
             _formatCommentTime(c.time),
-            style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
+            style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
           ),
       ],
     );
@@ -998,6 +1038,41 @@ class _CommentsPageState extends State<CommentsPage> {
     );
   }
 
+  void _showDynamicActionsSheet() {
+    final item = _dynamicDetail ?? widget.dynamicPreview;
+    if (item == null) return;
+    showModalBottomSheet<void>(
+      sheetAnimationStyle: AppMotion.style(context),
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      showDragHandle: false,
+      builder: (sheetCtx) => M3MenuSheet(
+        title: '动态操作',
+        icon: Icons.more_horiz_rounded,
+        children: [
+          M3OptionTile(
+            title: '复制动态链接',
+            icon: Icons.link_rounded,
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _copyDynamicUrl(item);
+            },
+          ),
+          M3OptionTile(
+            title: '复制动态内容',
+            icon: Icons.copy_rounded,
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _copyDynamicContent(item);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       // 键盘 inset 只由输入行处理:动画期间评论列表不重建,交互更流畅
@@ -1010,40 +1085,10 @@ class _CommentsPageState extends State<CommentsPage> {
                 : '书评'),
         actions: [
           if (_isDynamic)
-            PopupMenuButton<String>(
+            IconButton(
               icon: const Icon(Icons.more_vert_rounded),
               tooltip: '更多',
-              onSelected: (val) {
-                final item = _dynamicDetail ?? widget.dynamicPreview;
-                if (item == null) return;
-                if (val == 'copy_link') {
-                  _copyDynamicUrl(item);
-                } else if (val == 'copy_content') {
-                  _copyDynamicContent(item);
-                }
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                  value: 'copy_link',
-                  child: Row(
-                    children: [
-                      Icon(Icons.link_rounded, size: 20),
-                      SizedBox(width: 10),
-                      Text('复制动态链接'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'copy_content',
-                  child: Row(
-                    children: [
-                      Icon(Icons.copy_rounded, size: 20),
-                      SizedBox(width: 10),
-                      Text('复制动态内容'),
-                    ],
-                  ),
-                ),
-              ],
+              onPressed: _showDynamicActionsSheet,
             ),
         ],
       ),
@@ -1078,7 +1123,11 @@ class _CommentsPageState extends State<CommentsPage> {
                                         : _isVolume
                                             ? '本卷还没有评论'
                                             : '还没有书评，来抢沙发'),
-                                style: const TextStyle(color: Colors.grey),
+                                style: TextStyle(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
                               ),
                             ),
                           );

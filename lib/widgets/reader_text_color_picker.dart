@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/app_motion.dart';
+
 /// 十六进制颜色解析工具
 /// 支持 #RRGGBB, RRGGBB, #RGB, RGB 以及可选的 8 位十六进制
 Color? parseHexColor(String input) {
@@ -91,6 +93,7 @@ Future<ReaderTextColorResult?> showReaderTextColorDialog({
   bool isCustom = false,
 }) {
   return showDialog<ReaderTextColorResult>(
+    animationStyle: AppMotion.style(context),
     context: context,
     builder: (ctx) => ReaderTextColorDialog(
       initialColor: initialColor,

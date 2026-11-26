@@ -12,6 +12,7 @@ import '../services/avatar_cache.dart';
 import '../widgets/filtered_list_continuation.dart';
 import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import '../widgets/emoji_text.dart';
 import 'book_detail_page.dart';
 import 'dm_chat_page.dart';
@@ -384,11 +385,9 @@ class _UserProfilePageState extends State<UserProfilePage>
     if (_home == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('个人主页')),
-        body: Center(
-          child: FilledButton.tonal(
-            onPressed: _loadInitial,
-            child: Text(_error ?? '个人主页加载失败，请重试'),
-          ),
+        body: ContentStateView(
+          message: _error ?? '个人主页加载失败，请重试',
+          onRetry: _loadInitial,
         ),
       );
     }
@@ -638,7 +637,8 @@ class _UserProfilePageState extends State<UserProfilePage>
                 onLoadMore: () => _loadDynamics(append: true))
             : ListView.separated(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.only(top: 8, bottom: 16),
+                padding: EdgeInsets.only(
+                    top: 8, bottom: 16 + MediaQuery.paddingOf(context).bottom),
                 itemCount: visibleDynamics.length + (_dynamicHasMore ? 1 : 0),
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (_, index) {
@@ -716,7 +716,8 @@ class _UserProfilePageState extends State<UserProfilePage>
                                   ? '用户 ${item.authorUid}'
                                   : item.nickname,
                               style: TextStyle(
-                                  color: Colors.indigo.shade400, fontSize: 13),
+                                  color: Theme.of(context).colorScheme.primary,
+                                  fontSize: 13),
                             ),
                           ),
                           ...medals.take(5).map(
@@ -767,8 +768,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                       margin: const EdgeInsets.only(top: 8),
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: activityBookReferenceColor(
-                            Theme.of(context).brightness),
+                        color: Theme.of(context).colorScheme.surfaceContainerHigh,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
@@ -796,11 +796,17 @@ class _UserProfilePageState extends State<UserProfilePage>
                   children: [
                     Text('赞 ${item.likeCount} · 评论 ${item.commentCount}',
                         style: TextStyle(
-                            fontSize: 12, color: Colors.grey.shade500)),
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant)),
                     const Spacer(),
                     Text(_shortTime(item.time),
                         style: TextStyle(
-                            fontSize: 12, color: Colors.grey.shade400)),
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant)),
                   ],
                 ),
               ],
@@ -812,15 +818,21 @@ class _UserProfilePageState extends State<UserProfilePage>
   }
 
   Widget _eventChip(String text) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: isDark ? Colors.grey.shade800 : Colors.grey.shade300,
-        borderRadius: BorderRadius.circular(4),
+        color: scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(6),
       ),
-      child:
-          Text(text, style: const TextStyle(fontSize: 10, color: Colors.white)),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+          color: scheme.onSecondaryContainer,
+        ),
+      ),
     );
   }
 
@@ -917,7 +929,8 @@ class _UserProfilePageState extends State<UserProfilePage>
                 onLoadMore: _loadMorePublications)
             : ListView.separated(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.only(top: 8, bottom: 16),
+                padding: EdgeInsets.only(
+                    top: 8, bottom: 16 + MediaQuery.paddingOf(context).bottom),
                 itemCount: publications.length + (_home!.hasMore ? 1 : 0),
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (_, index) {
@@ -962,7 +975,8 @@ class _UserProfilePageState extends State<UserProfilePage>
                 onLoadMore: _loadMoreBookshelf)
             : ListView.separated(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.only(top: 8, bottom: 16),
+                padding: EdgeInsets.only(
+                    top: 8, bottom: 16 + MediaQuery.paddingOf(context).bottom),
                 itemCount: books.length + (shelf.hasMore ? 1 : 0),
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (_, index) {
@@ -1008,19 +1022,25 @@ class _UserProfilePageState extends State<UserProfilePage>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFE53935).withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(4),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .error
+                        .withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(5),
                     border: Border.all(
-                      color: const Color(0xFFE53935).withValues(alpha: 0.4),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .error
+                          .withValues(alpha: 0.4),
                       width: 0.8,
                     ),
                   ),
-                  child: const Text(
+                  child: Text(
                     '勇者',
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFFE53935),
+                      color: Theme.of(context).colorScheme.error,
                     ),
                   ),
                 ),
@@ -1075,12 +1095,14 @@ class _UserProfilePageState extends State<UserProfilePage>
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
-        const SizedBox(height: 150),
-        Center(child: Text(text, style: const TextStyle(color: Colors.grey))),
-        if (onRetry != null)
-          Center(
-            child: TextButton(onPressed: onRetry, child: const Text('重试')),
-          ),
+        const SizedBox(height: 96),
+        ContentStateView(
+          message: text,
+          icon: onRetry != null
+              ? Icons.error_outline_rounded
+              : Icons.inbox_outlined,
+          onRetry: onRetry,
+        ),
       ],
     );
   }

@@ -815,6 +815,7 @@ class _SettingsPageState extends State<SettingsPage> {
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetCtx) => M3MenuSheet(
@@ -844,6 +845,7 @@ class _SettingsPageState extends State<SettingsPage> {
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetCtx) => M3MenuSheet(

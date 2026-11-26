@@ -18,6 +18,7 @@ Future<LKTopicTag?> showTopicPickerSheet(
   return showModalBottomSheet<LKTopicTag>(
     sheetAnimationStyle: AppMotion.style(context),
     context: context,
+    useSafeArea: true,
     showDragHandle: false,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
@@ -190,17 +191,28 @@ class _TopicPickerSheetState extends State<_TopicPickerSheet> {
                         borderRadius: BorderRadius.circular(14),
                         borderSide: BorderSide.none,
                       ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: scheme.primary,
+                          width: 1.5,
+                        ),
+                      ),
                     ),
                   ),
                 ),
                 if (_loading && _topics.isNotEmpty)
-                  const LinearProgressIndicator(minHeight: 2),
+                  const MotionLinearProgressIndicator(minHeight: 2),
                 Flexible(
                   child: _loading && _topics.isEmpty
                       ? const SizedBox(
                           height: 180,
                           child: Center(
-                            child: CircularProgressIndicator(strokeWidth: 2.5),
+                            child: MotionProgressIndicator(strokeWidth: 2.5),
                           ),
                         )
                       : _topics.isEmpty

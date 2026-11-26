@@ -26,6 +26,7 @@ Future<bool?> showLogoutScopeDialog(BuildContext context) {
   return showModalBottomSheet<bool>(
     sheetAnimationStyle: AppMotion.style(context),
     context: context,
+    useSafeArea: true,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     showDragHandle: false,
@@ -58,6 +59,7 @@ Future<bool> confirmUnfollowUser(BuildContext context,
   final name =
       (nickname != null && nickname.trim().isNotEmpty) ? nickname : '该用户';
   final result = await showDialog<bool>(
+    animationStyle: AppMotion.style(context),
     context: context,
     builder: (ctx) => AlertDialog(
       title: const Text('取消关注'),
@@ -67,12 +69,13 @@ Future<bool> confirmUnfollowUser(BuildContext context,
           onPressed: () => Navigator.of(ctx).pop(false),
           child: const Text('取消'),
         ),
-        TextButton(
-          onPressed: () => Navigator.of(ctx).pop(true),
-          child: Text(
-            '确定',
-            style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(ctx).colorScheme.error,
+            foregroundColor: Theme.of(ctx).colorScheme.onError,
           ),
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('确定'),
         ),
       ],
     ),
@@ -301,6 +304,7 @@ class _CoverImageState extends State<CoverImage> {
   }
 
   Widget _buildPlaceholder(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
         final double effectiveWidth = widget.width.isFinite && widget.width > 0
@@ -316,14 +320,17 @@ class _CoverImageState extends State<CoverImage> {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Colors.indigo.shade100, Colors.indigo.shade200],
+              colors: [
+                scheme.surfaceContainerHigh,
+                scheme.surfaceContainerHighest,
+              ],
             ),
             borderRadius: BorderRadius.circular(widget.radius),
           ),
           child: Center(
             child: Icon(
               Icons.menu_book_rounded,
-              color: Colors.indigo.shade400,
+              color: scheme.onSurfaceVariant.withValues(alpha: 0.65),
               size: iconSize,
             ),
           ),
@@ -492,18 +499,22 @@ class BookCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cardColor =
         Theme.of(context).cardTheme.color ?? scheme.surfaceContainerLow;
-    final titleColor =
-        isDark ? const Color(0xFFECEDF1) : const Color(0xFF263238);
-    final borderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;
+    final titleColor = scheme.onSurface;
     final status = bookStatusLabel(book);
     return RepaintBoundary(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
         child: Material(
           color: cardColor,
-          borderRadius: BorderRadius.circular(14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(
+              color: scheme.outlineVariant.withValues(alpha: isDark ? 0.25 : 0.2),
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
           child: InkWell(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
             onTap: onTap,
             onLongPress: onLongPress,
             child: Padding(
@@ -549,11 +560,9 @@ class BookCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                   fontSize: 12,
-                                  color: isDark
-                                      ? Colors.grey.shade400
-                                      : Colors.grey.shade600),
+                                  color: scheme.onSurfaceVariant),
                             ),
-                            _statusBadge(scheme, status, borderColor),
+                            _statusBadge(scheme, status),
                             if (book.isBrave) _braveBadge(scheme),
                             if (book.unreadChapterCount > 0)
                               Container(
@@ -604,9 +613,7 @@ class BookCard extends StatelessWidget {
                             style: TextStyle(
                                 fontSize: 12,
                                 height: 1.45,
-                                color: isDark
-                                    ? Colors.grey.shade400
-                                    : Colors.grey.shade600),
+                                color: scheme.onSurfaceVariant),
                           ),
                         ],
                         // 最后更新时间
@@ -632,9 +639,7 @@ class BookCard extends StatelessWidget {
                     ),
                   ),
                   Icon(Icons.chevron_right_rounded,
-                      size: 20,
-                      color:
-                          isDark ? Colors.grey.shade700 : Colors.grey.shade300),
+                      size: 20, color: scheme.outlineVariant),
                 ],
               ),
             ),
@@ -653,7 +658,7 @@ class BookCard extends StatelessWidget {
     } else if (r == 3) {
       color = const Color(0xFFBF6B4A);
     } else {
-      color = Colors.grey.shade700;
+      color = scheme.onSurfaceVariant;
     }
     return Container(
       width: 26,
@@ -677,9 +682,9 @@ class BookCard extends StatelessWidget {
     );
   }
 
-  Widget _statusBadge(ColorScheme scheme, String status, Color borderColor) {
+  Widget _statusBadge(ColorScheme scheme, String status) {
     final done = status == '完结';
-    final color = done ? Colors.teal : scheme.primary;
+    final color = done ? scheme.tertiary : scheme.primary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
       decoration: BoxDecoration(
@@ -694,7 +699,7 @@ class BookCard extends StatelessWidget {
   }
 
   Widget _braveBadge(ColorScheme scheme) {
-    const color = Color(0xFFE53935);
+    final color = scheme.error;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
       decoration: BoxDecoration(
@@ -702,7 +707,7 @@ class BookCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(5),
         border: Border.all(color: color.withValues(alpha: 0.4), width: 0.6),
       ),
-      child: const Text(
+      child: Text(
         '勇者',
         style: TextStyle(
           fontSize: 10,
@@ -936,6 +941,7 @@ Future<void> showGridColumnsSheet(BuildContext context) async {
   await showModalBottomSheet<void>(
     sheetAnimationStyle: AppMotion.style(context),
     context: context,
+    useSafeArea: true,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     showDragHandle: false,
@@ -978,7 +984,6 @@ class BookGridCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
     final status = bookStatusLabel(book);
 
@@ -1004,7 +1009,7 @@ class BookGridCard extends StatelessWidget {
           style: TextStyle(
             fontSize: isCompact ? 10.0 : 10.5,
             height: 1.25,
-            color: Colors.grey.shade500,
+            color: scheme.onSurfaceVariant,
           ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -1193,9 +1198,7 @@ class BookGridCard extends StatelessWidget {
                         : (isCompact ? 12.0 : (isShelf ? 13.0 : 13.5)),
                     fontWeight: FontWeight.w600,
                     height: isShelf ? 1.22 : 1.25,
-                    color: isDark
-                        ? const Color(0xFFECEDF1)
-                        : const Color(0xFF263238),
+                    color: scheme.onSurface,
                   ),
                 ),
                 // 次要信息行：密集模式及书架模式隐藏，紧凑模式显示精简字数，标准模式显示完整标签与字数
@@ -1282,6 +1285,8 @@ LkNoticeTone inferLkNoticeTone(Object source, {bool defaultError = false}) {
     '已领取',
     '已签到',
     '已取消关注',
+    '已佩戴',
+    '已取下',
   ];
   for (final hint in successHints) {
     if (text.contains(hint)) return LkNoticeTone.success;

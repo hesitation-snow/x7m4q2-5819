@@ -16,6 +16,7 @@ import 'comments_page.dart';
 Future<void> showHomeBookActions(BuildContext context, LKBook book) async {
   final openComments = await showModalBottomSheet<bool>(
     context: context,
+    useSafeArea: true,
     sheetAnimationStyle: AppMotion.style(context),
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
@@ -177,7 +178,7 @@ class _HomeBookActionsState extends State<_HomeBookActions> {
               ? const SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: MotionProgressIndicator(strokeWidth: 2))
               : null,
         ),
         M3OptionTile(

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/app_motion.dart';
 import '../services/custom_ssml_tts.dart';
 import '../services/reader_audio_handler.dart';
 import '../widgets/m3_controls.dart';
@@ -766,7 +767,7 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
 
   Widget _progress() => const SizedBox.square(
         dimension: 18,
-        child: CircularProgressIndicator(strokeWidth: 2),
+        child: MotionProgressIndicator(strokeWidth: 2),
       );
 
   @override

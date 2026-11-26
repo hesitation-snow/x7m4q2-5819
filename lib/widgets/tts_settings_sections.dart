@@ -33,6 +33,7 @@ Future<T?> showTtsOptionSheet<T>({
   return showModalBottomSheet<T>(
     sheetAnimationStyle: AppMotion.style(context),
     context: context,
+    useSafeArea: true,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (sheetCtx) => M3MenuSheet(
@@ -233,6 +234,7 @@ class TtsSystemVoicesSection extends StatelessWidget {
     await showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
+      useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetCtx) => StatefulBuilder(

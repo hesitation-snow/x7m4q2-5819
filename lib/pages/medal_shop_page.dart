@@ -9,6 +9,7 @@ import '../api/lk_client.dart';
 import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 
 class MedalShopPage extends StatelessWidget {
   const MedalShopPage({super.key});
@@ -429,7 +430,7 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
     try {
       await LKApi.claimMedal(id);
       if (mounted && _session.isCurrent) {
-        showLkError(context, '领取成功');
+        showLkSnackBar(context, '领取成功', tone: LkNoticeTone.success);
         await _load();
       }
     } catch (e) {
@@ -452,7 +453,7 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
         goodsId: goodsId > 0 ? goodsId : null,
       );
       if (mounted && _session.isCurrent) {
-        showLkError(context, '兑换成功');
+        showLkSnackBar(context, '兑换成功', tone: LkNoticeTone.success);
         await _load();
       }
     } catch (e) {
@@ -521,9 +522,7 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
       body: _loading && _data == null
           ? const Center(child: LkLoadingIndicator())
           : _error != null && _data == null
-              ? Center(
-                  child: FilledButton.tonal(
-                      onPressed: _load, child: Text(_error!)))
+              ? ContentStateView(message: _error!, onRetry: _load)
               : Column(
                   children: [
                     Material(
@@ -664,7 +663,9 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
         if (!isTask && price.isNotEmpty) '$price 轻币 · 永久有效',
       ].join(' · ')),
       trailing: owned
-          ? Text(action, style: TextStyle(color: Colors.grey.shade500))
+          ? Text(action,
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant))
           : FilledButton.tonal(
               onPressed: id <= 0 || _busy.contains(key)
                   ? null

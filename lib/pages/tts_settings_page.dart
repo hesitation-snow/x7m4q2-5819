@@ -324,7 +324,7 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
                 ),
                 if (_changingSource) ...[
                   const SizedBox(height: 8),
-                  const LinearProgressIndicator(minHeight: 2),
+                  const MotionLinearProgressIndicator(minHeight: 2),
                 ],
                 const SizedBox(height: 20),
                 const AppSectionTitle('语速'),

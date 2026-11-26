@@ -324,6 +324,7 @@ Future<void> showListeningMenu(BuildContext context) {
   return showModalBottomSheet<void>(
     sheetAnimationStyle: AppMotion.style(context),
     context: context,
+    useSafeArea: true,
     backgroundColor: Colors.transparent,
     showDragHandle: false,
     isScrollControlled: true,

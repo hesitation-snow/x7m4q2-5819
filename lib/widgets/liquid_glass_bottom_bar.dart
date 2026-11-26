@@ -286,7 +286,9 @@ class _LiquidGlassCapsuleState extends State<LiquidGlassCapsule> {
     );
     final tint = DecoratedBox(
       decoration: BoxDecoration(
-        color: (dark ? const Color(0xff202026) : const Color(0xfff5f5f7))
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHigh
             .withValues(alpha: optics.tint * fraction),
         borderRadius: BorderRadius.circular(radius),
       ),
@@ -658,9 +660,10 @@ class _LiquidGlassBottomBarState extends State<LiquidGlassBottomBar>
               final sigma = optics.blur;
               final tint = DecoratedBox(
                   decoration: BoxDecoration(
-                color:
-                    (dark ? const Color(0xff202026) : const Color(0xfff5f5f7))
-                        .withValues(alpha: optics.tint * fraction),
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHigh
+                    .withValues(alpha: optics.tint * fraction),
                 borderRadius: BorderRadius.circular(barHeight / 2),
               ));
               return Listener(

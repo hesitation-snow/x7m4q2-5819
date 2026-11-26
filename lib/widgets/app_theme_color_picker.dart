@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../api/store.dart';
+import '../services/app_motion.dart';
 import 'm3_menu_sheet.dart';
 
 /// App-wide theme color presets
@@ -24,6 +25,8 @@ const List<(String, Color)> kAppThemeColorPresets = [
 Future<void> showAppThemeColorSheet(BuildContext context) {
   return showModalBottomSheet<void>(
     context: context,
+    useSafeArea: true,
+    sheetAnimationStyle: AppMotion.style(context),
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     builder: (ctx) => const AppThemeColorSheet(),
