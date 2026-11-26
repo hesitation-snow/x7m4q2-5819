@@ -35,53 +35,57 @@ class BookAccessProbe {
     }
   }
 
-  static final _catalog = BookCatalogVerifier(
-    isVerifiedNoBrave: LKStore.isVerifiedNoBrave,
-    loadBook: (id, remaining) => LKApi.bookDetail(id,
-        forceRefresh: true,
-        forAccessVerification: true,
-        requestTimeout: remaining),
-    loadVolumes: (id, page, size, remaining) async {
-      final batch = await LKApi.volumeCatalogPage(id, page,
-          pageSize: size, requestTimeout: remaining);
-      return CatalogVolumeBatch(
-          items: batch.items,
-          hasMore: batch.hasMore,
-          total: batch.total,
-          page: batch.page);
-    },
-    loadChapters: (id, volume, page, size, remaining) => LKApi.chapterPage(
-        id, volume, page,
-        pageSize: size,
-        forceRefresh: true,
-        requireList: true,
-        requestTimeout: remaining),
-  );
+  static BookCatalogVerifier _createCatalogVerifier() => BookCatalogVerifier(
+        isVerifiedNoBrave: LKStore.isVerifiedNoBrave,
+        loadBook: (id, remaining) => LKApi.bookDetail(id,
+            forceRefresh: true,
+            forAccessVerification: true,
+            requestTimeout: remaining),
+        loadVolumes: (id, page, size, remaining) async {
+          final batch = await LKApi.volumeCatalogPage(id, page,
+              pageSize: size, requestTimeout: remaining);
+          return CatalogVolumeBatch(
+              items: batch.items,
+              hasMore: batch.hasMore,
+              total: batch.total,
+              page: batch.page);
+        },
+        loadChapters: (id, volume, page, size, remaining) => LKApi.chapterPage(
+            id, volume, page,
+            pageSize: size,
+            forceRefresh: true,
+            requireList: true,
+            requestTimeout: remaining),
+      );
+
+  static final _sharedCatalog = _createCatalogVerifier();
+  static final _shelfCatalog = _createCatalogVerifier();
 
   static final shared = BookAccessProbe(
-      query: _queryApi,
+      query: (id, current) => _queryWith(_sharedCatalog, id, current),
       isKnownBrave: LKStore.isBraveBook,
       isEnabled: () => !LKStore.dataSaverMode.value,
       onConfirmed: LKStore.markBookBrave,
-      onLookupStarted: _catalog.beginLookup,
-      needsContinuation: _catalog.hasPending,
+      onLookupStarted: _sharedCatalog.beginLookup,
+      needsContinuation: _sharedCatalog.hasPending,
       roundDelay: const Duration(milliseconds: 150));
 
   /// Dedicated higher-capacity queue for Shelf & BookDetail so Home feed
   /// cards cannot starve bookshelf brave detection.
   static final shelf = BookAccessProbe(
-      query: _queryApi,
+      query: (id, current) => _queryWith(_shelfCatalog, id, current),
       isKnownBrave: LKStore.isBraveBook,
       isEnabled: () => !LKStore.dataSaverMode.value,
       onConfirmed: LKStore.markBookBrave,
-      onLookupStarted: _catalog.beginLookup,
-      needsContinuation: _catalog.hasPending,
+      onLookupStarted: _shelfCatalog.beginLookup,
+      needsContinuation: _shelfCatalog.hasPending,
       maxPending: 64,
       roundDelay: const Duration(milliseconds: 100));
 
-  static Future<bool?> _queryApi(int id, bool Function() current) async {
+  static Future<bool?> _queryWith(
+      BookCatalogVerifier verifier, int id, bool Function() current) async {
     if (LKStore.isBraveBook(id)) return true;
-    final result = await _catalog.verifyRound(id,
+    final result = await verifier.verifyRound(id,
         isCurrent: () => current() && !LKStore.dataSaverMode.value,
         maxRequests: 6,
         budget: const Duration(seconds: 8));

@@ -90,8 +90,8 @@ class LKReadingSession {
   }
 
   void update({required int volumeId, required double progress}) {
-    if (_startedAt == null || _volumeId == 0) return;
-    _volumeId = volumeId > 0 ? volumeId : _volumeId;
+    if (_startedAt == null) return;
+    if (volumeId > 0) _volumeId = volumeId;
     final value = (progress * 100).round().clamp(0, 100);
     if (value > _progressPercent) _progressPercent = value;
   }

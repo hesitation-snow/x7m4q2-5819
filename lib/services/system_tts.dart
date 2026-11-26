@@ -494,7 +494,34 @@ class SystemTts {
 
 /// Adapts native Android utterance callbacks to the reader playback controller.
 class NativeSystemTtsService implements SystemTtsService {
-  NativeSystemTtsService(this.systemTts) {
+  NativeSystemTtsService(this.systemTts, {this.deferOwnership = false}) {
+    if (!deferOwnership) {
+      _claimOwnership();
+    }
+  }
+
+  final SystemTts systemTts;
+  final bool deferOwnership;
+  // Delivery is synchronous: once an utterance has passed the active-ID check,
+  // its event must reach the controller before another play can replace it.
+  // Terminal state is cleared before add(), making listener re-entry safe.
+  final StreamController<TtsPlaybackEvent> _events =
+      StreamController<TtsPlaybackEvent>.broadcast(sync: true);
+  StreamSubscription<SystemTtsEvent>? _subscription;
+  int _serial = 0;
+  bool _disposed = false;
+  bool _claimed = false;
+  static int _nextUtterance = 0;
+  static final Map<String, Future<void>> _queues = {};
+  static final Map<String, NativeSystemTtsService> _owners = {};
+  Object? _takeoverFailure;
+  String? _activeUtterance;
+  String? _acceptedUtterance;
+  SystemTtsEvent? _pendingTerminal;
+
+  void _claimOwnership() {
+    if (_claimed || _disposed) return;
+    _claimed = true;
     final name = systemTts.methodChannel.name;
     final previousOwner = SystemTts._handlerOwners[name];
     final previousService = _owners[name];
@@ -504,7 +531,7 @@ class NativeSystemTtsService implements SystemTtsService {
       if (!_disposed) _events.add(TtsPlaybackEvent(error: error));
     });
     if (previousOwner != null && !identical(previousOwner, systemTts)) {
-      // Ownership changes even when the new page has not started playback.
+      // Ownership changes when this reader takes over playback.
       // Stop the old page in the shared queue, ahead of new-owner speech.
       unawaited(_enqueue(() async {
         if (_ownsChannel) {
@@ -524,23 +551,6 @@ class NativeSystemTtsService implements SystemTtsService {
       previousService?._revokeOwnership();
     }
   }
-
-  final SystemTts systemTts;
-  // Delivery is synchronous: once an utterance has passed the active-ID check,
-  // its event must reach the controller before another play can replace it.
-  // Terminal state is cleared before add(), making listener re-entry safe.
-  final StreamController<TtsPlaybackEvent> _events =
-      StreamController<TtsPlaybackEvent>.broadcast(sync: true);
-  late final StreamSubscription<SystemTtsEvent> _subscription;
-  int _serial = 0;
-  bool _disposed = false;
-  static int _nextUtterance = 0;
-  static final Map<String, Future<void>> _queues = {};
-  static final Map<String, NativeSystemTtsService> _owners = {};
-  Object? _takeoverFailure;
-  String? _activeUtterance;
-  String? _acceptedUtterance;
-  SystemTtsEvent? _pendingTerminal;
 
   void _revokeOwnership() {
     final wasActive = _activeUtterance != null;
@@ -585,6 +595,9 @@ class NativeSystemTtsService implements SystemTtsService {
   @override
   Future<void> speak(String text, {required double rate}) {
     if (_disposed) throw StateError('TTS service is disposed');
+    if (!_claimed) {
+      _claimOwnership();
+    }
     if (!_ownsChannel) {
       if (SystemTts._handlerOwners[systemTts.methodChannel.name] != null) {
         throw StateError('TTS channel belongs to another reader');
@@ -694,11 +707,13 @@ class NativeSystemTtsService implements SystemTtsService {
     _activeUtterance = null;
     final name = systemTts.methodChannel.name;
     if (identical(_owners[name], this)) _owners.remove(name);
-    await _subscription.cancel();
+    await _subscription?.cancel();
     try {
-      await _enqueue(() async {
-        if (_ownsChannel) await systemTts.stop();
-      });
+      if (_claimed) {
+        await _enqueue(() async {
+          if (_ownsChannel) await systemTts.stop();
+        });
+      }
     } catch (_) {
       // Disposal is best-effort; the activity also shuts down the engine.
     }

@@ -688,6 +688,8 @@ class EpubDownloadService {
     void Function(int chunkBytes)? onBytes,
   }) async {
     final client = _acquireDownloadClient();
+    final tempFile = File(
+        '${destFile.path}.part.${DateTime.now().microsecondsSinceEpoch}');
     IOSink? sink;
     try {
       final request = http.Request('GET', Uri.parse(url));
@@ -698,7 +700,7 @@ class EpubDownloadService {
       );
       if (response.statusCode != 200) return false;
 
-      final activeSink = destFile.openWrite();
+      final activeSink = tempFile.openWrite();
       sink = activeSink;
       var wroteBytes = 0;
       await for (final chunk
@@ -706,7 +708,7 @@ class EpubDownloadService {
         if (_isCanceledFlag || _isPausedFlag) {
           await activeSink.close();
           sink = null;
-          if (await destFile.exists()) await destFile.delete();
+          if (await tempFile.exists()) await tempFile.delete();
           return false;
         }
         activeSink.add(chunk);
@@ -718,6 +720,10 @@ class EpubDownloadService {
       sink = null;
 
       if (wroteBytes > 0) {
+        if (await destFile.exists()) {
+          await destFile.delete();
+        }
+        await tempFile.rename(destFile.path);
         try {
           final fileBytes = await destFile.readAsBytes();
           await YomiruIllustrationCache.manager.putFile(
@@ -728,9 +734,9 @@ class EpubDownloadService {
         } catch (_) {}
         return true;
       }
-      if (await destFile.exists()) {
+      if (await tempFile.exists()) {
         try {
-          await destFile.delete();
+          await tempFile.delete();
         } catch (_) {}
       }
       return false;
@@ -739,9 +745,9 @@ class EpubDownloadService {
         await sink?.close();
       } catch (_) {}
       sink = null;
-      if (await destFile.exists()) {
+      if (await tempFile.exists()) {
         try {
-          await destFile.delete();
+          await tempFile.delete();
         } catch (_) {}
       }
       return false;
@@ -796,6 +802,7 @@ class EpubDownloadService {
       try {
         final chFile = File('${taskDir.path}/chapters/${ch.chapterId}.json');
         LKChapterDetail detail;
+        var fetchedFromNetwork = false;
         if (await chFile.exists()) {
           try {
             final json =
@@ -809,6 +816,7 @@ class EpubDownloadService {
             );
           } catch (_) {
             detail = await _fetchChapterWithRetry(task.bookId, ch.chapterId);
+            fetchedFromNetwork = true;
             _speedTracker.addBytes(utf8.encode(detail.bodyText).length +
                 (detail.bodyHtml != null
                     ? utf8.encode(detail.bodyHtml!).length
@@ -816,14 +824,16 @@ class EpubDownloadService {
           }
         } else {
           detail = await _fetchChapterWithRetry(task.bookId, ch.chapterId);
+          fetchedFromNetwork = true;
           _speedTracker.addBytes(utf8.encode(detail.bodyText).length +
               (detail.bodyHtml != null
                   ? utf8.encode(detail.bodyHtml!).length
                   : 0));
         }
 
-        // 若需要下载插画，但已存章节没有 bodyHtml，则重新向服务端请求带 HTML 的最新数据
-        if (task.options.includeIllustrations &&
+        // 若从旧缓存恢复且需要下载插画，但缓存章节没有 bodyHtml，则向服务端刷新一次
+        if (!fetchedFromNetwork &&
+            task.options.includeIllustrations &&
             (detail.bodyHtml == null || detail.bodyHtml!.isEmpty)) {
           try {
             final refreshed =
@@ -1070,7 +1080,7 @@ class EpubDownloadService {
         final existingFlight = _inFlightImageDownloads[dedupKey];
         if (existingFlight != null) {
           await existingFlight;
-        } else if (!await destFile.exists()) {
+        } else {
           final flight = fetchIllustrationFile(cleanUrl, destFile);
           _inFlightImageDownloads[dedupKey] = flight;
           try {

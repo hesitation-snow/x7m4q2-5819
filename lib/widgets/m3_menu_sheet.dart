@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/app_theme.dart';
+
 /// Shared chrome for both simple menus and panels with their own scroll view.
 /// Keeping this separate avoids nesting TabBarView/ListView in another scroller.
 class M3SheetHeader extends StatelessWidget {
@@ -100,13 +102,19 @@ class M3MenuSheet extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: SafeArea(
           top: false,
+          bottom: false,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               M3SheetHeader(title: title, icon: icon),
               Flexible(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    4,
+                    16,
+                    bottomBarSafePadding(context, base: 16),
+                  ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,

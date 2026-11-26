@@ -655,10 +655,18 @@ class _BookDetailPageState extends State<BookDetailPage> {
   }
 
   void _onPublisherSessionChanged() {
+    if (!mounted) return;
     final book = _book;
-    if (!mounted || book == null) return;
-    setState(() => _bindPublisher(book));
-    unawaited(_refreshPublisherFollowStatus(book, forceRefresh: true));
+    setState(() {
+      _inShelf = false;
+      _hasHistory = false;
+      _readVolumeId = 0;
+      _readChapterId = 0;
+      _readChapterTitle = '';
+      _publisherFollowBusy = false;
+      if (book != null) _bindPublisher(book);
+    });
+    unawaited(_load(forceRefresh: true));
   }
 
   Future<void> _openPublisherProfile(LKBook book) async {

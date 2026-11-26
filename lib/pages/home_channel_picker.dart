@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/home_channels.dart';
+import '../services/app_theme.dart';
 import '../widgets/m3_menu_sheet.dart';
 
 class HomeChannelPickerResult {
@@ -59,8 +60,10 @@ class _HomeChannelPickerState extends State<HomeChannelPicker> {
     final maxHeight = MediaQuery.sizeOf(context).height * 0.78;
     return SafeArea(
       top: false,
+      bottom: false,
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 16),
+        padding:
+            EdgeInsets.only(bottom: bottomBarSafePadding(context, base: 16)),
         child: _editing
             ? SizedBox(
                 height: maxHeight.clamp(0.0, 550.0),

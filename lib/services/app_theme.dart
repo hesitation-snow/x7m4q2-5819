@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -238,4 +240,21 @@ abstract final class AppTheme {
       sliderTheme: sliderThemeOf(scheme, base.textTheme),
     );
   }
+}
+
+/// 底部输入栏 / 工具栏 / 弹窗底部的安全区留白。
+///
+/// iOS Face ID 设备上报的 34pt 底部安全区已包含 Home Indicator 上方约 21pt 的留白，
+/// 直接再叠加固定 padding 或使用默认 SafeArea + padding 会显得底部过高；
+/// 这里在 iOS 上适度收敛（竖屏 34pt -> 20pt，横屏/iPad 20–21pt -> 18–19pt），
+/// 保证位于 Home Indicator 上方约 6–7pt 且与顶部内边距对称；
+/// Android 上保留完整系统导航栏 / 手势条安全区，避免与三大金刚或手势条重叠。
+double bottomBarSafePadding(BuildContext context, {double base = 8}) {
+  final inset = MediaQuery.paddingOf(context).bottom;
+  if (inset <= 0) return base;
+  if (Theme.of(context).platform == TargetPlatform.iOS) {
+    final trimmed = inset > 24 ? inset - 14 : math.max(inset - 2, 16.0);
+    return math.max(base, trimmed);
+  }
+  return inset + base;
 }

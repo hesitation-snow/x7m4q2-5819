@@ -509,11 +509,12 @@ class LKStore {
     // Keychain/Keystore 不可用时不回退读取明文偏好，避免重新暴露凭据。
     if (secureStorageReady) await p.remove('security_key');
     if (generation == _sessionGeneration) {
+      final hasCredentials = !invalidated && securityKey.isNotEmpty;
       LKClient.shared.session
-        ..securityKey = securityKey
-        ..uid = invalidated ? 0 : (p.getInt('uid') ?? 0)
-        ..nickname = invalidated ? '' : (p.getString('nickname') ?? '')
-        ..avatar = invalidated ? '' : (p.getString('avatar') ?? '');
+        ..securityKey = hasCredentials ? securityKey : ''
+        ..uid = hasCredentials ? (p.getInt('uid') ?? 0) : 0
+        ..nickname = hasCredentials ? (p.getString('nickname') ?? '') : ''
+        ..avatar = hasCredentials ? (p.getString('avatar') ?? '') : '';
     }
     themeMode.value = _parseTheme(p.getString('theme_mode'));
     pureBlackDark.value = p.getBool('pure_black_dark') ?? false;

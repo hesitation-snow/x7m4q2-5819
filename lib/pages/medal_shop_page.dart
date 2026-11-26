@@ -354,15 +354,30 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
       'obtainedmedals',
       'claimed_medals',
       'claimedmedals',
-      'medals',
-      'medal_list',
       'owned_medal_ids',
       'ownedmedalids',
-      'medal_ids',
-      'medalids',
       'medal_list_owned',
       'owned_list',
     };
+
+    bool explicitlyUnowned(Map<String, dynamic> item) {
+      for (final key in const [
+        'owned',
+        'is_owned',
+        'claimed',
+        'is_claimed',
+        'obtained',
+        'is_obtained',
+        'has_medal',
+        'hasMedal',
+      ]) {
+        final v = item[key];
+        if (v == false || v == 0 || v == '0' || v == 'false') {
+          return true;
+        }
+      }
+      return false;
+    }
 
     void addRecord(dynamic value) {
       if (value is List) {
@@ -386,10 +401,12 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
       }
       if (value is! Map) return;
       final item = Map<String, dynamic>.from(value);
-      final id = _medalId(item);
-      if (id.isNotEmpty) ids.add(id);
-      final name = _text(item, const ['name', 'title', 'medal_name']);
-      if (name.trim().isNotEmpty) names.add(name.trim());
+      if (!explicitlyUnowned(item)) {
+        final id = _medalId(item);
+        if (id.isNotEmpty) ids.add(id);
+        final name = _text(item, const ['name', 'title', 'medal_name']);
+        if (name.trim().isNotEmpty) names.add(name.trim());
+      }
       for (final key in const ['items', 'list', 'medals', 'data']) {
         addRecord(item[key]);
       }
@@ -399,6 +416,9 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
       if (depth > 6 || value is! Map) return;
       for (final entry in value.entries) {
         final key = entry.key.toString().toLowerCase();
+        if (_taskKeys.contains(key) || _exchangeKeys.contains(key)) {
+          continue;
+        }
         if (containers.contains(key)) {
           addRecord(entry.value);
         } else {
@@ -422,9 +442,19 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
     );
   }
 
+  int _actionTargetId(Map<String, dynamic> item, {required bool isTask}) => _id(
+        item,
+        isTask
+            ? const ['task_id', 'taskId', 'id', 'medal_id']
+            : const ['goods_id', 'goodsId', 'medal_id', 'medalId', 'id'],
+      );
+
+  String _actionBusyKey(Map<String, dynamic> item, {required bool isTask}) =>
+      '${isTask ? 'task' : 'exchange'}:${_actionTargetId(item, isTask: isTask)}';
+
   Future<void> _claim(Map<String, dynamic> item) async {
-    final id = _id(item, const ['task_id', 'taskId', 'id', 'medal_id']);
-    final key = 'task:$id';
+    final id = _actionTargetId(item, isTask: true);
+    final key = _actionBusyKey(item, isTask: true);
     if (!_session.isCurrent || id <= 0 || _busy.contains(key)) return;
     setState(() => _busy.add(key));
     try {
@@ -443,9 +473,9 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
   Future<void> _exchange(Map<String, dynamic> item) async {
     final medalId = _id(item, const ['medal_id', 'medalId', 'id']);
     final goodsId = _id(item, const ['goods_id', 'goodsId']);
-    final requestId = goodsId > 0 ? goodsId : medalId;
-    final key = 'exchange:$requestId';
-    if (requestId <= 0 || _busy.contains(key)) return;
+    final requestId = _actionTargetId(item, isTask: false);
+    final key = _actionBusyKey(item, isTask: false);
+    if (!_session.isCurrent || requestId <= 0 || _busy.contains(key)) return;
     setState(() => _busy.add(key));
     try {
       await LKApi.exchangeMedal(
@@ -614,12 +644,8 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
         item.containsKey('requirement') ||
         item.containsKey('condition') ||
         item.containsKey('condition_text');
-    final id = _id(
-        item,
-        isTask
-            ? const ['task_id', 'taskId', 'id', 'medal_id']
-            : const ['medal_id', 'medalId', 'goods_id', 'goodsId', 'id']);
-    final key = '${isTask ? 'task' : 'exchange'}:$id';
+    final id = _actionTargetId(item, isTask: isTask);
+    final key = _actionBusyKey(item, isTask: isTask);
     final name = _text(item, const ['name', 'title', 'medal_name']);
     final description = _text(item, const [
       'condition_text',

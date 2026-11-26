@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import '../services/app_motion.dart';
+import '../services/app_theme.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -674,7 +675,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
           children: [
             SafeArea(
               top: false,
-              bottom: !hasBottomCover,
+              bottom: false,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -682,7 +683,14 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                   const SizedBox(height: 10),
                   _buildTopicBar(context),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 2, 16, 6),
+                    padding: EdgeInsets.fromLTRB(
+                      12,
+                      2,
+                      16,
+                      hasBottomCover
+                          ? 6
+                          : bottomBarSafePadding(context, base: 6),
+                    ),
                     child: Row(
                       children: [
                         Expanded(

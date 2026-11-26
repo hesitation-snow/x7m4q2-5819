@@ -1,4 +1,5 @@
 import '../services/app_motion.dart';
+import '../services/app_theme.dart';
 import '../widgets/account_scope.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -40,6 +41,7 @@ class _DMChatPageState extends State<_DMChatPageBody> {
   int _page = 1;
   bool _hasMore = true;
   Object? _error;
+  Object? _loadMoreError;
 
   @override
   void initState() {
@@ -58,7 +60,9 @@ class _DMChatPageState extends State<_DMChatPageBody> {
     final serial = ++_loadSerial;
     setState(() {
       _loading = _messages.isEmpty;
+      _loadingMore = false;
       _error = null;
+      _loadMoreError = null;
     });
     try {
       final msgsFuture =
@@ -91,24 +95,31 @@ class _DMChatPageState extends State<_DMChatPageBody> {
         !mounted) {
       return;
     }
-    setState(() => _loadingMore = true);
+    final serial = _loadSerial;
+    setState(() {
+      _loadingMore = true;
+      _loadMoreError = null;
+    });
     final nextPage = _page + 1;
     try {
       final olderMsgs =
           await LKApi.dmMessages(widget.peerUid, page: nextPage, pageSize: 30);
-      if (!mounted || !_session.isCurrent) return;
+      if (!mounted || !_session.isCurrent || serial != _loadSerial) return;
       setState(() {
         _page = nextPage;
         _hasMore = olderMsgs.length >= 30;
+        _loadMoreError = null;
         final existingIds = _messages.map((m) => m.id).toSet();
         final newOlder =
             olderMsgs.where((m) => !existingIds.contains(m.id)).toList();
         _messages = [...newOlder, ..._messages];
       });
-    } catch (_) {
-      // 容错处理
+    } catch (e) {
+      if (mounted && _session.isCurrent && serial == _loadSerial) {
+        setState(() => _loadMoreError = e);
+      }
     } finally {
-      if (mounted && _session.isCurrent) {
+      if (mounted && _session.isCurrent && serial == _loadSerial) {
         setState(() => _loadingMore = false);
       }
     }
@@ -155,7 +166,8 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                         if (n.metrics.extentBefore < 80 &&
                             _hasMore &&
                             !_loadingMore &&
-                            !_loading) {
+                            !_loading &&
+                            _loadMoreError == null) {
                           unawaited(_loadMore());
                         }
                         return false;
@@ -244,8 +256,14 @@ class _DMChatPageState extends State<_DMChatPageBody> {
           ),
           child: SafeArea(
             top: false,
+            bottom: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              padding: EdgeInsets.fromLTRB(
+                12,
+                8,
+                12,
+                bottomBarSafePadding(context, base: 8),
+              ),
               child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Expanded(
                   child: TextField(

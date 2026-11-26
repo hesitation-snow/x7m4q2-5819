@@ -166,7 +166,13 @@ class _UserProfilePageState extends State<UserProfilePage>
           _followersCount = home.profile.followersCount;
         }
         _error = null;
-        if (!home.profile.publicBookshelf) _bookshelf = null;
+        if (home.profile.publicBookshelf) {
+          _bookshelfLoading = true;
+          _bookshelfError = null;
+        } else {
+          _bookshelf = null;
+          _bookshelfLoading = false;
+        }
       });
       if (mounted) {
         YomiruAvatarCache.precache(context, [home.profile.avatar]);
@@ -193,6 +199,12 @@ class _UserProfilePageState extends State<UserProfilePage>
 
   Future<void> _loadInitialBookshelf({bool forceRefresh = false}) async {
     final request = ++_bookshelfLoadSerial;
+    if (mounted) {
+      setState(() {
+        _bookshelfLoading = true;
+        _bookshelfError = null;
+      });
+    }
     try {
       final bookshelf = await LKApi.publicUserBookshelf(widget.uid, 1,
           pageSize: 20, forceRefresh: forceRefresh);
@@ -204,6 +216,10 @@ class _UserProfilePageState extends State<UserProfilePage>
     } catch (_) {
       if (mounted && request == _bookshelfLoadSerial) {
         setState(() => _bookshelfError = '书架无法加载，请点击重试');
+      }
+    } finally {
+      if (mounted && request == _bookshelfLoadSerial) {
+        setState(() => _bookshelfLoading = false);
       }
     }
   }
@@ -950,6 +966,9 @@ class _UserProfilePageState extends State<UserProfilePage>
 
   Widget _buildBookshelfTab() {
     final shelf = _bookshelf;
+    if (_bookshelfLoading && shelf == null) {
+      return const Center(child: MotionProgressIndicator());
+    }
     if (_bookshelfError != null && shelf == null) {
       return _emptyList(_bookshelfError!, onRetry: _loadInitial);
     }

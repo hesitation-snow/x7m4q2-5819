@@ -1,4 +1,5 @@
 import '../services/app_motion.dart';
+import '../services/app_theme.dart';
 import '../widgets/account_scope.dart';
 import '../api/lk_client.dart';
 import 'dart:async';
@@ -104,6 +105,16 @@ class _CommentsPageState extends State<CommentsPage> {
     _loadSerial++;
     _input.clear();
     setState(() {
+      _page = 0;
+      _cursor = '';
+      _hasMore = true;
+      _loading = true;
+      _loadingMore = false;
+      _error = null;
+      _loadMoreError = null;
+      _dynamicDetail = null;
+      _selectedPollOptions.clear();
+      _pollSubmitting = false;
       _publishing = false;
       _liking.clear();
       _uploadingImage = false;
@@ -120,6 +131,7 @@ class _CommentsPageState extends State<CommentsPage> {
       _expandedReplies.clear();
     });
     unawaited(_load());
+    if (_isDynamic) unawaited(_loadDynamicDetail());
   }
 
   Future<void> _loadEmojis() async {
@@ -403,9 +415,8 @@ class _CommentsPageState extends State<CommentsPage> {
       if (!current()) return;
       setState(() {
         final existing = _repliesByComment[commentId] ?? const <LKComment>[];
-        final merged = reset
-            ? _mergeComments(result.items, existing)
-            : _mergeComments(existing, result.items);
+        final merged =
+            reset ? result.items : _mergeComments(existing, result.items);
         _repliesByComment[commentId] = merged;
         _replyPages[commentId] = result.page;
         _replyCursors[commentId] = result.nextCursor;
@@ -1102,8 +1113,7 @@ class _CommentsPageState extends State<CommentsPage> {
                     onNotification: _onCommentScroll,
                     child: ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: EdgeInsets.only(
-                          bottom: MediaQuery.paddingOf(context).bottom),
+                      padding: const EdgeInsets.only(bottom: 12),
                       itemCount: (_isDynamic ? 1 : 0) +
                           (_comments.isEmpty ? 1 : _comments.length) +
                           (_hasMore || _loadingMore || _loadMoreError != null
@@ -1350,14 +1360,17 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              8,
-              8,
-              8,
-              hasBottomCover ? 8 : media.padding.bottom + 8,
-            ),
-            child: Column(children: [
+          SafeArea(
+            top: false,
+            bottom: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                8,
+                8,
+                8,
+                hasBottomCover ? 8 : bottomBarSafePadding(context, base: 8),
+              ),
+              child: Column(children: [
               if (widget.replyLabel != null && widget.replyLabel!.isNotEmpty)
                 Align(
                   alignment: Alignment.centerLeft,
@@ -1483,6 +1496,7 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
                     child: Text(widget.publishing ? '处理中…' : '发布')),
               ]),
             ]),
+          ),
           ),
           if (_showEmoji)
             SizedBox(

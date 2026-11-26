@@ -40,6 +40,7 @@ class ListeningNow extends ChangeNotifier {
   String? _lastSavedResumeKey;
 
   SpeechSynthesisConfig? config;
+  String? lastError;
   String accountId = '';
   String bookTitle = '';
   String chapterTitle = '';
@@ -66,6 +67,7 @@ class ListeningNow extends ChangeNotifier {
   }) {
     final trimmedCover = coverUrl.trim();
     if (identical(_session, session)) {
+      lastError = null;
       this.bookTitle = bookTitle;
       this.chapterTitle = chapterTitle;
       if (trimmedCover.isNotEmpty) this.coverUrl = trimmedCover;
@@ -79,6 +81,7 @@ class ListeningNow extends ChangeNotifier {
     _session = session;
     _releaseResources = releaseResources;
     this.config = config;
+    lastError = null;
     this.accountId = accountId;
     this.bookTitle = bookTitle;
     this.chapterTitle = chapterTitle;
@@ -143,6 +146,7 @@ class ListeningNow extends ChangeNotifier {
     _releaseResources = null;
     _lastSavedResumeKey = null;
     config = null;
+    lastError = null;
     coverUrl = '';
     this.accountId = '';
     notifyListeners();
@@ -265,7 +269,11 @@ class ListeningNow extends ChangeNotifier {
   void _onSession() {
     final session = _session;
     if (session == null || _stopFuture != null) return;
+    _saveResumeProgress(session);
     if (session.isStopped) {
+      final sessionError = session.error;
+      lastError =
+          sessionError != null && sessionError.isNotEmpty ? sessionError : null;
       final release = _releaseResources;
       _session = null;
       _releaseResources = null;
@@ -283,7 +291,6 @@ class ListeningNow extends ChangeNotifier {
       });
       return;
     }
-    _saveResumeProgress(session);
     notifyListeners();
   }
 
@@ -318,6 +325,7 @@ class ListeningNow extends ChangeNotifier {
     _releaseResources = null;
     _lastSavedResumeKey = null;
     config = null;
+    lastError = null;
     coverUrl = '';
     accountId = '';
     session?.removeListener(_onSession);

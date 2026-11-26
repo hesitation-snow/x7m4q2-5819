@@ -471,6 +471,8 @@ class ReaderAudioHandler extends BaseAudioHandler
       throw ArgumentError.value(
           contentType, 'contentType', 'Use audio/mpeg or audio/wav');
     }
+    final previousStop =
+        _ttsOwnerCallbacks?.onStop ?? _speechSessionCallbacks?.onStop;
     _ttsOwnerKey = null;
     _ttsOwnerCallbacks = null;
     _speechSessionOwnerKey = null;
@@ -481,6 +483,12 @@ class ReaderAudioHandler extends BaseAudioHandler
     _onSegmentChanged = null;
     _onQueueCompleted = null;
     _completionSent = false;
+    if (previousStop != null) {
+      try {
+        await previousStop();
+      } catch (_) {}
+      if (_disposed || generation != _sourceGeneration) return;
+    }
     _title = title;
     _author = author;
     _artUri = null;

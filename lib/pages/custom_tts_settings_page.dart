@@ -65,6 +65,7 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
   bool _previewBusy = false;
   bool _saving = false;
   bool _voicesLoading = false;
+  bool _suppressVoiceCatalogInvalidation = false;
   bool _hideCredential = true;
   List<AzureSpeechVoice> _azureVoices = const [];
   String? _saveMessage;
@@ -149,6 +150,7 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
       );
 
   void _invalidateVoiceCatalog() {
+    if (_suppressVoiceCatalogInvalidation) return;
     _voicesGeneration++;
     if (!mounted) return;
     setState(() {
@@ -711,10 +713,15 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
     final voice =
         _azureVoices.where((candidate) => candidate.id == picked).firstOrNull;
     if (voice == null) return;
-    setState(() {
+    _suppressVoiceCatalogInvalidation = true;
+    try {
       _voice.text = voice.id;
       _name.text = voice.name;
       _locale.text = voice.locale;
+    } finally {
+      _suppressVoiceCatalogInvalidation = false;
+    }
+    setState(() {
       _fieldErrors.remove('voice');
       _fieldErrors.remove('name');
       _fieldErrors.remove('locale');
@@ -781,6 +788,7 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
       appBar: AppBar(title: const Text('自定义语音服务')),
       body: SafeArea(
         top: false,
+        bottom: false,
         child: SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
             16,

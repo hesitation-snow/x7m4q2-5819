@@ -198,6 +198,7 @@ class _MessagesPageState extends State<_MessagesPageBody>
         return;
       }
       setState(() {
+        if (!loadMore) feed.markedRead = false;
         feed.items =
             loadMore ? _mergeMessages(feed.items, result.items) : result.items;
         feed.page = page;
@@ -514,7 +515,8 @@ class _MessagesPageState extends State<_MessagesPageBody>
       onNotification: (notification) {
         if (notification.metrics.extentAfter < 360 &&
             feed.hasMore &&
-            !feed.loadingMore) {
+            !feed.loadingMore &&
+            feed.loadMoreError == null) {
           unawaited(_loadNotification(type, loadMore: true));
         }
         return false;
@@ -1104,7 +1106,8 @@ class _MessagesPageState extends State<_MessagesPageBody>
         if (notification.metrics.extentAfter < 360 &&
             _dmHasMore &&
             !_dmLoadingMore &&
-            !_dmLoading) {
+            !_dmLoading &&
+            _dmLoadMoreError == null) {
           unawaited(_loadDm(loadMore: true));
         }
         return false;

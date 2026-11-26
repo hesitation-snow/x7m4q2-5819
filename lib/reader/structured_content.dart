@@ -455,6 +455,7 @@ class StructuredBlock {
     required Color backgroundColor,
     void Function(String url)? onLinkTap,
     void Function(String reference)? onFootnoteTap,
+    List<GestureRecognizer>? recognizers,
     bool forMeasurement = false,
   }) {
     TextStyle blockStyle = baseStyle;
@@ -550,11 +551,14 @@ class StructuredBlock {
 
       GestureRecognizer? recognizer;
       if (!forMeasurement && footnoteReference != null) {
-        recognizer = TapGestureRecognizer()
+        final tap = TapGestureRecognizer()
           ..onTap = () => onFootnoteTap!(footnoteReference);
+        recognizers?.add(tap);
+        recognizer = tap;
       } else if (!forMeasurement && run.linkUrl != null && onLinkTap != null) {
-        recognizer = TapGestureRecognizer()
-          ..onTap = () => onLinkTap(run.linkUrl!);
+        final tap = TapGestureRecognizer()..onTap = () => onLinkTap(run.linkUrl!);
+        recognizers?.add(tap);
+        recognizer = tap;
       }
 
       // 注音保留在 TextSpan 的文本中，维持 UTF-16 偏移与选中复制内容；

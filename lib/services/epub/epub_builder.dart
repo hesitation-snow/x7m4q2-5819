@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -39,6 +40,51 @@ String mimeTypeForFile(String pathOrUrl) {
   if (clean.endsWith('.webp')) return 'image/webp';
   if (clean.endsWith('.svg')) return 'image/svg+xml';
   return 'image/jpeg';
+}
+
+/// 根据文件头魔数识别图片扩展名与 MIME 类型，避免将 PNG/WebP/GIF 封面误标为 image/jpeg
+({String ext, String mime}) detectImageFormat(
+    Uint8List header, String fallbackPath) {
+  if (header.length >= 4 &&
+      header[0] == 0x89 &&
+      header[1] == 0x50 &&
+      header[2] == 0x4E &&
+      header[3] == 0x47) {
+    return (ext: '.png', mime: 'image/png');
+  }
+  if (header.length >= 4 &&
+      header[0] == 0x47 &&
+      header[1] == 0x49 &&
+      header[2] == 0x46 &&
+      header[3] == 0x38) {
+    return (ext: '.gif', mime: 'image/gif');
+  }
+  if (header.length >= 12 &&
+      header[0] == 0x52 &&
+      header[1] == 0x49 &&
+      header[2] == 0x46 &&
+      header[3] == 0x46 &&
+      header[8] == 0x57 &&
+      header[9] == 0x45 &&
+      header[10] == 0x42 &&
+      header[11] == 0x50) {
+    return (ext: '.webp', mime: 'image/webp');
+  }
+  if (header.length >= 3 &&
+      header[0] == 0xFF &&
+      header[1] == 0xD8 &&
+      header[2] == 0xFF) {
+    return (ext: '.jpg', mime: 'image/jpeg');
+  }
+  final fallbackMime = mimeTypeForFile(fallbackPath);
+  final ext = switch (fallbackMime) {
+    'image/png' => '.png',
+    'image/gif' => '.gif',
+    'image/webp' => '.webp',
+    'image/svg+xml' => '.svg',
+    _ => '.jpg',
+  };
+  return (ext: ext, mime: fallbackMime);
 }
 
 /// 构建上下文参数（跨 Isolate 传递的数据）
@@ -443,26 +489,38 @@ nav#toc li {
 
       // 处理封面
       var hasCover = false;
-      final coverFile = File('${taskDir.path}/cover.jpg');
+      final defaultCover = File('${taskDir.path}/cover.jpg');
+      File? sourceCover;
       if (ctx.coverImagePath != null && ctx.coverImagePath!.isNotEmpty) {
         final customCover = File(ctx.coverImagePath!);
-        if (await customCover.exists() && customCover.path != coverFile.path) {
-          try {
-            await customCover.copy(coverFile.path);
-          } catch (_) {}
+        if (await customCover.exists()) {
+          sourceCover = customCover;
         }
       }
-      if (await coverFile.exists()) {
+      if (sourceCover == null && await defaultCover.exists()) {
+        sourceCover = defaultCover;
+      }
+      if (sourceCover != null) {
         hasCover = true;
-        await writer.addFile('EPUB/images/cover.jpg', coverFile,
-            compress: false);
+        Uint8List header = Uint8List(0);
+        try {
+          final raf = await sourceCover.open();
+          try {
+            header = await raf.read(12);
+          } finally {
+            await raf.close();
+          }
+        } catch (_) {}
+        final coverFormat = detectImageFormat(header, sourceCover.path);
+        final coverHref = 'images/cover${coverFormat.ext}';
+        await writer.addFile('EPUB/$coverHref', sourceCover, compress: false);
         imagesManifest.add((
           id: 'cover-image',
-          href: 'images/cover.jpg',
-          mime: mimeTypeForFile(coverFile.path),
+          href: coverHref,
+          mime: coverFormat.mime,
           isCover: true,
         ));
-        urlToRelMap['cover'] = '../images/cover.jpg';
+        urlToRelMap['cover'] = '../$coverHref';
       }
 
       // 处理插画
@@ -489,9 +547,9 @@ nav#toc li {
         }
       }
 
-      // 如果有插画元数据映射表
+      // 如果有插画元数据映射表（仅在包含插画时挂载，避免禁用插画后残留失效 <img> 标签）
       final imageMetaFile = File('${taskDir.path}/image_map.json');
-      if (await imageMetaFile.exists()) {
+      if (ctx.includeIllustrations && await imageMetaFile.exists()) {
         try {
           final map = jsonDecode(await imageMetaFile.readAsString())
               as Map<String, dynamic>;
@@ -526,8 +584,8 @@ nav#toc li {
       var chOrder = 1;
       for (final ch in ctx.chapters) {
         if (!completedSet.contains(ch.chapterId)) {
-          // 未完成章节且未允许导出不完整内容则跳过
-          if (!ctx.exportIncomplete) continue;
+          // 仅写入已完成下载的章节，避免未完成章节写入空白占位页
+          continue;
         }
 
         final chFile = File('${taskDir.path}/chapters/${ch.chapterId}.json');

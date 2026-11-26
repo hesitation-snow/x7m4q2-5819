@@ -23,6 +23,7 @@ import '../api/reading_session.dart';
 import '../services/reading_progress_reporter.dart';
 
 import '../api/store.dart';
+import '../services/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/content_state_view.dart';
 import '../reader/scroll_layout_index.dart';
@@ -510,7 +511,7 @@ class _ReaderPageState extends State<ReaderPage>
     _ttsContinuousChapter = widget.autoStartTts;
     _systemUi = ReaderSystemUi();
     _systemTts = SystemTts();
-    _ttsPlatform = NativeSystemTtsService(_systemTts);
+    _ttsPlatform = NativeSystemTtsService(_systemTts, deferOwnership: true);
     _ttsController = ReaderTtsController(_ttsPlatform);
     _ttsController.addListener(_onTtsChanged);
     WidgetsBinding.instance.addObserver(this);
@@ -754,7 +755,8 @@ class _ReaderPageState extends State<ReaderPage>
     return _isLockedText(block, lockedBody) ? '本章需要轻币解锁' : block.text;
   }
 
-  TextSpan _scrollTextSpan(_BodyBlock block, {required bool lockedBody}) {
+  TextSpan _scrollTextSpan(_BodyBlock block,
+      {required bool lockedBody, List<GestureRecognizer>? recognizers}) {
     final hint = _isLockedText(block, lockedBody);
     if (hint) {
       return TextSpan(
@@ -774,11 +776,14 @@ class _ReaderPageState extends State<ReaderPage>
                 _openLink(url);
               },
         onFootnoteTap: _showFootnote,
+        recognizers: recognizers,
         forMeasurement: false,
       );
     }
     return withReaderIndent(
-      TextSpan(style: _bodyTextStyle, children: _spansFor(block)),
+      TextSpan(
+          style: _bodyTextStyle,
+          children: _spansFor(block, recognizers: recognizers)),
       _bodyTextStyle,
     );
   }
@@ -1742,12 +1747,16 @@ class _ReaderPageState extends State<ReaderPage>
       return;
     }
     final target = anchor;
-    setState(() => _applyBlocks(blocks));
-    if (_paged && target != null) {
-      _pendingPagedAnchor = target;
-      _pendingPositionTransitionId = transitionId;
-      _restoringPagedProgress = true;
-    }
+    setState(() {
+      _applyBlocks(blocks);
+      if (_paged && target != null) {
+        _builtPagedKey = null;
+        _pagedKey = null;
+        _pendingPagedAnchor = target;
+        _pendingPositionTransitionId = transitionId;
+        _restoringPagedProgress = true;
+      }
+    });
     if (!_paged && target != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted &&
@@ -1780,9 +1789,28 @@ class _ReaderPageState extends State<ReaderPage>
       _positionRestoreSerial++;
       _scrollProgressGeneration++;
       if (_paged) {
+        _builtPagedKey = null;
+        _pagedKey = null;
         _pendingPagedAnchor = anchor;
         _pendingPositionTransitionId = transition;
         _restoringPagedProgress = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted ||
+              !_paged ||
+              _positionController.transitionId != transition) {
+            return;
+          }
+          // If no pagination rebuild claimed the transition, release the lock so
+          // ReadingPositionController cannot remain stuck mid-transition.
+          if (_pendingPositionTransitionId == transition &&
+              _restoringPagedProgress &&
+              _builtPagedKey == _pagedKey) {
+            _pendingPositionTransitionId = null;
+            _pendingPagedAnchor = null;
+            _restoringPagedProgress = false;
+            _completePositionTransition(transition, anchor);
+          }
+        });
       } else {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted &&
@@ -3575,7 +3603,8 @@ class _ReaderPageState extends State<ReaderPage>
     await _startSpeechSession(startBlock: blockIndex);
   }
 
-  Future<void> _startSpeechSession({int? startBlock}) async {
+  Future<void> _startSpeechSession(
+      {int? startBlock, bool preferSavedResume = false}) async {
     if ((_speechStarting && startBlock == null) || !mounted) return;
     final revision = ++_speechStartRevision;
     _clearTtsFollowPause(notify: false);
@@ -3586,7 +3615,10 @@ class _ReaderPageState extends State<ReaderPage>
     _refreshTtsSheet();
     try {
       await _startSpeechSessionImpl(
-          startBlock: startBlock, startRevision: revision);
+        startBlock: startBlock,
+        preferSavedResume: preferSavedResume,
+        startRevision: revision,
+      );
     } catch (error) {
       if (mounted && revision == _speechStartRevision) {
         _ttsSessionError = error.toString();
@@ -3601,8 +3633,11 @@ class _ReaderPageState extends State<ReaderPage>
     }
   }
 
-  Future<void> _startSpeechSessionImpl(
-      {int? startBlock, required int startRevision}) async {
+  Future<void> _startSpeechSessionImpl({
+    int? startBlock,
+    bool preferSavedResume = false,
+    required int startRevision,
+  }) async {
     if (defaultTargetPlatform != TargetPlatform.android) {
       showFloatingPrompt(context, '当前版本的音频文件合成仅支持 Android');
       return;
@@ -3625,7 +3660,7 @@ class _ReaderPageState extends State<ReaderPage>
         accountRevision == LKClient.sessionRev.value &&
         contentRevision == _ttsContentRevision;
     final allSegments = _allTtsSegments();
-    final savedResume = startBlock == null
+    final savedResume = startBlock == null && preferSavedResume
         ? await ReaderTtsResumeStore.read(
             accountId: accountKey,
             bookId: widget.bookId,
@@ -5502,24 +5537,31 @@ class _ReaderPageState extends State<ReaderPage>
       );
     }
 
-    final textSpan = _scrollTextSpan(block, lockedBody: lockedBody);
     final textAlign =
         _effectiveTextAlign(block.textAlign, isHeading: block.isHeading);
     final structured = block.structured;
-    Widget content = structured != null && !_isLockedText(block, lockedBody)
-        ? _structuredTextWidget(
-            structured,
-            textSpan,
-            textKey: _scrollTextKeys[index],
-            textAlign: textAlign,
-          )
-        : Text.rich(
-            key: _scrollTextKeys[index],
-            textSpan,
-            textScaler: _readerTextScaler,
-            locale: _readerLocale,
-            textAlign: textAlign,
-          );
+    final isLocked = _isLockedText(block, lockedBody);
+    Widget content = _TrackedTextSpanWidget(
+      buildSpan: (recognizers) => _scrollTextSpan(
+        block,
+        lockedBody: lockedBody,
+        recognizers: recognizers,
+      ),
+      buildWidget: (textSpan) => structured != null && !isLocked
+          ? _structuredTextWidget(
+              structured,
+              textSpan,
+              textKey: _scrollTextKeys[index],
+              textAlign: textAlign,
+            )
+          : Text.rich(
+              key: _scrollTextKeys[index],
+              textSpan,
+              textScaler: _readerTextScaler,
+              locale: _readerLocale,
+              textAlign: textAlign,
+            ),
+    );
     if (_isTtsBlockHighlighted(index)) {
       content = DecoratedBox(
         decoration: BoxDecoration(
@@ -5962,41 +6004,45 @@ class _ReaderPageState extends State<ReaderPage>
               child: Builder(builder: (_) {
                 final isLocked =
                     lockedBody && it.links.isEmpty && it.text == '(本章暂无内容)';
-                final TextSpan span;
-                if (isLocked) {
-                  span = const TextSpan(text: '本章需要轻币解锁');
-                } else if (it.structured != null) {
-                  span = it.structured!.buildTextSpan(
-                    baseStyle: _bodyTextStyle,
-                    linkColor: _linkColor,
-                    backgroundColor: _bgColor,
-                    onFootnoteTap: _showFootnote,
-                    forMeasurement: false,
-                  );
-                } else {
-                  span = withReaderIndent(
-                    TextSpan(
-                      style: _bodyTextStyle,
-                      children: _spans(it.text, it.links),
-                    ),
-                    _bodyTextStyle,
-                  );
-                }
-
                 final textAlign = _effectiveTextAlign(it.structured?.align,
                     isHeading: it.structured?.isHeading ?? false);
-                Widget textWidget = it.structured != null && !isLocked
-                    ? _structuredTextWidget(
-                        it.structured!,
-                        span,
-                        textAlign: textAlign,
-                      )
-                    : Text.rich(
-                        span,
-                        textScaler: _readerTextScaler,
-                        locale: _readerLocale,
-                        textAlign: textAlign,
+                Widget textWidget = _TrackedTextSpanWidget(
+                  buildSpan: (recognizers) {
+                    if (isLocked) {
+                      return const TextSpan(text: '本章需要轻币解锁');
+                    } else if (it.structured != null) {
+                      return it.structured!.buildTextSpan(
+                        baseStyle: _bodyTextStyle,
+                        linkColor: _linkColor,
+                        backgroundColor: _bgColor,
+                        onFootnoteTap: _showFootnote,
+                        recognizers: recognizers,
+                        forMeasurement: false,
                       );
+                    } else {
+                      return withReaderIndent(
+                        TextSpan(
+                          style: _bodyTextStyle,
+                          children: _spans(it.text, it.links,
+                              recognizers: recognizers),
+                        ),
+                        _bodyTextStyle,
+                      );
+                    }
+                  },
+                  buildWidget: (span) => it.structured != null && !isLocked
+                      ? _structuredTextWidget(
+                          it.structured!,
+                          span,
+                          textAlign: textAlign,
+                        )
+                      : Text.rich(
+                          span,
+                          textScaler: _readerTextScaler,
+                          locale: _readerLocale,
+                          textAlign: textAlign,
+                        ),
+                );
                 if (_isTtsBlockHighlighted(it.blockIndex)) {
                   textWidget = DecoratedBox(
                     decoration: BoxDecoration(
@@ -6218,9 +6264,12 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   /// 正文链接区间 → InlineSpan(链接用主题色+下划线,点击系统浏览器打开)
-  List<InlineSpan> _spansFor(_BodyBlock b) => _spans(b.text, b.links);
+  List<InlineSpan> _spansFor(_BodyBlock b,
+          {List<GestureRecognizer>? recognizers}) =>
+      _spans(b.text, b.links, recognizers: recognizers);
 
-  List<InlineSpan> _spans(String text, List<(int, int, String)> links) {
+  List<InlineSpan> _spans(String text, List<(int, int, String)> links,
+      {List<GestureRecognizer>? recognizers}) {
     final tokens = <(int, int, String?, String?)>[];
     for (final (start, end, url) in links) {
       tokens.add((start, end, url, null));
@@ -6255,24 +6304,29 @@ class _ReaderPageState extends State<ReaderPage>
       if (start < pos || end <= start || end > text.length) continue;
       if (start > pos) out.add(TextSpan(text: text.substring(pos, start)));
       if (reference != null) {
+        final tap = TapGestureRecognizer()
+          ..onTap = () => _showFootnote(reference);
+        recognizers?.add(tap);
         out.add(TextSpan(
           text: text.substring(start, end),
           style: linkStyle.copyWith(fontSize: _fontSize * 0.75),
-          recognizer: TapGestureRecognizer()
-            ..onTap = () => _showFootnote(reference),
+          recognizer: tap,
         ));
       } else if (url != null) {
+        final tap = _paged
+            ? null
+            : (TapGestureRecognizer()
+              ..onTap = () {
+                _suppressNextTextTap = true;
+                _openLink(url);
+              });
+        if (tap != null) recognizers?.add(tap);
         out.add(TextSpan(
-            text: text.substring(start, end),
-            style: linkStyle,
-            // 翻页模式短按优先翻页；滚动模式仍可直接打开正文链接。
-            recognizer: _paged
-                ? null
-                : (TapGestureRecognizer()
-                  ..onTap = () {
-                    _suppressNextTextTap = true;
-                    _openLink(url);
-                  })));
+          text: text.substring(start, end),
+          style: linkStyle,
+          // 翻页模式短按优先翻页；滚动模式仍可直接打开正文链接。
+          recognizer: tap,
+        ));
       }
       pos = end;
     }
@@ -6934,6 +6988,29 @@ class _ReaderPageState extends State<ReaderPage>
                                         loading: true,
                                         color: _textColor);
                                   }
+                                  if (_restoringPagedProgress &&
+                                      _pendingPositionTransitionId != null) {
+                                    final staleTransition =
+                                        _pendingPositionTransitionId!;
+                                    final fallbackAnchor = _normalizeAnchor(
+                                        _pendingPagedAnchor ??
+                                            _positionController.value ??
+                                            _anchorForProgress(_progress));
+                                    WidgetsBinding.instance
+                                        .addPostFrameCallback((_) {
+                                      if (!mounted ||
+                                          !_paged ||
+                                          _pendingPositionTransitionId !=
+                                              staleTransition) {
+                                        return;
+                                      }
+                                      _pendingPositionTransitionId = null;
+                                      _pendingPagedAnchor = null;
+                                      _restoringPagedProgress = false;
+                                      _completePositionTransition(
+                                          staleTransition, fallbackAnchor);
+                                    });
+                                  }
                                   return _pagedBody(effectiveVh, viewTopPadding,
                                       viewBottomPadding, lockedBody);
                                 }
@@ -7137,12 +7214,18 @@ class _ReaderPageState extends State<ReaderPage>
                       color: barColor,
                       child: SafeArea(
                         top: false,
+                        bottom: false,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             _readerProgressBar(),
                             Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              padding: EdgeInsets.fromLTRB(
+                                0,
+                                4,
+                                0,
+                                bottomBarSafePadding(context, base: 4),
+                              ),
                               child: Row(
                                 children: [
                                   _cornerChapterBtn(Icons.chevron_left_rounded,
@@ -7207,5 +7290,43 @@ class _ReaderPageState extends State<ReaderPage>
         ),
       ),
     );
+  }
+}
+
+/// 跟踪并回收每次重排创建的 [TapGestureRecognizer]，避免切换章节或滚动重建时泄漏。
+class _TrackedTextSpanWidget extends StatefulWidget {
+  const _TrackedTextSpanWidget({
+    required this.buildSpan,
+    required this.buildWidget,
+  });
+
+  final TextSpan Function(List<GestureRecognizer> recognizers) buildSpan;
+  final Widget Function(TextSpan span) buildWidget;
+
+  @override
+  State<_TrackedTextSpanWidget> createState() => _TrackedTextSpanWidgetState();
+}
+
+class _TrackedTextSpanWidgetState extends State<_TrackedTextSpanWidget> {
+  final List<GestureRecognizer> _recognizers = [];
+
+  void _disposeRecognizers() {
+    for (final recognizer in _recognizers) {
+      recognizer.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _disposeRecognizers();
+    final span = widget.buildSpan(_recognizers);
+    return widget.buildWidget(span);
   }
 }

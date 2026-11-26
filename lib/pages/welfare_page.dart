@@ -3061,15 +3061,16 @@ class _WelfarePageState extends State<WelfarePage>
 
   Future<void> _completeWatchAdAndClaim(int boxIndex) async {
     if (_action.isNotEmpty) return;
+    final revision = LKClient.sessionRev.value;
     setState(() => _action = 'treasure-ad:$boxIndex');
     try {
       await LKApi.reportWelfareTreasureBoxProgress(
         boxIndex: boxIndex,
         action: 'watch_ad_completed',
       );
-      if (!mounted) return;
+      if (!mounted || revision != LKClient.sessionRev.value) return;
       final claimRes = await LKApi.claimWelfareTreasureBox(boxIndex);
-      if (!mounted) return;
+      if (!mounted || revision != LKClient.sessionRev.value) return;
       final rewardCoin =
           _int(_deepField(claimRes, const ['reward', 'coin'])) > 0
               ? _int(_deepField(claimRes, const ['reward', 'coin']))
@@ -3078,12 +3079,14 @@ class _WelfarePageState extends State<WelfarePage>
           context, rewardCoin > 0 ? '开箱成功，获得 +$rewardCoin 轻币！' : '宝箱开启成功！');
       await _load();
     } catch (e) {
-      if (mounted) {
+      if (mounted && revision == LKClient.sessionRev.value) {
         showLkError(context, _errorText(e));
         await _load();
       }
     } finally {
-      if (mounted) setState(() => _action = '');
+      if (mounted && revision == LKClient.sessionRev.value) {
+        setState(() => _action = '');
+      }
     }
   }
 

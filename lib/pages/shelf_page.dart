@@ -38,6 +38,7 @@ class _ShelfPageState extends State<ShelfPage> {
   int _page = 0;
   bool _hasMore = true;
   bool _loading = true;
+  bool _refreshing = false;
   bool _listMode = false;
   bool _localMode = false;
   bool _reloadAfterCurrent = false;
@@ -166,6 +167,7 @@ class _ShelfPageState extends State<ShelfPage> {
       _hasMore = true;
       _error = null;
       _loading = false;
+      _refreshing = false;
     });
     unawaited(_startLoad());
   }
@@ -266,7 +268,7 @@ class _ShelfPageState extends State<ShelfPage> {
       setState(() {
         _items = [...cached];
         _page = cached.isEmpty ? 0 : 1;
-        _hasMore = true;
+        _hasMore = cached.length >= 50;
         _error = null;
         _loading = false;
       });
@@ -287,7 +289,7 @@ class _ShelfPageState extends State<ShelfPage> {
       bool append = false,
       bool silent = false,
       bool forceRefresh = false}) async {
-    if (append && (_loading || !_hasMore)) return;
+    if (append && (_loading || _refreshing || !_hasMore)) return;
     if (!append) _statusVerificationGeneration++;
     if (forceRefresh) _verifiedStatuses.clear();
     final requestSerial = ++_loadSerial;
@@ -296,6 +298,7 @@ class _ShelfPageState extends State<ShelfPage> {
     final cacheKey = _shelfCacheKey(uid);
     setState(() {
       _loading = !silent || _items.isEmpty;
+      if (!append) _refreshing = true;
       if (!silent) _error = null;
     });
     try {
@@ -363,7 +366,10 @@ class _ShelfPageState extends State<ShelfPage> {
       }
     } finally {
       if (mounted && requestSerial == _loadSerial) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
         if (_reloadAfterCurrent) {
           _reloadAfterCurrent = false;
           unawaited(_load());
