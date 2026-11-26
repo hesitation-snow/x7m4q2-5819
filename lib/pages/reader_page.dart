@@ -4239,7 +4239,7 @@ class _ReaderPageState extends State<ReaderPage>
                           )),
                       if (changingSource) ...[
                         const SizedBox(height: 8),
-                        const LinearProgressIndicator(minHeight: 2),
+                        const MotionLinearProgressIndicator(minHeight: 2),
                       ],
                       const SizedBox(height: 18),
                       if (_ttsSourceMode == 'system')

@@ -12,6 +12,7 @@ import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../services/book_access_probe.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import 'catalog_paging.dart';
 import 'login_page.dart';
 import 'reader_page.dart';
@@ -962,7 +963,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                       SliverAppBar(
                         pinned: true,
                         elevation: 0,
-                        scrolledUnderElevation: 0.5,
+                        scrolledUnderElevation: 0,
                         backgroundColor: scheme.surface,
                         foregroundColor: scheme.onSurface,
                         expandedHeight: 8,
@@ -1910,7 +1911,7 @@ class _ChaptersPageState extends State<ChaptersPage> {
               color: Theme.of(context).colorScheme.surfaceContainer,
               surfaceTintColor: Colors.transparent,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
+                  borderRadius: BorderRadius.circular(16)),
               itemBuilder: (_) => _availableVolumes
                   .map((volume) => _detailMenuItem<int>(
                         context,
@@ -1941,10 +1942,9 @@ class _ChaptersPageState extends State<ChaptersPage> {
             ? _centeredList(const LkLoadingIndicator())
             : _error != null && _chapters.isEmpty
                 ? _centeredList(
-                    TextButton.icon(
-                      onPressed: () => _loadPage(reset: true),
-                      icon: const Icon(Icons.refresh_rounded),
-                      label: Text(_error!),
+                    ContentStateView(
+                      message: _error!,
+                      onRetry: () => _loadPage(reset: true),
                     ),
                   )
                 : ListView.builder(

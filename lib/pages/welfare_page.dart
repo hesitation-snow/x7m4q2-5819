@@ -3160,10 +3160,10 @@ class _WelfarePageState extends State<WelfarePage>
             Row(
               children: [
                 CircleAvatar(
-                  backgroundColor: Colors.amber.withValues(alpha: 0.18),
-                  child: const Icon(
+                  backgroundColor: scheme.tertiaryContainer,
+                  child: Icon(
                     Icons.inventory_2_rounded,
-                    color: Colors.amber,
+                    color: scheme.onTertiaryContainer,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -3188,7 +3188,7 @@ class _WelfarePageState extends State<WelfarePage>
                                 horizontal: 7, vertical: 2),
                             decoration: BoxDecoration(
                               color: allClaimed
-                                  ? Colors.green.withValues(alpha: 0.15)
+                                  ? scheme.secondaryContainer
                                   : scheme.primaryContainer,
                               borderRadius: BorderRadius.circular(10),
                             ),
@@ -3198,7 +3198,7 @@ class _WelfarePageState extends State<WelfarePage>
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                                 color: allClaimed
-                                    ? Colors.green
+                                    ? scheme.onSecondaryContainer
                                     : scheme.onPrimaryContainer,
                               ),
                             ),
@@ -3325,7 +3325,7 @@ class _WelfarePageState extends State<WelfarePage>
               color: claimed
                   ? scheme.outline
                   : claimable
-                      ? Colors.amber
+                      ? scheme.tertiary
                       : isSelected
                           ? scheme.primary
                           : scheme.onSurfaceVariant,
@@ -3348,7 +3348,7 @@ class _WelfarePageState extends State<WelfarePage>
                 color: claimed
                     ? scheme.outline
                     : claimable
-                        ? Colors.amber
+                        ? scheme.tertiary
                         : scheme.primary,
               ),
             ),
@@ -3433,9 +3433,9 @@ class _WelfarePageState extends State<WelfarePage>
                                   : Icons.info_outline_rounded,
                       size: 15,
                       color: claimed
-                          ? Colors.green
+                          ? scheme.primary
                           : claimable
-                              ? Colors.amber
+                              ? scheme.tertiary
                               : isWaitingUnlock
                                   ? scheme.outline
                                   : scheme.primary,
@@ -4075,13 +4075,13 @@ class _WelfarePageState extends State<WelfarePage>
                           padding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 1.5),
                           decoration: BoxDecoration(
-                            color: Colors.amber.withValues(alpha: 0.15),
+                            color: scheme.tertiaryContainer,
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
                             '+$reward 轻币',
-                            style: const TextStyle(
-                              color: Colors.amber,
+                            style: TextStyle(
+                              color: scheme.onTertiaryContainer,
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                             ),

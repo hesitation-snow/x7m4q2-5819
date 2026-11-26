@@ -8,6 +8,7 @@ import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../services/avatar_cache.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import 'user_profile_page.dart';
 
 /// 关注与粉丝列表，支持用户主页跳转和关注操作。
@@ -264,7 +265,10 @@ class _FollowListPageState extends State<_FollowListPageBody>
     if (!LKClient.shared.session.isLoggedIn) {
       return Scaffold(
         appBar: AppBar(title: const Text('关注与粉丝')),
-        body: const Center(child: Text('登录后才能查看关注与粉丝')),
+        body: const ContentStateView(
+          message: '登录后才能查看关注与粉丝',
+          icon: Icons.lock_outline_rounded,
+        ),
       );
     }
     return Scaffold(
@@ -331,14 +335,19 @@ class _FollowListPageState extends State<_FollowListPageBody>
     }
     if (error != null && items.isEmpty) {
       return ScrollableStatus(
-        child: FilledButton.tonal(
-          onPressed: onRetry,
-          child: Text(error),
+        child: ContentStateView(
+          message: error,
+          onRetry: onRetry,
         ),
       );
     }
     if (items.isEmpty) {
-      return const ScrollableStatus(child: Text('这里暂时没有用户'));
+      return const ScrollableStatus(
+        child: ContentStateView(
+          message: '这里暂时没有用户',
+          icon: Icons.people_outline_rounded,
+        ),
+      );
     }
     final showLoadMore = hasMore || loading || error != null;
     return ListView.separated(

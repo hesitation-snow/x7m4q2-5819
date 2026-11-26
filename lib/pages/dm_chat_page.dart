@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 
 /// 私信聊天
 class DMChatPage extends StatelessWidget {
@@ -145,9 +146,10 @@ class _DMChatPageState extends State<_DMChatPageBody> {
           child: _loading && _messages.isEmpty
               ? const LkLoadingIndicator()
               : _error != null && _messages.isEmpty
-                  ? Center(
-                      child: TextButton(
-                          onPressed: _load, child: const Text('加载失败，点击重试')))
+                  ? ContentStateView(
+                      message: _error.toString(),
+                      onRetry: _load,
+                    )
                   : NotificationListener<ScrollNotification>(
                       onNotification: (n) {
                         if (n.metrics.extentBefore < 80 &&

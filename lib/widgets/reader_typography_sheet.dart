@@ -132,7 +132,11 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                         ],
                       ],
                     ),
-                    const Divider(height: 16, thickness: 0.5),
+                    Divider(
+                      height: 16,
+                      thickness: 0.5,
+                      color: scheme.outlineVariant.withValues(alpha: 0.22),
+                    ),
                     // 字号大小
                     _buildSliderRow(
                       label: '字号大小',
@@ -150,7 +154,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                         widget.onFontSizeChanged?.call(v);
                       },
                     ),
-                    const Divider(height: 16, thickness: 0.5),
+                    const SizedBox(height: 10),
 
                     // 行间距
                     _buildSliderRow(
@@ -166,7 +170,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       onChangeEnd: (v) =>
                           _commitChange(_current.copyWith(lineHeight: v)),
                     ),
-                    const Divider(height: 16, thickness: 0.5),
+                    const SizedBox(height: 10),
 
                     // 段落间距
                     _buildSliderRow(
@@ -182,7 +186,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       onChangeEnd: (v) =>
                           _commitChange(_current.copyWith(paragraphSpacing: v)),
                     ),
-                    const Divider(height: 16, thickness: 0.5),
+                    const SizedBox(height: 10),
 
                     // 字符间距
                     _buildSliderRow(
@@ -199,7 +203,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       onChangeEnd: (v) =>
                           _commitChange(_current.copyWith(letterSpacing: v)),
                     ),
-                    const Divider(height: 16, thickness: 0.5),
+                    const SizedBox(height: 10),
 
                     // 页边留白（左右联动）
                     _buildSliderRow(
@@ -220,7 +224,11 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       Text('已启用独立四周边距，请在下方分别调整；此滑杆暂不生效。',
                           style: TextStyle(
                               fontSize: 12, color: scheme.onSurfaceVariant)),
-                    const Divider(height: 16, thickness: 0.5),
+                    Divider(
+                      height: 16,
+                      thickness: 0.5,
+                      color: scheme.outlineVariant.withValues(alpha: 0.22),
+                    ),
 
                     // 两端对齐开关
                     _buildSwitchTile(
@@ -234,7 +242,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       },
                       scheme: scheme,
                     ),
-                    const Divider(height: 16, thickness: 0.5),
+                    const SizedBox(height: 8),
 
                     // 分栏模式：选项独占一行，窄屏与大字体不挤压标题。
                     Column(
@@ -317,7 +325,11 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Divider(height: 1, thickness: 0.5),
+                    Divider(
+                      height: 1,
+                      thickness: 0.5,
+                      color: scheme.outlineVariant.withValues(alpha: 0.22),
+                    ),
                     const SizedBox(height: 12),
 
                     // 词间距
@@ -344,7 +356,11 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                         ),
                       ),
                     ),
-                    const Divider(height: 16, thickness: 0.5),
+                    Divider(
+                      height: 16,
+                      thickness: 0.5,
+                      color: scheme.outlineVariant.withValues(alpha: 0.22),
+                    ),
 
                     // 首行缩进
                     _buildSwitchTile(
@@ -360,7 +376,7 @@ class ReaderTypographySheetState extends State<ReaderTypographySheet> {
                       },
                       scheme: scheme,
                     ),
-                    const Divider(height: 16, thickness: 0.5),
+                    const SizedBox(height: 8),
 
                     // 独立调整四周边距开关
                     _buildSwitchTile(

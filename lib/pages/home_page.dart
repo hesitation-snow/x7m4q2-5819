@@ -1196,18 +1196,21 @@ class _FeedTabState extends State<FeedTab>
       {required IconData icon,
       required String text,
       required VoidCallback onRetry}) {
+    final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 44, color: Colors.grey.shade400),
+            Icon(icon,
+                size: 44,
+                color: scheme.onSurfaceVariant.withValues(alpha: 0.7)),
             const SizedBox(height: 12),
             Text(
               text,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey, fontSize: 13),
+              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
             ),
             const SizedBox(height: 16),
             Wrap(
@@ -1258,7 +1261,6 @@ class _HomeRecommendCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (books.isEmpty) return const SizedBox.shrink();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final itemWidth = _coverWidthFor(MediaQuery.sizeOf(context).width);
     final coverHeight = itemWidth * (4 / 3);
     final titleHeight =
@@ -1339,9 +1341,7 @@ class _HomeRecommendCard extends StatelessWidget {
                           style: TextStyle(
                             fontSize: itemWidth > 100 ? 12 : 11.5,
                             height: 1.25,
-                            color: isDark
-                                ? Colors.white70
-                                : const Color(0xFF37474F),
+                            color: Theme.of(context).colorScheme.onSurface,
                           ),
                         ),
                       ],

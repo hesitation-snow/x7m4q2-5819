@@ -311,7 +311,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
               Card(
                 margin: EdgeInsets.zero,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(16),
                   side: BorderSide(
                     color: scheme.outlineVariant.withValues(alpha: 0.3),
                   ),
@@ -373,7 +373,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
               Card(
                 margin: EdgeInsets.zero,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(16),
                   side: BorderSide(
                     color: scheme.outlineVariant.withValues(alpha: 0.3),
                   ),
@@ -431,7 +431,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                 Card(
                   margin: EdgeInsets.zero,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(16),
                     side: BorderSide(
                       color: scheme.outlineVariant.withValues(alpha: 0.3),
                     ),
@@ -489,7 +489,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                 return Card(
                   margin: const EdgeInsets.only(bottom: 8),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(16),
                     side: BorderSide(
                       color: isSelected
                           ? scheme.primary.withValues(alpha: 0.5)
@@ -532,14 +532,12 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
             MediaQuery.of(context).padding.bottom + 12,
           ),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                offset: const Offset(0, -2),
-                blurRadius: 8,
+            color: theme.colorScheme.surfaceContainerLow,
+            border: Border(
+              top: BorderSide(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
               ),
-            ],
+            ),
           ),
           child: Row(
             children: [
@@ -1239,14 +1237,12 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
             MediaQuery.of(context).padding.bottom + 12,
           ),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                offset: const Offset(0, -2),
-                blurRadius: 8,
+            color: theme.colorScheme.surfaceContainerLow,
+            border: Border(
+              top: BorderSide(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
               ),
-            ],
+            ),
           ),
           child: Row(
             children: [

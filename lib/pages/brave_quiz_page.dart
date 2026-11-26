@@ -175,8 +175,8 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
 
   Widget _scrollBody(List<Widget> children) {
     return ListView(
-      physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(
+          16, 16, 16, 16 + MediaQuery.paddingOf(context).bottom),
       children: children,
     );
   }

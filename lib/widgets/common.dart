@@ -749,7 +749,7 @@ Widget _braveCornerBadge(ColorScheme scheme, {bool compact = false}) {
       vertical: compact ? 1.5 : 2,
     ),
     decoration: BoxDecoration(
-      color: const Color(0xFFE53935).withValues(alpha: 0.88),
+      color: scheme.error.withValues(alpha: 0.90),
       borderRadius: BorderRadius.circular(compact ? 3 : 4),
       boxShadow: [
         BoxShadow(
@@ -764,7 +764,7 @@ Widget _braveCornerBadge(ColorScheme scheme, {bool compact = false}) {
       style: TextStyle(
         fontSize: compact ? 8.5 : 9.5,
         fontWeight: FontWeight.bold,
-        color: Colors.white,
+        color: scheme.onError,
       ),
     ),
   );

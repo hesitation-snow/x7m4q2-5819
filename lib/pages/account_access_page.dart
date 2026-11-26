@@ -99,9 +99,11 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: Text(widget.register ? '注册账号' : '重置密码')),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      body: SafeArea(
+        top: false,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Card(
@@ -388,6 +390,7 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
             ),
           ),
         ),
+      ),
       ),
     );
   }
