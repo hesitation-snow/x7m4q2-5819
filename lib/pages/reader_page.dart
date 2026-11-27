@@ -40,6 +40,7 @@ import '../reader/reader_tts_resume.dart';
 import '../reader/reader_speech_synthesizers.dart';
 import '../services/edge_speech.dart';
 import '../services/listening_now.dart';
+import '../services/speech_chapter_loader.dart';
 import '../services/system_tts.dart';
 import '../services/custom_ssml_tts.dart';
 import 'custom_tts_settings_page.dart';
@@ -374,6 +375,9 @@ class _ReaderPageState extends State<ReaderPage>
   String? _customSpeechProfileError;
   bool _mediaServiceRetrying = false;
   bool _speechAutoAdvanceHandled = false;
+  int? _backgroundChapterId;
+  String _backgroundChapterTitle = '';
+  int? _backgroundVolumeId;
   bool _autoTtsStarted = false;
   String? _lastSpeechScrollKey;
   bool _ttsFollowPaused = false;
@@ -1532,6 +1536,9 @@ class _ReaderPageState extends State<ReaderPage>
         _applyImmersive();
         LKReadingSession.shared.resume();
         _startReadingReportTimer();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _syncBackgroundAdvancedChapterIfNeeded();
+        });
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
@@ -1857,6 +1864,9 @@ class _ReaderPageState extends State<ReaderPage>
     _resetExitConfirmation();
     _syncVolumeKeys();
     _applyImmersive();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncBackgroundAdvancedChapterIfNeeded();
+    });
   }
 
   @override
@@ -3301,38 +3311,170 @@ class _ReaderPageState extends State<ReaderPage>
     }
   }
 
+  void _bindSpeechChapterAdvance(ReaderSpeechSession speech) {
+    speech.canAutoAdvanceChapter = () =>
+        mounted &&
+        identical(_speechSession, speech) &&
+        _ttsContinuousChapter &&
+        _ttsSleepTimer != PlaybackSleepTimer.chapterEnd &&
+        (!_readerForeground || ModalRoute.of(context)?.isCurrent == false);
+    speech.onChapterCompleted = () => _advanceSpeechChapterInBackground(speech);
+  }
+
+  Future<bool> _advanceSpeechChapterInBackground(
+      ReaderSpeechSession speech) async {
+    final config = _activeSpeechConfig;
+    final accountRevision = LKClient.sessionRev.value;
+    bool stillCurrent() =>
+        mounted &&
+        identical(_speechSession, speech) &&
+        !speech.isStopped &&
+        !speech.isPaused &&
+        _ttsContinuousChapter &&
+        _ttsSleepTimer != PlaybackSleepTimer.chapterEnd &&
+        _activeSpeechConfig != null &&
+        accountRevision == LKClient.sessionRev.value;
+    if (!stillCurrent() || config == null) return false;
+
+    final result = await SpeechChapterLoader.loadNextChapter(
+      bookId: widget.bookId,
+      currentChapterId: _backgroundChapterId ?? widget.chapterId,
+      currentVolumeId: _backgroundVolumeId ?? _effectiveVolumeId,
+      nextChapterId: _nextId,
+      nextChapterTitle: _nextTitle ?? '',
+      nextVolumeId: _nextVolumeId,
+      languageFilter: _ttsLanguageFilter,
+      cacheOwnerUid: _readerCacheOwnerUid,
+      isCurrent: stillCurrent,
+    );
+    if (!stillCurrent()) return false;
+
+    switch (result.status) {
+      case SpeechNextChapterStatus.locked:
+        _ttsSessionError = result.message;
+        setState(() {});
+        _refreshTtsSheet();
+        return false;
+      case SpeechNextChapterStatus.noNext:
+      case SpeechNextChapterStatus.cancelled:
+        return false;
+      case SpeechNextChapterStatus.loaded:
+        final next = result.chapter!;
+        _backgroundChapterId = next.chapterId;
+        _backgroundChapterTitle = next.title;
+        _backgroundVolumeId = next.volumeId;
+        _nextId = next.nextChapterId;
+        _nextTitle = next.nextChapterTitle;
+        _nextVolumeId = next.nextVolumeId;
+        _speechAutoAdvanceHandled = false;
+        _ttsSessionError = null;
+        if (_speechAccountId.isNotEmpty && next.segments.isNotEmpty) {
+          final first = next.segments.first;
+          unawaited(
+            ReaderTtsResumeStore.save(
+              accountId: _speechAccountId,
+              bookId: widget.bookId,
+              chapterId: next.chapterId,
+              position: ReadingPosition.text(
+                blockIndex: first.blockIndex,
+                offset: first.startOffset,
+              ),
+            ),
+          );
+        }
+        if (LKClient.shared.session.isLoggedIn) {
+          unawaited(
+            LKApi.saveHistory(widget.bookId, next.volumeId, next.chapterId, 0)
+                .catchError((_) {}),
+          );
+        }
+        await speech.start(
+          next.segments,
+          accountId: _speechAccountId,
+          config: config,
+          languageFilter: _ttsLanguageFilter,
+          title: widget.bookTitle,
+          artist: next.title,
+          artUri: _mediaArtUri(),
+        );
+        return !speech.isStopped;
+    }
+  }
+
+  void _syncBackgroundAdvancedChapterIfNeeded() {
+    final targetId = _backgroundChapterId;
+    if (!mounted ||
+        _chapterSwitching ||
+        targetId == null ||
+        targetId == widget.chapterId) {
+      return;
+    }
+    if (!_readerForeground || ModalRoute.of(context)?.isCurrent == false) {
+      return;
+    }
+    final speech = _speechSession;
+    final targetTitle =
+        _backgroundChapterTitle.isNotEmpty ? _backgroundChapterTitle : _title;
+    final targetVolumeId = _backgroundVolumeId ?? _effectiveVolumeId;
+    if (speech != null && !speech.isStopped) {
+      _handSpeechToBackground();
+    }
+    unawaited(_open(
+      targetId,
+      targetTitle,
+      volumeId: targetVolumeId,
+      autoTts: false,
+      ttsSource: _ttsSourceMode,
+    ));
+  }
+
   void _onSpeechSessionChanged() {
     if (!mounted) return;
     final session = _speechSession;
     final segment = session?.currentSegment;
-    if (session != null &&
-        (session.isPlaying || session.isLoading) &&
-        segment != null) {
-      final key = _speechSegmentScrollKey(segment);
-      if (key != _lastSpeechScrollKey) {
-        _lastSpeechScrollKey = key;
-        if (!_ttsFollowPaused) {
-          _followSpeechSegment(segment);
+    final backgroundChapterActive =
+        _backgroundChapterId != null && _backgroundChapterId != widget.chapterId;
+    if (!backgroundChapterActive) {
+      if (session != null &&
+          (session.isPlaying || session.isLoading) &&
+          segment != null) {
+        final key = _speechSegmentScrollKey(segment);
+        if (key != _lastSpeechScrollKey) {
+          _lastSpeechScrollKey = key;
+          if (!_ttsFollowPaused) {
+            _followSpeechSegment(segment);
+          }
+        }
+      } else if (session == null || session.isStopped) {
+        _lastSpeechScrollKey = null;
+        _clearTtsFollowPause(notify: false);
+      }
+      if (segment != null && _positionRestored) {
+        final anchor = ReadingPosition.text(
+          blockIndex: segment.blockIndex,
+          offset: segment.startOffset,
+        );
+        _publishPosition(anchor);
+        if (_speechAccountId.isNotEmpty) {
+          unawaited(ReaderTtsResumeStore.save(
+            accountId: _speechAccountId,
+            bookId: widget.bookId,
+            chapterId: widget.chapterId,
+            position: anchor,
+          ));
         }
       }
-    } else if (session == null || session.isStopped) {
-      _lastSpeechScrollKey = null;
-      _clearTtsFollowPause(notify: false);
-    }
-    if (segment != null && _positionRestored) {
+    } else if (segment != null && _speechAccountId.isNotEmpty) {
       final anchor = ReadingPosition.text(
         blockIndex: segment.blockIndex,
         offset: segment.startOffset,
       );
-      _publishPosition(anchor);
-      if (_speechAccountId.isNotEmpty) {
-        unawaited(ReaderTtsResumeStore.save(
-          accountId: _speechAccountId,
-          bookId: widget.bookId,
-          chapterId: widget.chapterId,
-          position: anchor,
-        ));
-      }
+      unawaited(ReaderTtsResumeStore.save(
+        accountId: _speechAccountId,
+        bookId: widget.bookId,
+        chapterId: _backgroundChapterId!,
+        position: anchor,
+      ));
     }
     _ttsUiRevision.value++;
     setState(() {});
@@ -3402,9 +3544,15 @@ class _ReaderPageState extends State<ReaderPage>
       _bookCoverUrl = transfer.coverUrl.trim();
     }
     _speechAutoAdvanceHandled = false;
+    _backgroundChapterId = null;
+    _backgroundChapterTitle = '';
+    _backgroundVolumeId = null;
     _lastSpeechScrollKey = null;
     _ttsSessionError = session.error;
+    _ttsContinuousChapter = transfer.continuousChapter;
+    _ttsLanguageFilter = transfer.languageFilter;
     session.addListener(_onSpeechSessionChanged);
+    _bindSpeechChapterAdvance(session);
     activeReaderAudioHandler?.bindSpeechSessionControls(
       ownerKey: _speechSessionOwnerKey,
       callbacks: TtsMediaCallbacks(
@@ -3466,6 +3614,8 @@ class _ReaderPageState extends State<ReaderPage>
     final session = _speechSession;
     if (session == null) return;
     session.removeListener(_onSpeechSessionChanged);
+    session.canAutoAdvanceChapter = null;
+    session.onChapterCompleted = null;
     _speechSession = null;
     final client = _activeSpeechClient;
     final config = _activeSpeechConfig;
@@ -3479,16 +3629,25 @@ class _ReaderPageState extends State<ReaderPage>
     if (_bookCoverUrl.isEmpty) {
       unawaited(_ensureBookCoverUrl());
     }
+    final activeChapterId = _backgroundChapterId ?? widget.chapterId;
+    final activeChapterTitle =
+        _backgroundChapterTitle.isNotEmpty ? _backgroundChapterTitle : _title;
+    final activeVolumeId = _backgroundVolumeId ?? _effectiveVolumeId;
     ListeningNow.instance.adopt(
       session: session,
       bookTitle: widget.bookTitle,
-      chapterTitle: _title,
+      chapterTitle: activeChapterTitle,
       bookId: widget.bookId,
-      chapterId: widget.chapterId,
-      volumeId: widget.volumeId,
+      chapterId: activeChapterId,
+      volumeId: activeVolumeId,
       coverUrl: _bookCoverUrl,
       config: config,
       accountId: accountId,
+      nextChapterId: _nextId,
+      nextChapterTitle: _nextTitle ?? '',
+      nextVolumeId: _nextVolumeId,
+      continuousChapter: _ttsContinuousChapter,
+      languageFilter: _ttsLanguageFilter,
       releaseResources: () async {
         final handler = activeReaderAudioHandler;
         if (handler?.speechSessionOwnerKey == ownerKey) {
@@ -3541,6 +3700,8 @@ class _ReaderPageState extends State<ReaderPage>
     _activeSpeechConfig = null;
     _adoptedSpeechRelease = null;
     session?.removeListener(_onSpeechSessionChanged);
+    session?.canAutoAdvanceChapter = null;
+    session?.onChapterCompleted = null;
     final handler = activeReaderAudioHandler;
     final ownsHandler =
         handler?.speechSessionOwnerKey == _speechSessionOwnerKey;
@@ -3792,9 +3953,13 @@ class _ReaderPageState extends State<ReaderPage>
     _speechSession = speech;
     _activeSpeechConfig = config;
     _speechAutoAdvanceHandled = false;
+    _backgroundChapterId = null;
+    _backgroundChapterTitle = '';
+    _backgroundVolumeId = null;
     _lastSpeechScrollKey = null;
     _ttsSessionError = null;
     speech.addListener(_onSpeechSessionChanged);
+    _bindSpeechChapterAdvance(speech);
     handler.bindSpeechSessionControls(
       ownerKey: _speechSessionOwnerKey,
       callbacks: TtsMediaCallbacks(

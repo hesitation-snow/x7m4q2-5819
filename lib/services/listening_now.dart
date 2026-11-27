@@ -3,12 +3,16 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../api/lk_api.dart';
+import '../api/lk_client.dart';
+import '../reader/reader_language_segments.dart';
 import '../reader/reader_speech_session.dart';
 import '../reader/reader_tts_resume.dart';
 import '../reader/reading_position.dart';
 import 'edge_speech.dart';
 import 'reader_audio_handler.dart';
 import 'reader_tts_preferences.dart';
+import 'speech_chapter_loader.dart';
 
 class ListeningSessionTransfer {
   const ListeningSessionTransfer({
@@ -17,6 +21,8 @@ class ListeningSessionTransfer {
     required this.accountId,
     required this.releaseResources,
     this.coverUrl = '',
+    this.continuousChapter = false,
+    this.languageFilter = ReaderLanguageFilter.automatic,
   });
 
   final ReaderSpeechSession session;
@@ -24,6 +30,8 @@ class ListeningSessionTransfer {
   final String accountId;
   final Future<void> Function()? releaseResources;
   final String coverUrl;
+  final bool continuousChapter;
+  final ReaderLanguageFilter languageFilter;
 }
 
 /// Playback that outlives the reader page. Leaving a chapter keeps the
@@ -38,6 +46,19 @@ class ListeningNow extends ChangeNotifier {
   Future<void> Function()? _releaseResources;
   Future<void>? _stopFuture;
   String? _lastSavedResumeKey;
+  int _accountRevision = 0;
+
+  @visibleForTesting
+  Future<SpeechNextChapterResult> Function({
+    required int bookId,
+    required int currentChapterId,
+    required int currentVolumeId,
+    int? nextChapterId,
+    String nextChapterTitle,
+    int? nextVolumeId,
+    required ReaderLanguageFilter languageFilter,
+    required bool Function() isCurrent,
+  })? nextChapterLoaderForTesting;
 
   SpeechSynthesisConfig? config;
   String? lastError;
@@ -48,6 +69,11 @@ class ListeningNow extends ChangeNotifier {
   int bookId = 0;
   int chapterId = 0;
   int volumeId = 0;
+  int? nextChapterId;
+  String nextChapterTitle = '';
+  int? nextVolumeId;
+  bool continuousChapter = false;
+  ReaderLanguageFilter languageFilter = ReaderLanguageFilter.automatic;
 
   ReaderSpeechSession? get session => _session;
   bool get active => _session != null && !_session!.isStopped;
@@ -64,15 +90,42 @@ class ListeningNow extends ChangeNotifier {
     SpeechSynthesisConfig? config,
     String accountId = '',
     Future<void> Function()? releaseResources,
+    int? nextChapterId,
+    String nextChapterTitle = '',
+    int? nextVolumeId,
+    bool continuousChapter = false,
+    ReaderLanguageFilter languageFilter = ReaderLanguageFilter.automatic,
   }) {
     final trimmedCover = coverUrl.trim();
+    _accountRevision = LKClient.sessionRev.value;
+    void bindChapterAdvance(ReaderSpeechSession target) {
+      target.canAutoAdvanceChapter = () =>
+          identical(_session, target) &&
+          _stopFuture == null &&
+          this.continuousChapter &&
+          this.bookId > 0 &&
+          this.chapterId > 0 &&
+          this.config != null &&
+          _accountRevision == LKClient.sessionRev.value;
+      target.onChapterCompleted = () => _advanceToNextChapter(target);
+    }
+
     if (identical(_session, session)) {
       lastError = null;
       this.bookTitle = bookTitle;
       this.chapterTitle = chapterTitle;
+      this.bookId = bookId;
+      this.chapterId = chapterId;
+      this.volumeId = volumeId;
       if (trimmedCover.isNotEmpty) this.coverUrl = trimmedCover;
       this.config = config;
       this.accountId = accountId;
+      this.nextChapterId = nextChapterId;
+      this.nextChapterTitle = nextChapterTitle;
+      this.nextVolumeId = nextVolumeId;
+      this.continuousChapter = continuousChapter;
+      this.languageFilter = languageFilter;
+      bindChapterAdvance(session);
       notifyListeners();
       return;
     }
@@ -89,11 +142,19 @@ class ListeningNow extends ChangeNotifier {
     this.bookId = bookId;
     this.chapterId = chapterId;
     this.volumeId = volumeId;
+    this.nextChapterId = nextChapterId;
+    this.nextChapterTitle = nextChapterTitle;
+    this.nextVolumeId = nextVolumeId;
+    this.continuousChapter = continuousChapter;
+    this.languageFilter = languageFilter;
+    bindChapterAdvance(session);
     session.addListener(_onSession);
     _lastSavedResumeKey = null;
     _saveResumeProgress(session);
     notifyListeners();
     if (previous != null) {
+      previous.canAutoAdvanceChapter = null;
+      previous.onChapterCompleted = null;
       previous.removeListener(_onSession);
       Future<void>(() async {
         // Do not call previous.stop() once a new session has taken over the shared handler.
@@ -135,12 +196,16 @@ class ListeningNow extends ChangeNotifier {
     final session = _session;
     if (session == null) return null;
     session.removeListener(_onSession);
+    session.canAutoAdvanceChapter = null;
+    session.onChapterCompleted = null;
     final transfer = ListeningSessionTransfer(
       session: session,
       config: config,
       accountId: this.accountId,
       releaseResources: _releaseResources,
       coverUrl: coverUrl,
+      continuousChapter: continuousChapter,
+      languageFilter: languageFilter,
     );
     _session = null;
     _releaseResources = null;
@@ -149,6 +214,9 @@ class ListeningNow extends ChangeNotifier {
     lastError = null;
     coverUrl = '';
     this.accountId = '';
+    nextChapterId = null;
+    nextChapterTitle = '';
+    nextVolumeId = null;
     notifyListeners();
     return transfer;
   }
@@ -205,6 +273,8 @@ class ListeningNow extends ChangeNotifier {
     if (session.sleepTimer != prefs.sleepTimer) {
       session.setSleepTimer(prefs.sleepTimer);
     }
+    continuousChapter = prefs.continuousChapter;
+    languageFilter = prefs.languageFilter;
     if (currentConfig != null) {
       if (currentConfig.source == 'edge') {
         try {
@@ -266,14 +336,111 @@ class ListeningNow extends ChangeNotifier {
     }
   }
 
+  Future<bool> _advanceToNextChapter(ReaderSpeechSession session) async {
+    final currentConfig = config;
+    final currentAccount = accountId;
+    final expectedRev = _accountRevision;
+    bool stillCurrent() =>
+        identical(_session, session) &&
+        !session.isStopped &&
+        !session.isPaused &&
+        _stopFuture == null &&
+        continuousChapter &&
+        currentConfig != null &&
+        bookId > 0 &&
+        chapterId > 0 &&
+        expectedRev == LKClient.sessionRev.value;
+    if (!stillCurrent()) return false;
+
+    final loader = nextChapterLoaderForTesting;
+    final result = loader != null
+        ? await loader(
+            bookId: bookId,
+            currentChapterId: chapterId,
+            currentVolumeId: volumeId,
+            nextChapterId: nextChapterId,
+            nextChapterTitle: nextChapterTitle,
+            nextVolumeId: nextVolumeId,
+            languageFilter: languageFilter,
+            isCurrent: stillCurrent,
+          )
+        : await SpeechChapterLoader.loadNextChapter(
+            bookId: bookId,
+            currentChapterId: chapterId,
+            currentVolumeId: volumeId,
+            nextChapterId: nextChapterId,
+            nextChapterTitle: nextChapterTitle,
+            nextVolumeId: nextVolumeId,
+            languageFilter: languageFilter,
+            isCurrent: stillCurrent,
+            cacheOwnerUid:
+                LKClient.shared.session.isLoggedIn ? LKClient.shared.session.uid : 0,
+          );
+    if (!stillCurrent()) return false;
+
+    switch (result.status) {
+      case SpeechNextChapterStatus.locked:
+        lastError = result.message;
+        notifyListeners();
+        return false;
+      case SpeechNextChapterStatus.noNext:
+      case SpeechNextChapterStatus.cancelled:
+        return false;
+      case SpeechNextChapterStatus.loaded:
+        final next = result.chapter!;
+        chapterId = next.chapterId;
+        chapterTitle = next.title;
+        volumeId = next.volumeId;
+        nextChapterId = next.nextChapterId;
+        nextChapterTitle = next.nextChapterTitle;
+        nextVolumeId = next.nextVolumeId;
+        _lastSavedResumeKey = null;
+        lastError = null;
+        if (currentAccount.isNotEmpty && next.segments.isNotEmpty) {
+          final first = next.segments.first;
+          unawaited(
+            ReaderTtsResumeStore.save(
+              accountId: currentAccount,
+              bookId: bookId,
+              chapterId: next.chapterId,
+              position: ReadingPosition.text(
+                blockIndex: first.blockIndex,
+                offset: first.startOffset,
+              ),
+            ).catchError((Object _) {}),
+          );
+        }
+        if (LKClient.shared.session.isLoggedIn) {
+          unawaited(
+            LKApi.saveHistory(bookId, next.volumeId, next.chapterId, 0)
+                .catchError((_) {}),
+          );
+        }
+        await session.start(
+          next.segments,
+          accountId: currentAccount,
+          config: currentConfig!,
+          languageFilter: languageFilter,
+          title: bookTitle,
+          artist: next.title,
+          artUri: session.artUri,
+        );
+        if (identical(_session, session)) {
+          notifyListeners();
+        }
+        return !session.isStopped;
+    }
+  }
+
   void _onSession() {
     final session = _session;
     if (session == null || _stopFuture != null) return;
     _saveResumeProgress(session);
     if (session.isStopped) {
       final sessionError = session.error;
-      lastError =
-          sessionError != null && sessionError.isNotEmpty ? sessionError : null;
+      if (sessionError != null && sessionError.isNotEmpty) {
+        lastError = sessionError;
+      }
       final release = _releaseResources;
       _session = null;
       _releaseResources = null;
@@ -281,6 +448,11 @@ class ListeningNow extends ChangeNotifier {
       config = null;
       coverUrl = '';
       accountId = '';
+      nextChapterId = null;
+      nextChapterTitle = '';
+      nextVolumeId = null;
+      session.canAutoAdvanceChapter = null;
+      session.onChapterCompleted = null;
       session.removeListener(_onSession);
       notifyListeners();
       Future<void>(() async {
@@ -328,6 +500,11 @@ class ListeningNow extends ChangeNotifier {
     lastError = null;
     coverUrl = '';
     accountId = '';
+    nextChapterId = null;
+    nextChapterTitle = '';
+    nextVolumeId = null;
+    session?.canAutoAdvanceChapter = null;
+    session?.onChapterCompleted = null;
     session?.removeListener(_onSession);
     try {
       if (session != null && !session.isStopped) {

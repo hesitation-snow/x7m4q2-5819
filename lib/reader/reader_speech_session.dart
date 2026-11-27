@@ -246,6 +246,10 @@ class ReaderSpeechSession extends ChangeNotifier {
   bool _disposed = false;
   String? _error;
 
+  /// 当本章末尾满足自动续播条件时，由外部宿主提供是否接管及切换下一章的回调。
+  bool Function()? canAutoAdvanceChapter;
+  Future<bool> Function()? onChapterCompleted;
+
   int get position => _position;
   int get segmentCount => _segments.length;
   TtsSegment? get currentSegment =>
@@ -441,6 +445,29 @@ class ReaderSpeechSession extends ChangeNotifier {
     ++_utterance; // reject duplicate completion before notifying listeners
     _endLoading();
     if (index + 1 >= _segments.length) {
+      final chapterAdvance = onChapterCompleted;
+      final allowChapterAdvance = chapterAdvance != null &&
+          _sleepMode != PlaybackSleepTimer.chapterEnd &&
+          (canAutoAdvanceChapter?.call() ?? true);
+      if (allowChapterAdvance) {
+        _beginLoading();
+        _notify();
+        try {
+          if (handler is SeamlessSpeechFilesHandler) {
+            await (handler as SeamlessSpeechFilesHandler)
+                .prepareSegmentTransition();
+          }
+          if (!_valid(generation)) return;
+          final advanced = await chapterAdvance();
+          if (!_valid(generation) || advanced) return;
+        } catch (error) {
+          if (_valid(generation)) {
+            _fail(error, generation);
+          }
+          return;
+        }
+        _endLoading();
+      }
       _stopped = true;
       _paused = false;
       _completed = true;
@@ -642,6 +669,8 @@ class ReaderSpeechSession extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    canAutoAdvanceChapter = null;
+    onChapterCompleted = null;
     ++_generation;
     ++_utterance;
     _gapTimer?.cancel();
