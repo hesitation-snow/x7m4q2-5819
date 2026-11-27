@@ -33,6 +33,9 @@ class _DMChatPageBody extends StatefulWidget {
 class _DMChatPageState extends State<_DMChatPageBody> {
   List<dynamic> _messages = [];
   final _input = TextEditingController();
+  final _focus = FocusNode();
+  bool _hasFocus = false;
+  double _lastViewInset = 0;
   final _session = SessionStamp();
   bool _sending = false;
   int _loadSerial = 0;
@@ -46,11 +49,27 @@ class _DMChatPageState extends State<_DMChatPageBody> {
   @override
   void initState() {
     super.initState();
+    _focus.addListener(_onFocusChanged);
     _load();
+  }
+
+  void _onFocusChanged() {
+    if (mounted && _hasFocus != _focus.hasFocus) {
+      setState(() => _hasFocus = _focus.hasFocus);
+    }
+  }
+
+  void _dismissInput() {
+    if (_focus.hasFocus) {
+      _focus.unfocus();
+    }
   }
 
   @override
   void dispose() {
+    _focus
+      ..removeListener(_onFocusChanged)
+      ..dispose();
     _input.dispose();
     super.dispose();
   }
@@ -148,127 +167,166 @@ class _DMChatPageState extends State<_DMChatPageBody> {
     final myUid = LKClient.shared.session.uid;
     final showTopLoader = _hasMore || _loadingMore;
     final totalCount = _messages.length + (showTopLoader ? 1 : 0);
-    return Scaffold(
-      backgroundColor: scheme.surfaceContainerLowest,
-      appBar:
-          AppBar(title: Text(widget.peerName.isEmpty ? '私信' : widget.peerName)),
-      body: Column(children: [
-        Expanded(
-          child: _loading && _messages.isEmpty
-              ? const LkLoadingIndicator()
-              : _error != null && _messages.isEmpty
-                  ? ContentStateView(
-                      message: _error.toString(),
-                      onRetry: _load,
-                    )
-                  : NotificationListener<ScrollNotification>(
-                      onNotification: (n) {
-                        if (n.metrics.extentBefore < 80 &&
-                            _hasMore &&
-                            !_loadingMore &&
-                            !_loading &&
-                            _loadMoreError == null) {
-                          unawaited(_loadMore());
-                        }
-                        return false;
-                      },
-                      child: MotionRefreshIndicator(
-                        onRefresh: _load,
-                        child: ListView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.all(12),
-                          itemCount: totalCount,
-                          itemBuilder: (_, i) {
-                            if (showTopLoader && i == 0) {
-                              return Center(
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 8),
-                                  child: _loadingMore
-                                      ? const SizedBox.square(
-                                          dimension: 20,
-                                          child: MotionProgressIndicator(
-                                              strokeWidth: 2),
-                                        )
-                                      : TextButton.icon(
-                                          onPressed: _loadMore,
-                                          icon: const Icon(
-                                              Icons.history_rounded,
-                                              size: 16),
-                                          label: const Text('加载更早记录',
-                                              style: TextStyle(fontSize: 12)),
-                                        ),
-                                ),
-                              );
-                            }
-                            final actualIndex = showTopLoader ? i - 1 : i;
-                            final m = _messages[actualIndex];
-                            final mine = m.isMine(myUid);
-                            return Align(
-                              alignment: mine
-                                  ? Alignment.centerRight
-                                  : Alignment.centerLeft,
-                              child: Container(
-                                margin: const EdgeInsets.symmetric(vertical: 4),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                constraints: BoxConstraints(
-                                  maxWidth:
-                                      MediaQuery.sizeOf(context).width * .82,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: mine
-                                      ? scheme.primaryContainer
-                                      : scheme.surfaceContainerHigh,
-                                  borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(20),
-                                    topRight: const Radius.circular(20),
-                                    bottomLeft: Radius.circular(mine ? 20 : 4),
-                                    bottomRight: Radius.circular(mine ? 4 : 20),
-                                  ),
-                                ),
-                                child: SelectableText(
-                                  m.content,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyLarge
-                                      ?.copyWith(
-                                        color: mine
-                                            ? scheme.onPrimaryContainer
-                                            : scheme.onSurface,
+    final inset = MediaQuery.viewInsetsOf(context).bottom;
+    if (_lastViewInset > 0 && inset == 0 && _focus.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            _focus.hasFocus &&
+            MediaQuery.viewInsetsOf(context).bottom == 0) {
+          _focus.unfocus();
+        }
+      });
+    }
+    _lastViewInset = inset;
+    final inputActive = _hasFocus || inset > 0;
+    return PopScope(
+      canPop: !inputActive,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          _dismissInput();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: scheme.surfaceContainerLowest,
+        appBar:
+            AppBar(title: Text(widget.peerName.isEmpty ? '私信' : widget.peerName)),
+        body: Column(children: [
+          Expanded(
+            child: Stack(
+              children: [
+                _loading && _messages.isEmpty
+                    ? const LkLoadingIndicator()
+                    : _error != null && _messages.isEmpty
+                        ? ContentStateView(
+                            message: _error.toString(),
+                            onRetry: _load,
+                          )
+                        : NotificationListener<ScrollNotification>(
+                            onNotification: (n) {
+                              if (n.metrics.extentBefore < 80 &&
+                                  _hasMore &&
+                                  !_loadingMore &&
+                                  !_loading &&
+                                  _loadMoreError == null) {
+                                unawaited(_loadMore());
+                              }
+                              return false;
+                            },
+                            child: MotionRefreshIndicator(
+                              onRefresh: _load,
+                              child: ListView.builder(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                padding: const EdgeInsets.all(12),
+                                itemCount: totalCount,
+                                itemBuilder: (_, i) {
+                                  if (showTopLoader && i == 0) {
+                                    return Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 8),
+                                        child: _loadingMore
+                                            ? const SizedBox.square(
+                                                dimension: 20,
+                                                child: MotionProgressIndicator(
+                                                    strokeWidth: 2),
+                                              )
+                                            : TextButton.icon(
+                                                onPressed: _loadMore,
+                                                icon: const Icon(
+                                                    Icons.history_rounded,
+                                                    size: 16),
+                                                label: const Text('加载更早记录',
+                                                    style: TextStyle(
+                                                        fontSize: 12)),
+                                              ),
                                       ),
-                                ),
+                                    );
+                                  }
+                                  final actualIndex = showTopLoader ? i - 1 : i;
+                                  final m = _messages[actualIndex];
+                                  final mine = m.isMine(myUid);
+                                  return Align(
+                                    alignment: mine
+                                        ? Alignment.centerRight
+                                        : Alignment.centerLeft,
+                                    child: Container(
+                                      margin: const EdgeInsets.symmetric(
+                                          vertical: 4),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 8),
+                                      constraints: BoxConstraints(
+                                        maxWidth:
+                                            MediaQuery.sizeOf(context).width *
+                                                .82,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: mine
+                                            ? scheme.primaryContainer
+                                            : scheme.surfaceContainerHigh,
+                                        borderRadius: BorderRadius.only(
+                                          topLeft: const Radius.circular(20),
+                                          topRight: const Radius.circular(20),
+                                          bottomLeft:
+                                              Radius.circular(mine ? 20 : 4),
+                                          bottomRight:
+                                              Radius.circular(mine ? 4 : 20),
+                                        ),
+                                      ),
+                                      child: SelectableText(
+                                        m.content,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyLarge
+                                            ?.copyWith(
+                                              color: mine
+                                                  ? scheme.onPrimaryContainer
+                                                  : scheme.onSurface,
+                                            ),
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
-                            );
-                          },
-                        ),
-                      ),
+                            ),
+                          ),
+                if (inputActive)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      key: const ValueKey('dm-input-dismiss-barrier'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _dismissInput,
+                      onVerticalDragStart: (_) => _dismissInput(),
+                      child: const SizedBox.expand(),
                     ),
-        ),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainer,
-            border: Border(
-              top: BorderSide(
-                color: scheme.outlineVariant.withValues(alpha: .25),
-              ),
+                  ),
+              ],
             ),
           ),
-          child: SafeArea(
-            top: false,
-            bottom: false,
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                12,
-                8,
-                12,
-                bottomBarSafePadding(context, base: 8),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainer,
+              border: Border(
+                top: BorderSide(
+                  color: scheme.outlineVariant.withValues(alpha: .25),
+                ),
               ),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Expanded(
-                  child: TextField(
-                    controller: _input,
-                    minLines: 1,
+            ),
+            child: SafeArea(
+              top: false,
+              bottom: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  12,
+                  8,
+                  12,
+                  bottomBarSafePadding(context, base: 8),
+                ),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _input,
+                      focusNode: _focus,
+                      minLines: 1,
                     maxLines: 5,
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
@@ -310,8 +368,9 @@ class _DMChatPageState extends State<_DMChatPageBody> {
               ]),
             ),
           ),
-        ),
-      ]),
+          ),
+        ]),
+      ),
     );
   }
 }

@@ -180,6 +180,7 @@ void main() {
       await tester.tap(ttsTile);
       await tester.pumpAndSettle();
       expect(find.byType(TtsSettingsPage), findsOneWidget);
+      expect(find.text('与阅读器听书面板同步'), findsNothing);
       expect(find.byType(DropdownButtonFormField<String>), findsNothing);
       expect(find.byType(ExpansionTile), findsNothing);
 

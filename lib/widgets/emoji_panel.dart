@@ -153,7 +153,7 @@ class _LkEmojiPanelState extends State<LkEmojiPanel> {
                           color: scheme.onSurfaceVariant,
                         ),
                       )
-                    : Center(
+                      : Center(
                         child: Text(
                           item.code,
                           style: const TextStyle(fontSize: 22),
@@ -164,6 +164,210 @@ class _LkEmojiPanelState extends State<LkEmojiPanel> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Bottom dock for inline emoji panel + keyboard inset with smooth expand/collapse
+/// height and fade/slide transitions while keeping native keyboard inset tracking 1:1.
+class LkAnimatedEmojiDock extends StatefulWidget {
+  const LkAnimatedEmojiDock({
+    super.key,
+    required this.showEmoji,
+    required this.panelHeight,
+    required this.keyboardInset,
+    required this.keyboardTransitioning,
+    required this.transitionHeight,
+    required this.groups,
+    required this.onPick,
+    this.backgroundColor,
+  });
+
+  final bool showEmoji;
+  final double panelHeight;
+  final double keyboardInset;
+  final bool keyboardTransitioning;
+  final double transitionHeight;
+  final List<LKEmojiGroup> groups;
+  final ValueChanged<String> onPick;
+  final Color? backgroundColor;
+
+  @override
+  State<LkAnimatedEmojiDock> createState() => _LkAnimatedEmojiDockState();
+}
+
+class _LkAnimatedEmojiDockState extends State<LkAnimatedEmojiDock>
+    with TickerProviderStateMixin {
+  late final AnimationController _heightController;
+  late final AnimationController _panelController;
+  late final Animation<double> _panelOpacity;
+  late final Animation<Offset> _panelSlide;
+
+  double _beginHeight = 0;
+  double _endHeight = 0;
+  Curve _heightCurve = Curves.easeOutCubic;
+
+  @override
+  void initState() {
+    super.initState();
+    _heightController = AnimationController(vsync: this);
+    _panelController = AnimationController(vsync: this);
+    _panelOpacity = CurvedAnimation(
+      parent: _panelController,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    _panelSlide = Tween<Offset>(
+      begin: const Offset(0, 0.08),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _panelController,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    ));
+
+    if (widget.showEmoji) {
+      _jumpHeightTo(widget.panelHeight);
+      _panelController.value = 1.0;
+    } else if (widget.keyboardTransitioning) {
+      _jumpHeightTo(math.max(widget.transitionHeight, widget.keyboardInset));
+      _panelController.value = 0.0;
+    } else {
+      _jumpHeightTo(widget.keyboardInset);
+      _panelController.value = 0.0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _heightController.dispose();
+    _panelController.dispose();
+    super.dispose();
+  }
+
+  double _currentHeight() {
+    final t = _heightCurve.transform(_heightController.value);
+    return _beginHeight + (_endHeight - _beginHeight) * t;
+  }
+
+  void _jumpHeightTo(double target) {
+    _heightController.stop();
+    _beginHeight = target;
+    _endHeight = target;
+    _heightController.value = 1.0;
+  }
+
+  void _animateHeightTo(double target, Duration duration) {
+    final current = _currentHeight();
+    if (duration == Duration.zero || (current - target).abs() < 0.5) {
+      _jumpHeightTo(target);
+      return;
+    }
+    _beginHeight = current;
+    _endHeight = target;
+    _heightCurve =
+        target >= current ? Curves.easeOutCubic : Curves.easeInOutCubic;
+    _heightController.duration = duration;
+    _heightController.forward(from: 0);
+  }
+
+  @override
+  void didUpdateWidget(covariant LkAnimatedEmojiDock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.showEmoji != oldWidget.showEmoji) {
+      if (widget.showEmoji) {
+        _animateHeightTo(widget.panelHeight, AppMotion.duration(context, 240));
+        _panelController.duration = AppMotion.duration(context, 220);
+        if (_panelController.duration == Duration.zero) {
+          _panelController.value = 1.0;
+        } else {
+          _panelController.forward();
+        }
+      } else {
+        _panelController.duration = AppMotion.duration(context, 160);
+        if (_panelController.duration == Duration.zero) {
+          _panelController.value = 0.0;
+        } else {
+          _panelController.reverse();
+        }
+        if (widget.keyboardTransitioning) {
+          _jumpHeightTo(
+            math.max(widget.transitionHeight, widget.keyboardInset),
+          );
+        } else {
+          _animateHeightTo(
+            widget.keyboardInset,
+            AppMotion.duration(context, 200),
+          );
+        }
+      }
+      return;
+    }
+
+    if (widget.showEmoji) {
+      if (widget.panelHeight != oldWidget.panelHeight) {
+        if (_heightController.isAnimating) {
+          _endHeight = widget.panelHeight;
+        } else {
+          _jumpHeightTo(widget.panelHeight);
+        }
+      }
+      return;
+    }
+
+    if (widget.keyboardTransitioning) {
+      _jumpHeightTo(math.max(widget.transitionHeight, widget.keyboardInset));
+    } else if (oldWidget.keyboardTransitioning) {
+      _animateHeightTo(
+        widget.keyboardInset,
+        AppMotion.duration(context, 200),
+      );
+    } else if (widget.keyboardInset != oldWidget.keyboardInset) {
+      _jumpHeightTo(widget.keyboardInset);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AnimatedBuilder(
+      animation: Listenable.merge([_heightController, _panelController]),
+      builder: (context, _) {
+        final height = math.max(0.0, _currentHeight());
+        final showChild = widget.showEmoji || _panelController.value > 0.0;
+        if (height <= 0.5 && !showChild) {
+          return const SizedBox.shrink();
+        }
+        return SizedBox(
+          height: height,
+          child: showChild
+              ? ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.topCenter,
+                    minHeight: widget.panelHeight,
+                    maxHeight: widget.panelHeight,
+                    child: FadeTransition(
+                      opacity: _panelOpacity,
+                      child: SlideTransition(
+                        position: _panelSlide,
+                        child: Material(
+                          color:
+                              widget.backgroundColor ?? scheme.surfaceContainer,
+                          child: SafeArea(
+                            top: false,
+                            child: LkEmojiPanel(
+                              groups: widget.groups,
+                              onPick: widget.onPick,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
+        );
+      },
     );
   }
 }

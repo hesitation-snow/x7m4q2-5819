@@ -70,18 +70,18 @@ void main() {
         '😀');
     expect(find.text('测试表情'), findsOneWidget);
     await tester.tapAt(const Offset(760, 200));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('测试表情'), findsNothing);
     expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
         '😀');
     await tester.tap(find.byTooltip('表情'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('键盘'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus,
         isTrue);
     await tester.tapAt(const Offset(760, 200));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus,
         isFalse);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -89,7 +89,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reply and scrolling remain interactive while panel is open',
+  testWidgets(
+      'tapping comment list dismisses active input without interacting underneath',
       (tester) async {
     comments = List.generate(
         18,
@@ -100,16 +101,28 @@ void main() {
               'avatar': ''
             });
     await openPage(tester);
+
+    // Activate emoji panel -> tapping reply inside list closes panel without starting reply.
     await tester.tap(find.byTooltip('表情'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('回复').first, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.text('回复 @用户0'), findsNothing);
+    expect(find.text('测试表情'), findsNothing);
+
+    // When idle, tapping reply activates reply target and scrolling works normally.
     await tester.tap(find.text('回复').first);
     await tester.pump();
     expect(find.text('回复 @用户0'), findsOneWidget);
-    expect(find.text('测试表情'), findsOneWidget);
+
     await tester.drag(find.byType(ListView).first, const Offset(0, -250));
     await tester.pumpAndSettle();
-    expect(find.text('测试表情'), findsOneWidget);
     expect(find.text('评论0'), findsNothing);
+
+    // Controls inside the input bar itself remain interactive while emoji panel is open.
+    await tester.tap(find.byTooltip('表情'));
+    await tester.pumpAndSettle();
+    expect(find.text('测试表情'), findsOneWidget);
     await tester.tap(find.byTooltip('取消回复'));
     await tester.pump();
     expect(find.text('回复 @用户0'), findsNothing);

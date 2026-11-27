@@ -59,6 +59,10 @@ class LKRankProgress {
   /// 例如 `0/251`，满级时显示 `50001`。
   String get ratioText => next == null ? '$exp' : '$exp/${next!.minExp}';
 
+  /// 精简经验文案：`经验 0/251`（满级时为 `经验 50,001`）。
+  String get compactExpText =>
+      next == null ? '经验 ${formatLKExpNumber(exp)}' : '经验 $ratioText';
+
   String get nextHintText => next == null
       ? '已达最高身份组 · ${current.name}'
       : '距${next!.name}还差 ${formatLKExpNumber(remainingToNext)} 经验';

@@ -707,12 +707,12 @@ class _UserProfilePageState extends State<UserProfilePage>
                           ? () => openUserProfile(context, item.authorUid)
                           : null,
                       child: CircleAvatar(
-                        radius: 18,
+                        radius: 16,
                         backgroundImage:
                             YomiruAvatarCache.providerOrNull(item.avatar),
                         child: YomiruAvatarCache.providerOrNull(item.avatar) ==
                                 null
-                            ? const Icon(Icons.person_outline, size: 20)
+                            ? const Icon(Icons.person, size: 18)
                             : null,
                       ),
                     ),
@@ -766,13 +766,46 @@ class _UserProfilePageState extends State<UserProfilePage>
                     ),
                   ],
                 ),
-                if (item.summary.isNotEmpty) ...[
-                  const SizedBox(height: 8),
+                const SizedBox(height: 6),
+                if (item.title.trim().isNotEmpty &&
+                    item.summary.trim().isNotEmpty &&
+                    item.title.trim() != item.summary.trim()) ...[
+                  Text(
+                    item.title,
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                if (item.topicTags.isNotEmpty) ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      for (final tag in item.topicTags)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 1),
+                          child: Text(
+                            '# ${tag.name}',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w500,
+                              color: Theme.of(context).colorScheme.primary,
+                              height: 1.3,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                if (item.displayContent.isNotEmpty)
                   LkEmojiText(
-                    text: item.summary,
+                    text: item.displayContent,
                     emojiUrls: _emojiUrls,
                   ),
-                ],
                 if (hasBook)
                   InkWell(
                     onTap: () => Navigator.push(
@@ -785,7 +818,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
                         color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(6),
                       ),
                       child: Row(
                         children: [
@@ -793,7 +826,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                               url: item.bookCover,
                               bookId: item.bookId,
                               width: 40,
-                              height: 54,
+                              height: 53,
                               showPeekButton: false,
                               isBrave: item.bookMarkedBrave ||
                                   LKStore.isBraveBook(item.bookId)),
@@ -801,7 +834,10 @@ class _UserProfilePageState extends State<UserProfilePage>
                           Expanded(
                               child: Text(item.bookTitle,
                                   maxLines: 2,
-                                  overflow: TextOverflow.ellipsis)),
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600))),
                         ],
                       ),
                     ),
@@ -839,7 +875,7 @@ class _UserProfilePageState extends State<UserProfilePage>
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: scheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
         text,

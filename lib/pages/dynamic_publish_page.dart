@@ -40,6 +40,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
   bool _showEmoji = false;
   bool _keyboardTransitioning = false;
   double _transitionHeight = 0;
+  double _lastViewInset = 0;
   Timer? _transitionTimer;
   bool _uploading = false;
   bool _publishing = false;
@@ -143,6 +144,12 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
         _keyboardTransitioning = false;
       });
     }
+  }
+
+  void _dismissInput() {
+    _titleFocusNode.unfocus();
+    _focusNode.unfocus();
+    _hideEmojiPanel();
   }
 
   Future<void> _showTopicPicker() async {
@@ -800,22 +807,16 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
                 ],
               ),
             ),
-            if (_showEmoji)
-              SizedBox(
-                height: panelH,
-                child: Material(
-                  color: scheme.surfaceContainer,
-                  child: SafeArea(
-                    top: false,
-                    child: LkEmojiPanel(
-                      groups: _emojiGroups,
-                      onPick: _insertEmoji,
-                    ),
-                  ),
-                ),
-              )
-            else if (bottomSpacing > 0)
-              SizedBox(height: bottomSpacing),
+            LkAnimatedEmojiDock(
+              showEmoji: _showEmoji,
+              panelHeight: panelH,
+              keyboardInset: inset,
+              keyboardTransitioning: _keyboardTransitioning,
+              transitionHeight: _transitionHeight,
+              groups: _emojiGroups,
+              onPick: _insertEmoji,
+              backgroundColor: scheme.surfaceContainer,
+            ),
           ],
         ),
       ),
@@ -826,11 +827,33 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final inset = MediaQuery.viewInsetsOf(context).bottom;
+    if (_lastViewInset > 0 &&
+        inset == 0 &&
+        !_showEmoji &&
+        !_keyboardTransitioning &&
+        _composerFocused) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            !_showEmoji &&
+            !_keyboardTransitioning &&
+            _composerFocused &&
+            MediaQuery.viewInsetsOf(context).bottom == 0) {
+          _titleFocusNode.unfocus();
+          _focusNode.unfocus();
+        }
+      });
+    }
+    _lastViewInset = inset;
+    final inputActive = _showEmoji ||
+        _keyboardTransitioning ||
+        _composerFocused ||
+        inset > 0;
     return PopScope(
-      canPop: !_showEmoji,
+      canPop: !inputActive,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _showEmoji) {
-          setState(() => _showEmoji = false);
+        if (!didPop) {
+          _dismissInput();
         }
       },
       child: Scaffold(
@@ -880,18 +903,22 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
         body: Column(
           children: [
             Expanded(
-              child: SingleChildScrollView(
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: const EdgeInsets.fromLTRB(18, 8, 18, 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildAuthorHeader(context),
-                    const SizedBox(height: 14),
-                    _buildComposerCard(context),
-                    _buildMediaGrid(context),
-                  ],
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _dismissInput,
+                child: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: const EdgeInsets.fromLTRB(18, 8, 18, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildAuthorHeader(context),
+                      const SizedBox(height: 14),
+                      _buildComposerCard(context),
+                      _buildMediaGrid(context),
+                    ],
+                  ),
                 ),
               ),
             ),

@@ -2500,7 +2500,6 @@ class _MyTabState extends State<MyTab> {
               _profileChip(
                 profile.isBrave ? Icons.shield_outlined : Icons.person_outline,
                 profile.isBrave ? '勇者' : '普通用户',
-                color: profile.isBrave ? scheme.tertiary : null,
                 onTap: profile.isBrave ? null : _confirmOpenBraveQuiz,
               ),
             ],
@@ -2519,7 +2518,7 @@ class _MyTabState extends State<MyTab> {
                       children: [
                         Expanded(
                           child: Text(
-                            rank.summaryLineText,
+                            rank.compactExpText,
                             style: TextStyle(
                               fontSize: 12,
                               color: scheme.onSurfaceVariant,

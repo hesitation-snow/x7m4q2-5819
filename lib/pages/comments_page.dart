@@ -59,6 +59,7 @@ class _CommentsPageState extends State<CommentsPage> {
   int _loadSerial = 0;
   final _input = TextEditingController();
   final _inputBarKey = GlobalKey<_CommentsInputBarState>();
+  bool _inputActive = false;
 
   /// 表情包(code → 图片地址),评论渲染与表情面板共用
   final Map<String, String> _emojiUrl = {};
@@ -1041,11 +1042,21 @@ class _CommentsPageState extends State<CommentsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      // 只响应未被子控件处理的点击；滚动、长按和按钮手势仍由子控件处理。
-      onTap: () => _inputBarKey.currentState?._dismissInput(),
-      child: _buildScaffold(context),
+    final inputActive =
+        _inputActive || MediaQuery.viewInsetsOf(context).bottom > 0;
+    return PopScope(
+      canPop: !inputActive,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          _inputBarKey.currentState?._dismissInput();
+        }
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        // 只响应未被子控件处理的点击；输入激活时评论区域由遮罩拦截，避免误触下方条目。
+        onTap: () => _inputBarKey.currentState?._dismissInput(),
+        child: _buildScaffold(context, inputActive: inputActive),
+      ),
     );
   }
 
@@ -1084,7 +1095,13 @@ class _CommentsPageState extends State<CommentsPage> {
     );
   }
 
-  Widget _buildScaffold(BuildContext context) {
+  void _handleInputActiveChanged(bool active) {
+    if (mounted && _inputActive != active) {
+      setState(() => _inputActive = active);
+    }
+  }
+
+  Widget _buildScaffold(BuildContext context, {required bool inputActive}) {
     return Scaffold(
       // 键盘 inset 只由输入行处理:动画期间评论列表不重建,交互更流畅
       resizeToAvoidBottomInset: false,
@@ -1105,55 +1122,73 @@ class _CommentsPageState extends State<CommentsPage> {
       ),
       body: Column(children: [
         Expanded(
-          child: _loading
-              ? const LkLoadingIndicator()
-              : MotionRefreshIndicator(
-                  onRefresh: () => _load(),
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: _onCommentScroll,
-                    child: ListView.builder(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.only(bottom: 12),
-                      itemCount: (_isDynamic ? 1 : 0) +
-                          (_comments.isEmpty ? 1 : _comments.length) +
-                          (_hasMore || _loadingMore || _loadMoreError != null
-                              ? 1
-                              : 0),
-                      itemBuilder: (_, i) {
-                        if (_isDynamic && i == 0) return _dynamicHeader();
-                        final contentIndex = i - (_isDynamic ? 1 : 0);
-                        if (_comments.isEmpty && contentIndex == 0) {
-                          return SizedBox(
-                            height: 240,
-                            child: Center(
-                              child: Text(
-                                _error ??
-                                    (_isDynamic
-                                        ? '还没有评论'
-                                        : _isVolume
-                                            ? '本卷还没有评论'
-                                            : '还没有书评，来抢沙发'),
-                                style: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
+          child: Stack(
+            children: [
+              _loading
+                  ? const LkLoadingIndicator()
+                  : MotionRefreshIndicator(
+                      onRefresh: () => _load(),
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _onCommentScroll,
+                        child: ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.only(bottom: 12),
+                          itemCount: (_isDynamic ? 1 : 0) +
+                              (_comments.isEmpty ? 1 : _comments.length) +
+                              (_hasMore ||
+                                      _loadingMore ||
+                                      _loadMoreError != null
+                                  ? 1
+                                  : 0),
+                          itemBuilder: (_, i) {
+                            if (_isDynamic && i == 0) return _dynamicHeader();
+                            final contentIndex = i - (_isDynamic ? 1 : 0);
+                            if (_comments.isEmpty && contentIndex == 0) {
+                              return SizedBox(
+                                height: 240,
+                                child: Center(
+                                  child: Text(
+                                    _error ??
+                                        (_isDynamic
+                                            ? '还没有评论'
+                                            : _isVolume
+                                                ? '本卷还没有评论'
+                                                : '还没有书评，来抢沙发'),
+                                    style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                          );
-                        }
-                        if (contentIndex >= _comments.length) {
-                          return _commentPageFooter();
-                        }
-                        final c = _comments[contentIndex];
-                        return _commentItem(c);
-                      },
+                              );
+                            }
+                            if (contentIndex >= _comments.length) {
+                              return _commentPageFooter();
+                            }
+                            final c = _comments[contentIndex];
+                            return _commentItem(c);
+                          },
+                        ),
+                      ),
                     ),
+              if (inputActive)
+                Positioned.fill(
+                  child: GestureDetector(
+                    key: const ValueKey('comments-input-dismiss-barrier'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _inputBarKey.currentState?._dismissInput(),
+                    onVerticalDragStart: (_) =>
+                        _inputBarKey.currentState?._dismissInput(),
+                    child: const SizedBox.expand(),
                   ),
                 ),
+            ],
+          ),
         ),
         _CommentsInputBar(
           key: _inputBarKey,
+          onInputActiveChanged: _handleInputActiveChanged,
           publishing: _publishing || _uploadingImage,
           controller: _input,
           emojiGroups: _emojiGroups,
@@ -1194,6 +1229,7 @@ class _CommentsInputBar extends StatefulWidget {
   final VoidCallback? onRemoveImage;
   final VoidCallback onPublish;
   final bool publishing;
+  final ValueChanged<bool>? onInputActiveChanged;
 
   const _CommentsInputBar({
     super.key,
@@ -1208,6 +1244,7 @@ class _CommentsInputBar extends StatefulWidget {
     this.onRemoveImage,
     required this.onPublish,
     this.publishing = false,
+    this.onInputActiveChanged,
   });
 
   @override
@@ -1221,12 +1258,15 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
   bool _showEmoji = false;
   bool _keyboardTransitioning = false;
   double _transitionHeight = 0;
+  double _lastViewInset = 0;
+  bool _lastReportedActive = false;
   Timer? _transitionTimer;
   Timer? _keyboardHeightSaveTimer;
 
   @override
   void initState() {
     super.initState();
+    _focus.addListener(_syncInputActive);
     if (_globalKeyboardHeight == 0) {
       SharedPreferences.getInstance().then((p) {
         final saved = p.getDouble('last_keyboard_height');
@@ -1239,10 +1279,24 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
 
   @override
   void dispose() {
+    _focus.removeListener(_syncInputActive);
     _transitionTimer?.cancel();
     _keyboardHeightSaveTimer?.cancel();
     _focus.dispose();
     super.dispose();
+  }
+
+  bool _computeInputActive(double inset) =>
+      _showEmoji || _keyboardTransitioning || _focus.hasFocus || inset > 0;
+
+  void _syncInputActive() {
+    if (!mounted) return;
+    final inset = MediaQuery.viewInsetsOf(context).bottom;
+    final active = _computeInputActive(inset);
+    if (active != _lastReportedActive) {
+      _lastReportedActive = active;
+      widget.onInputActiveChanged?.call(active);
+    }
   }
 
   double _emojiPanelHeight() {
@@ -1278,6 +1332,7 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
         _keyboardTransitioning = false;
       });
     }
+    _syncInputActive();
   }
 
   void _returnToKeyboard() {
@@ -1289,9 +1344,11 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
       _transitionHeight = currentH;
     });
     _focus.requestFocus();
+    _syncInputActive();
     _transitionTimer = Timer(const Duration(milliseconds: 500), () {
       if (mounted && _keyboardTransitioning) {
         setState(() => _keyboardTransitioning = false);
+        _syncInputActive();
       }
     });
   }
@@ -1310,6 +1367,7 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
       setState(() {
         _showEmoji = true;
       });
+      _syncInputActive();
     }
   }
 
@@ -1341,6 +1399,29 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
     if (_keyboardTransitioning && inset >= _transitionHeight - 1.0) {
       _keyboardTransitioning = false;
       _transitionTimer?.cancel();
+    }
+    if (_lastViewInset > 0 &&
+        inset == 0 &&
+        !_showEmoji &&
+        !_keyboardTransitioning &&
+        _focus.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            !_showEmoji &&
+            !_keyboardTransitioning &&
+            _focus.hasFocus &&
+            MediaQuery.viewInsetsOf(context).bottom == 0) {
+          _focus.unfocus();
+        }
+      });
+    }
+    _lastViewInset = inset;
+    final active = _computeInputActive(inset);
+    if (active != _lastReportedActive) {
+      _lastReportedActive = active;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onInputActiveChanged?.call(active);
+      });
     }
 
     final panelH = _emojiPanelHeight();
@@ -1498,22 +1579,16 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
             ]),
           ),
           ),
-          if (_showEmoji)
-            SizedBox(
-              height: panelH,
-              child: Material(
-                color: Theme.of(context).colorScheme.surfaceContainer,
-                child: SafeArea(
-                  top: false,
-                  child: LkEmojiPanel(
-                    groups: widget.emojiGroups,
-                    onPick: _pickEmoji,
-                  ),
-                ),
-              ),
-            )
-          else if (bottomSpacing > 0)
-            SizedBox(height: bottomSpacing),
+          LkAnimatedEmojiDock(
+            showEmoji: _showEmoji,
+            panelHeight: panelH,
+            keyboardInset: inset,
+            keyboardTransitioning: _keyboardTransitioning,
+            transitionHeight: _transitionHeight,
+            groups: widget.emojiGroups,
+            onPick: _pickEmoji,
+            backgroundColor: theme.colorScheme.surfaceContainer,
+          ),
         ],
       ),
     );

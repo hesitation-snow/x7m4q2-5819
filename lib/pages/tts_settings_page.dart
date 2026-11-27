@@ -310,7 +310,7 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
                       ListTile(
                         leading: AppSettingIcon(Icons.info_outline_rounded),
                         title: Text('当前平台仅支持保存偏好'),
-                        subtitle: Text('阅读器朗读播放目前支持 Android 设备，这里保存的配置会自动同步。'),
+                        subtitle: Text('阅读器朗读播放目前仅支持 Android 设备。'),
                       ),
                     ],
                   ),
@@ -423,18 +423,6 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
                     await _savePrefs(
                         _prefs.copyWith(continuousChapter: value));
                   },
-                ),
-                const SizedBox(height: 20),
-                const AppSettingsGroup(
-                  children: [
-                    ListTile(
-                      leading: AppSettingIcon(Icons.sync_rounded),
-                      title: Text('与阅读器听书面板同步'),
-                      subtitle: Text(
-                        '设置按当前账号自动保存；进入阅读器双击正文或打开听书面板时即刻生效。',
-                      ),
-                    ),
-                  ],
                 ),
               ],
             ),

@@ -136,7 +136,8 @@ void main() {
       'uid': 42,
       'group_name': '测试组',
       'exp': 0,
-      'next_exp': 12
+      'next_exp': 12,
+      'passer': 1,
     };
     LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
       return http.Response(
@@ -152,12 +153,19 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: MyTab())));
     await tester.pumpAndSettle();
     expect(find.text('测试组'), findsOneWidget);
-    expect(find.text('经验 0/251 · 距骑士还差 251 经验'), findsOneWidget);
-    expect(find.text('经验 0/251'), findsNothing);
+    expect(find.text('经验 0/251'), findsOneWidget);
+    expect(find.textContaining('还差'), findsNothing);
     expect(find.textContaining('升级经验参考'), findsNothing);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
-    await tester.tap(find.text('经验 0/251 · 距骑士还差 251 经验'));
+    // 勇者 chip should match other profile chips (using scheme.primary, not tertiary).
+    final braveIconFinder = find.byIcon(Icons.shield_outlined);
+    expect(braveIconFinder, findsOneWidget);
+    final braveIcon = tester.widget<Icon>(braveIconFinder);
+    final scheme = Theme.of(tester.element(braveIconFinder)).colorScheme;
+    expect(braveIcon.color, equals(scheme.primary));
+
+    await tester.tap(find.text('经验 0/251'));
     await tester.pumpAndSettle();
     expect(find.text('身份组升级经验'), findsOneWidget);
     expect(find.text('平民'), findsOneWidget);
