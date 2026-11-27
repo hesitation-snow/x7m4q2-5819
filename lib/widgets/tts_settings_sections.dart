@@ -149,6 +149,8 @@ class TtsSystemVoicesSection extends StatelessWidget {
   const TtsSystemVoicesSection({
     super.key,
     required this.isAndroid,
+    this.isSupported,
+    this.showEnginePicker,
     required this.engines,
     required this.enginesLoading,
     required this.engineError,
@@ -167,6 +169,8 @@ class TtsSystemVoicesSection extends StatelessWidget {
   });
 
   final bool isAndroid;
+  final bool? isSupported;
+  final bool? showEnginePicker;
   final List<SystemTtsEngine> engines;
   final bool enginesLoading;
   final String? engineError;
@@ -306,7 +310,9 @@ class TtsSystemVoicesSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!isAndroid) {
+    final supported = isSupported ?? isAndroid;
+    final enginePickerVisible = showEnginePicker ?? isAndroid;
+    if (!supported) {
       return const Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -315,8 +321,8 @@ class TtsSystemVoicesSection extends StatelessWidget {
             children: [
               ListTile(
                 leading: AppSettingIcon(Icons.phone_android_rounded),
-                title: Text('系统语音引擎仅在 Android 上可用'),
-                subtitle: Text('可在 Android 设备上选择系统引擎与离线音色'),
+                title: Text('系统语音引擎仅在 Android 与 iOS 上可用'),
+                subtitle: Text('可在 Android 或 iOS 设备上选择系统离线音色'),
               ),
             ],
           ),
@@ -330,63 +336,65 @@ class TtsSystemVoicesSection extends StatelessWidget {
         const AppSectionTitle('系统语音'),
         AppSettingsGroup(
           children: [
-            if (enginesLoading)
-              const ListTile(
-                leading: AppSettingIcon(Icons.memory_rounded),
-                title: Text('系统朗读引擎'),
-                subtitle: Text('正在检测已安装的语音引擎…'),
-                trailing: SizedBox.square(
-                  dimension: 20,
-                  child: MotionProgressIndicator(strokeWidth: 2),
-                ),
-              )
-            else if (engineError != null)
-              ListTile(
-                leading: const AppSettingIcon(
-                  Icons.error_outline_rounded,
-                  danger: true,
-                ),
-                title: const Text('系统朗读引擎'),
-                subtitle: Text(engineError!),
-                trailing: IconButton(
-                  tooltip: '重新检测引擎',
-                  onPressed: onRetryEngines,
-                  icon: const Icon(Icons.refresh_rounded),
-                ),
-              )
-            else
-              ListTile(
-                key: const ValueKey('tts-system-engine-tile'),
-                leading: const AppSettingIcon(Icons.memory_rounded),
-                title: const Text('系统朗读引擎'),
-                subtitle: Text(_engineSubtitle()),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () async {
-                  final picked = await showTtsOptionSheet<String>(
-                    context: context,
-                    title: '系统朗读引擎',
-                    icon: Icons.memory_rounded,
-                    selected: selectedEngineId ?? 'default',
-                    options: [
-                      const TtsPickerOption(
-                        value: 'default',
-                        title: '系统默认引擎',
-                        subtitle: '跟随设备系统语音设置',
-                        icon: Icons.phone_android_rounded,
-                      ),
-                      for (final engine in engines)
-                        TtsPickerOption(
-                          value: engine.id,
-                          title: engine.label,
-                          subtitle: engine.id,
-                          icon: Icons.memory_rounded,
+            if (enginePickerVisible) ...[
+              if (enginesLoading)
+                const ListTile(
+                  leading: AppSettingIcon(Icons.memory_rounded),
+                  title: Text('系统朗读引擎'),
+                  subtitle: Text('正在检测已安装的语音引擎…'),
+                  trailing: SizedBox.square(
+                    dimension: 20,
+                    child: MotionProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else if (engineError != null)
+                ListTile(
+                  leading: const AppSettingIcon(
+                    Icons.error_outline_rounded,
+                    danger: true,
+                  ),
+                  title: const Text('系统朗读引擎'),
+                  subtitle: Text(engineError!),
+                  trailing: IconButton(
+                    tooltip: '重新检测引擎',
+                    onPressed: onRetryEngines,
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+                )
+              else
+                ListTile(
+                  key: const ValueKey('tts-system-engine-tile'),
+                  leading: const AppSettingIcon(Icons.memory_rounded),
+                  title: const Text('系统朗读引擎'),
+                  subtitle: Text(_engineSubtitle()),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () async {
+                    final picked = await showTtsOptionSheet<String>(
+                      context: context,
+                      title: '系统朗读引擎',
+                      icon: Icons.memory_rounded,
+                      selected: selectedEngineId ?? 'default',
+                      options: [
+                        const TtsPickerOption(
+                          value: 'default',
+                          title: '系统默认引擎',
+                          subtitle: '跟随设备系统语音设置',
+                          icon: Icons.phone_android_rounded,
                         ),
-                    ],
-                  );
-                  if (picked == null) return;
-                  onEngineSelected(picked);
-                },
-              ),
+                        for (final engine in engines)
+                          TtsPickerOption(
+                            value: engine.id,
+                            title: engine.label,
+                            subtitle: engine.id,
+                            icon: Icons.memory_rounded,
+                          ),
+                      ],
+                    );
+                    if (picked == null) return;
+                    onEngineSelected(picked);
+                  },
+                ),
+            ],
             if (voicesLoading)
               const ListTile(
                 leading: AppSettingIcon(Icons.record_voice_over_outlined),

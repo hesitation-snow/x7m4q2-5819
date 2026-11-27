@@ -2959,7 +2959,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   Future<void> _loadTtsEngines() async {
-    if (_ttsEnginesLoading) return;
+    if (!_isAndroidPlatform || _ttsEnginesLoading) return;
     setState(() {
       _ttsEnginesLoading = true;
       _ttsEngineError = null;
@@ -3800,13 +3800,20 @@ class _ReaderPageState extends State<ReaderPage>
     }
   }
 
+  bool get _isAndroidPlatform =>
+      defaultTargetPlatform == TargetPlatform.android;
+
+  bool get _isTtsPlatformSupported =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
   Future<void> _startSpeechSessionImpl({
     int? startBlock,
     bool preferSavedResume = false,
     required int startRevision,
   }) async {
-    if (defaultTargetPlatform != TargetPlatform.android) {
-      showFloatingPrompt(context, '当前版本的音频文件合成仅支持 Android');
+    if (!_isTtsPlatformSupported) {
+      showFloatingPrompt(context, '当前版本的音频文件合成支持 Android 与 iOS');
       return;
     }
     await _loadTtsPreferences();
@@ -3890,18 +3897,20 @@ class _ReaderPageState extends State<ReaderPage>
     late final SpeechAudioSynthesizer synthesizer;
     late final SpeechSynthesisConfig config;
     if (_ttsSourceMode == 'system') {
-      if (_ttsEngines.isEmpty) await _loadTtsEngines();
-      if (!current()) return;
-      if (_ttsEngineId != null) {
-        try {
-          await _systemTts.setEngine(_ttsEngineId!);
-        } catch (error) {
-          _ttsSessionError = error.toString();
-          if (current()) {
-            setState(() {});
-            _refreshTtsSheet();
+      if (_isAndroidPlatform) {
+        if (_ttsEngines.isEmpty) await _loadTtsEngines();
+        if (!current()) return;
+        if (_ttsEngineId != null) {
+          try {
+            await _systemTts.setEngine(_ttsEngineId!);
+          } catch (error) {
+            _ttsSessionError = error.toString();
+            if (current()) {
+              setState(() {});
+              _refreshTtsSheet();
+            }
+            return;
           }
-          return;
         }
       }
       if (_ttsVoices.isEmpty) await _loadTtsVoices();
@@ -4145,15 +4154,17 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   Future<void> _prepareSystemSpeechOptions() async {
-    if (_ttsEngines.isEmpty) await _loadTtsEngines();
-    if (!mounted || _ttsSourceMode != 'system') return;
-    if (_ttsEngineId != null) {
-      try {
-        await _systemTts.setEngine(_ttsEngineId!);
-      } catch (error) {
-        if (mounted) setState(() => _ttsEngineError = error.toString());
-        _refreshTtsSheet();
-        return;
+    if (_isAndroidPlatform) {
+      if (_ttsEngines.isEmpty) await _loadTtsEngines();
+      if (!mounted || _ttsSourceMode != 'system') return;
+      if (_ttsEngineId != null) {
+        try {
+          await _systemTts.setEngine(_ttsEngineId!);
+        } catch (error) {
+          if (mounted) setState(() => _ttsEngineError = error.toString());
+          _refreshTtsSheet();
+          return;
+        }
       }
     }
     if (mounted && _ttsSourceMode == 'system' && _ttsVoices.isEmpty) {
@@ -4162,8 +4173,8 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   Future<void> _showTtsSheet() async {
-    if (defaultTargetPlatform != TargetPlatform.android) {
-      showFloatingPrompt(context, '系统朗读初版暂支持 Android');
+    if (!_isTtsPlatformSupported) {
+      showFloatingPrompt(context, '听书功能目前支持 Android 与 iOS');
       return;
     }
     if (_loading ||
@@ -4422,13 +4433,16 @@ class _ReaderPageState extends State<ReaderPage>
                                 });
                                 unawaited(_saveTtsPreferences());
                                 if (source == 'system') {
-                                  final engineTask = _ttsEngines.isEmpty
-                                      ? _loadTtsEngines()
-                                      : Future<void>.value();
-                                  setSheet(() {});
-                                  await engineTask;
+                                  if (_isAndroidPlatform) {
+                                    final engineTask = _ttsEngines.isEmpty
+                                        ? _loadTtsEngines()
+                                        : Future<void>.value();
+                                    setSheet(() {});
+                                    await engineTask;
+                                  }
                                   try {
-                                    if (_ttsEngineId != null) {
+                                    if (_isAndroidPlatform &&
+                                        _ttsEngineId != null) {
                                       await _systemTts.setEngine(_ttsEngineId!);
                                     }
                                     if (_ttsVoices.isEmpty) {
@@ -4456,8 +4470,9 @@ class _ReaderPageState extends State<ReaderPage>
                       const SizedBox(height: 18),
                       if (_ttsSourceMode == 'system')
                         TtsSystemVoicesSection(
-                          isAndroid:
-                              defaultTargetPlatform == TargetPlatform.android,
+                          isAndroid: _isAndroidPlatform,
+                          isSupported: _isTtsPlatformSupported,
+                          showEnginePicker: _isAndroidPlatform,
                           engines: _ttsEngines,
                           enginesLoading: _ttsEnginesLoading,
                           engineError: _ttsEngineError,
@@ -5278,8 +5293,7 @@ class _ReaderPageState extends State<ReaderPage>
                                   }, subtitle: '关闭后使用连续滚动'),
                                 ]),
                                 ReaderSettingsSection(title: '快捷操作', children: [
-                                  if (defaultTargetPlatform ==
-                                      TargetPlatform.android)
+                                  if (_isTtsPlatformSupported)
                                     _aaTile(
                                         scheme,
                                         Icons.headphones_rounded,
@@ -7467,7 +7481,7 @@ class _ReaderPageState extends State<ReaderPage>
                                     color: _textColor),
                               ),
                             ),
-                            if (defaultTargetPlatform == TargetPlatform.android)
+                            if (_isTtsPlatformSupported)
                               IconButton(
                                 tooltip: '系统朗读',
                                 icon: Icon(

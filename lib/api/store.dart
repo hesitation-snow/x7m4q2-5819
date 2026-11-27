@@ -142,7 +142,7 @@ class LKStore {
 
   /// 液态玻璃底栏独立开关（旧强度偏好忽略）
   static final ValueNotifier<bool> liquidGlassBottomBarEnabled =
-      ValueNotifier(false);
+      ValueNotifier(true);
 
   /// 实验室功能开关：在任务中心显示每日开宝箱。
   static final ValueNotifier<bool> dailyTreasureEnabled = ValueNotifier(false);
@@ -520,7 +520,7 @@ class LKStore {
     pureBlackDark.value = p.getBool('pure_black_dark') ?? false;
     themeSeedColor.value = p.getInt('theme_seed_color');
     liquidGlassBottomBarEnabled.value =
-        p.getBool('liquid_glass_bottom_bar_enabled') ?? false;
+        p.getBool('liquid_glass_bottom_bar_enabled') ?? true;
     dailyTreasureEnabled.value =
         p.getBool('laboratory_daily_treasure_enabled') ?? false;
     allMedalsEnabled.value =

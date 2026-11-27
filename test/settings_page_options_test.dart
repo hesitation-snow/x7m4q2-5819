@@ -261,21 +261,21 @@ void main() {
         find.byKey(const ValueKey('settings-liquid-glass-switch'));
     await tester.ensureVisible(glassSwitch);
     expect(glassSwitch, findsOneWidget);
-    expect(tester.widget<Switch>(glassSwitch).value, isFalse);
+    expect(tester.widget<Switch>(glassSwitch).value, isTrue);
 
     await tester.tap(glassSwitch);
     await tester.pumpAndSettle();
-    expect(LKStore.liquidGlassBottomBarEnabled.value, isTrue);
+    expect(LKStore.liquidGlassBottomBarEnabled.value, isFalse);
     expect(
         (await SharedPreferences.getInstance())
             .getBool('liquid_glass_bottom_bar_enabled'),
-        isTrue);
+        isFalse);
     for (final label in ['柔和', '标准', '强烈']) {
       expect(find.text(label), findsNothing);
     }
     await tester.tap(glassSwitch);
     await tester.pumpAndSettle();
-    expect(LKStore.liquidGlassBottomBarEnabled.value, isFalse);
+    expect(LKStore.liquidGlassBottomBarEnabled.value, isTrue);
 
     final glassTile = find.byKey(const ValueKey('settings-liquid-glass-tile'));
     await tester.ensureVisible(glassTile);

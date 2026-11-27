@@ -50,6 +50,11 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
 
   int _accountLoadSerial = 0;
 
+  bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+  bool get _isTtsSupported =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
   @override
   void initState() {
     super.initState();
@@ -84,8 +89,7 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
     });
     await _loadCustomProfile(accountKey, serial: serial);
     if (!mounted || serial != _accountLoadSerial) return;
-    if (_prefs.sourceMode == 'system' &&
-        defaultTargetPlatform == TargetPlatform.android) {
+    if (_prefs.sourceMode == 'system' && _isTtsSupported) {
       await _prepareSystemSpeechOptions();
     }
   }
@@ -122,15 +126,17 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
   }
 
   Future<void> _prepareSystemSpeechOptions() async {
-    if (defaultTargetPlatform != TargetPlatform.android) return;
-    if (_engines.isEmpty) await _loadEngines();
-    if (!mounted) return;
-    if (_prefs.systemEngineId != null) {
-      try {
-        await _systemTts.setEngine(_prefs.systemEngineId!);
-      } catch (error) {
-        if (mounted) setState(() => _engineError = error.toString());
-        return;
+    if (!_isTtsSupported) return;
+    if (_isAndroid) {
+      if (_engines.isEmpty) await _loadEngines();
+      if (!mounted) return;
+      if (_prefs.systemEngineId != null) {
+        try {
+          await _systemTts.setEngine(_prefs.systemEngineId!);
+        } catch (error) {
+          if (mounted) setState(() => _engineError = error.toString());
+          return;
+        }
       }
     }
     if (_voices.isEmpty) await _loadVoices();
@@ -248,8 +254,7 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
     final preferences = await SharedPreferences.getInstance();
     if (!mounted) return;
     var mediaHandler = activeReaderAudioHandler;
-    if (mediaHandler == null &&
-        defaultTargetPlatform == TargetPlatform.android) {
+    if (mediaHandler == null && _isTtsSupported) {
       try {
         mediaHandler =
             await ensureReaderAudioHandler().timeout(const Duration(seconds: 3));
@@ -290,7 +295,8 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+    final isAndroid = _isAndroid;
+    final isTtsSupported = _isTtsSupported;
     return Scaffold(
       appBar: AppBar(title: const Text('听书与 TTS')),
       body: _loading
@@ -304,13 +310,13 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
                 MediaQuery.of(context).padding.bottom + 24,
               ),
               children: [
-                if (!isAndroid) ...[
+                if (!isTtsSupported) ...[
                   const AppSettingsGroup(
                     children: [
                       ListTile(
                         leading: AppSettingIcon(Icons.info_outline_rounded),
                         title: Text('当前平台仅支持保存偏好'),
-                        subtitle: Text('阅读器朗读播放目前仅支持 Android 设备。'),
+                        subtitle: Text('阅读器朗读播放目前支持 Android 与 iOS 设备。'),
                       ),
                     ],
                   ),
@@ -362,6 +368,8 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
                 if (_prefs.sourceMode == 'system')
                   TtsSystemVoicesSection(
                     isAndroid: isAndroid,
+                    isSupported: isTtsSupported,
+                    showEnginePicker: isAndroid,
                     engines: _engines,
                     enginesLoading: _enginesLoading,
                     engineError: _engineError,
