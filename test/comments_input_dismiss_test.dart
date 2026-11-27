@@ -110,11 +110,16 @@ void main() {
     expect(find.text('回复 @用户0'), findsNothing);
     expect(find.text('测试表情'), findsNothing);
 
-    // When idle, tapping reply activates reply target and scrolling works normally.
+    // When idle, tapping reply activates reply target and focuses input.
     await tester.tap(find.text('回复').first);
     await tester.pump();
     expect(find.text('回复 @用户0'), findsOneWidget);
+    expect(tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus,
+        isTrue);
 
+    // Dismissing focus lets scrolling proceed normally while keeping reply target.
+    await tester.tapAt(const Offset(760, 200));
+    await tester.pump();
     await tester.drag(find.byType(ListView).first, const Offset(0, -250));
     await tester.pumpAndSettle();
     expect(find.text('评论0'), findsNothing);

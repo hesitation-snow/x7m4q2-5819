@@ -55,7 +55,7 @@ class ReaderListeningSheet extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  tooltip: '关闭朗读',
+                  tooltip: '收起面板',
                   onPressed: onClose,
                   icon: const Icon(Icons.keyboard_arrow_down_rounded),
                 ),
@@ -407,29 +407,21 @@ class _ListeningRateControlState extends State<ListeningRateControl> {
   }) {
     final scheme = Theme.of(context).colorScheme;
     final enabled = onPressed != null;
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: enabled
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        minimumSize: const Size(44, 44),
+        fixedSize: const Size(44, 44),
+        padding: EdgeInsets.zero,
+        backgroundColor: enabled
             ? scheme.surfaceContainerHigh
             : scheme.surfaceContainerHigh.withValues(alpha: 0.45),
-        shape: const CircleBorder(),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onPressed,
-          child: SizedBox(
-            width: 32,
-            height: 32,
-            child: Icon(
-              icon,
-              size: 18,
-              color: enabled
-                  ? scheme.onSurfaceVariant
-                  : scheme.onSurfaceVariant.withValues(alpha: 0.35),
-            ),
-          ),
-        ),
+        foregroundColor: enabled
+            ? scheme.onSurfaceVariant
+            : scheme.onSurfaceVariant.withValues(alpha: 0.35),
       ),
+      icon: Icon(icon, size: 18),
     );
   }
 

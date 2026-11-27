@@ -53,7 +53,10 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
   late final TextEditingController _jaVoice;
   late final TextEditingController _koVoice;
   late final TextEditingController _credential;
+  final _scroll = ScrollController();
   late final CustomSsmlTtsConfig? _originalConfig;
+  CustomSsmlTtsConfig? _baselineConfig;
+  late _EndpointMode _baselineEndpointMode;
   late CustomTtsAuthMode _authMode;
   late _EndpointMode _endpointMode;
   final Map<String, String> _fieldErrors = {};
@@ -64,6 +67,7 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
   int _voicesGeneration = 0;
   bool _previewBusy = false;
   bool _saving = false;
+  bool _discardDialogOpen = false;
   bool _voicesLoading = false;
   bool _suppressVoiceCatalogInvalidation = false;
   bool _hideCredential = true;
@@ -91,11 +95,13 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
       }
     }
     _originalConfig = config;
+    _baselineConfig = config;
     // Existing URLs remain verbatim in full-URL mode, including custom paths.
     _endpointMode =
         config == null ? _EndpointMode.azureRegion : _EndpointMode.fullUrl;
+    _baselineEndpointMode = _endpointMode;
     _endpoint = TextEditingController(text: config?.endpoint ?? '');
-    _region = TextEditingController(text: 'eastasia');
+    _region = TextEditingController(text: _inferAzureRegion(config?.endpoint));
     _voice = TextEditingController(text: config?.voiceId ?? '');
     _name = TextEditingController(text: config?.displayName ?? '');
     _locale = TextEditingController(text: config?.locale ?? '');
@@ -114,6 +120,76 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
       _credential,
     ]) {
       controller.addListener(_invalidateVoiceCatalog);
+    }
+  }
+
+  static String _inferAzureRegion(String? endpoint) {
+    if (endpoint == null) return 'eastasia';
+    final uri = Uri.tryParse(endpoint.trim());
+    final host = uri?.host.toLowerCase() ?? '';
+    const suffix = '.tts.speech.microsoft.com';
+    if (host.endsWith(suffix) && host.length > suffix.length) {
+      return host.substring(0, host.length - suffix.length);
+    }
+    return 'eastasia';
+  }
+
+  bool get _isDirty {
+    if (_credential.text.trim().isNotEmpty) return true;
+    final baseline = _baselineConfig;
+    if (baseline == null) {
+      return _endpoint.text.trim().isNotEmpty ||
+          _region.text.trim() != 'eastasia' ||
+          _voice.text.trim().isNotEmpty ||
+          _name.text.trim().isNotEmpty ||
+          _locale.text.trim().isNotEmpty ||
+          _zhVoice.text.trim().isNotEmpty ||
+          _jaVoice.text.trim().isNotEmpty ||
+          _koVoice.text.trim().isNotEmpty ||
+          _authMode != CustomTtsAuthMode.azureKey ||
+          _endpointMode != _baselineEndpointMode;
+    }
+    final current = _config();
+    return current.endpoint != baseline.endpoint ||
+        current.voiceId != baseline.voiceId ||
+        current.displayName != baseline.displayName ||
+        current.locale != baseline.locale ||
+        current.authMode != baseline.authMode ||
+        (current.voiceByLanguage['chinese'] ?? '') !=
+            (baseline.voiceByLanguage['chinese'] ?? '') ||
+        (current.voiceByLanguage['japanese'] ?? '') !=
+            (baseline.voiceByLanguage['japanese'] ?? '') ||
+        (current.voiceByLanguage['korean'] ?? '') !=
+            (baseline.voiceByLanguage['korean'] ?? '');
+  }
+
+  Future<void> _confirmDiscardAndPop() async {
+    if (_saving || _discardDialogOpen || !mounted) return;
+    _discardDialogOpen = true;
+    try {
+      final discard = await showDialog<bool>(
+        animationStyle: AppMotion.style(context),
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text('放弃未保存的更改？'),
+          content: const Text('离开后，当前未保存的语音配置将会丢失。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('继续编辑'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('放弃'),
+            ),
+          ],
+        ),
+      );
+      if (discard == true && mounted) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      _discardDialogOpen = false;
     }
   }
 
@@ -248,6 +324,7 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
         _saveError = true;
         _saveMessage = '请检查标记的输入项后再保存。';
       });
+      unawaited(AppMotion.scrollTo(context, _scroll, 0));
       return;
     }
     final config = _config();
@@ -269,6 +346,8 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
       if (!mounted) return;
       _credential.clear();
       setState(() {
+        _baselineConfig = config;
+        _baselineEndpointMode = _endpointMode;
         _saveMessage = '设置已保存；密钥仅保存在安全存储中。';
       });
     } catch (_) {
@@ -392,6 +471,7 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
     _previewGeneration++;
     _voicesGeneration++;
     unawaited(_releasePreview());
+    _scroll.dispose();
     for (final controller in [
       _endpoint,
       _region,
@@ -784,18 +864,49 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
     final matchedVoice = _azureVoices
         .where((voice) => voice.id == _voice.text)
         .firstOrNull;
-    return Scaffold(
-      appBar: AppBar(title: const Text('自定义语音服务')),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(
-            16,
-            12,
-            16,
-            24 + MediaQuery.paddingOf(context).bottom,
-          ),
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        _endpoint,
+        _region,
+        _voice,
+        _name,
+        _locale,
+        _zhVoice,
+        _jaVoice,
+        _koVoice,
+        _credential,
+      ]),
+      builder: (context, _) {
+        final dirty = _isDirty;
+        return PopScope(
+          canPop: !dirty && !_saving,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) unawaited(_confirmDiscardAndPop());
+          },
+          child: Scaffold(
+            appBar: AppBar(
+              title: const Text('自定义语音服务'),
+              actions: [
+                IconButton(
+                  tooltip: '保存设置',
+                  onPressed: _saving ? null : _save,
+                  icon: const Icon(Icons.save_outlined),
+                ),
+              ],
+            ),
+            body: SafeArea(
+              top: false,
+              bottom: false,
+              child: SingleChildScrollView(
+                controller: _scroll,
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  24 + MediaQuery.paddingOf(context).bottom,
+                ),
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 720),
@@ -1059,6 +1170,9 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
           ),
         ),
       ),
+        ),
+        );
+      },
     );
   }
 }

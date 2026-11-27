@@ -44,6 +44,50 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
   Timer? _transitionTimer;
   bool _uploading = false;
   bool _publishing = false;
+  bool _discardDialogOpen = false;
+
+  bool get _hasDraft =>
+      _titleController.text.trim().isNotEmpty ||
+      _controller.text.trim().isNotEmpty ||
+      _media.isNotEmpty;
+
+  Future<void> _confirmDiscardAndPop() async {
+    if (_uploading || _publishing) {
+      showFloatingPrompt(context, '图片或动态仍在处理中，请稍候');
+      return;
+    }
+    if (!_hasDraft) {
+      Navigator.of(context).pop();
+      return;
+    }
+    if (_discardDialogOpen) return;
+    _discardDialogOpen = true;
+    try {
+      final discard = await showDialog<bool>(
+        animationStyle: AppMotion.style(context),
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text('放弃此次编辑？'),
+          content: const Text('已填写的内容和图片不会被保存。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('继续编辑'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('放弃'),
+            ),
+          ],
+        ),
+      );
+      if (discard == true && mounted) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      _discardDialogOpen = false;
+    }
+  }
 
   @override
   void initState() {
@@ -292,7 +336,11 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
 
   Future<void> _publish() async {
     final content = _controller.text.trim();
-    if (content.isEmpty || _publishing || _uploading) return;
+    if (_publishing || _uploading) return;
+    if (content.isEmpty) {
+      showFloatingPrompt(context, '请输入动态内容');
+      return;
+    }
     if (!LKClient.shared.session.isLoggedIn) {
       showLkError(context, '请先登录');
       return;
@@ -849,57 +897,68 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
         _keyboardTransitioning ||
         _composerFocused ||
         inset > 0;
-    return PopScope(
-      canPop: !inputActive,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) {
-          _dismissInput();
-        }
-      },
-      child: Scaffold(
-        resizeToAvoidBottomInset: false,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          surfaceTintColor: Colors.transparent,
-          scrolledUnderElevation: 0,
-          centerTitle: true,
-          leading: IconButton(
-            tooltip: '返回',
-            onPressed: () => Navigator.maybePop(context),
-            icon: const Icon(Icons.close_rounded),
-          ),
-          title: Text(
-            '发布动态',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          actions: [
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: ValueListenableBuilder<TextEditingValue>(
-                valueListenable: _controller,
-                builder: (context, value, _) {
-                  final hasText = value.text.trim().isNotEmpty;
-                  return FilledButton(
-                    style: FilledButton.styleFrom(
-                      shape: const StadiumBorder(),
-                      minimumSize: const Size(68, 36),
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      backgroundColor: hasText
-                          ? scheme.primary
-                          : scheme.surfaceContainerHighest,
-                      foregroundColor:
-                          hasText ? scheme.onPrimary : scheme.onSurfaceVariant,
-                    ),
-                    onPressed: _publishing || _uploading ? null : _publish,
-                    child: Text(_publishing ? '发布中' : '发布'),
-                  );
+    return ListenableBuilder(
+      listenable: Listenable.merge([_titleController, _controller]),
+      builder: (context, _) {
+        final hasDraft = _hasDraft;
+        return PopScope(
+          canPop: !inputActive && !hasDraft && !_uploading && !_publishing,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) return;
+            if (inputActive) {
+              _dismissInput();
+            } else {
+              unawaited(_confirmDiscardAndPop());
+            }
+          },
+          child: Scaffold(
+            resizeToAvoidBottomInset: false,
+            appBar: AppBar(
+              backgroundColor: Colors.transparent,
+              surfaceTintColor: Colors.transparent,
+              scrolledUnderElevation: 0,
+              centerTitle: true,
+              leading: IconButton(
+                tooltip: '返回',
+                onPressed: () {
+                  _dismissInput();
+                  unawaited(_confirmDiscardAndPop());
                 },
+                icon: const Icon(Icons.close_rounded),
               ),
+              title: Text(
+                '发布动态',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              actions: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Builder(
+                    builder: (context) {
+                      final hasText = _controller.text.trim().isNotEmpty;
+                      return FilledButton(
+                        style: FilledButton.styleFrom(
+                          shape: const StadiumBorder(),
+                          minimumSize: const Size(68, 36),
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          backgroundColor: hasText
+                              ? scheme.primary
+                              : scheme.surfaceContainerHighest,
+                          foregroundColor: hasText
+                              ? scheme.onPrimary
+                              : scheme.onSurfaceVariant,
+                        ),
+                        onPressed:
+                            _publishing || _uploading ? null : _publish,
+                        child: Text(_publishing ? '发布中' : '发布'),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
         body: Column(
           children: [
             Expanded(
@@ -926,6 +985,8 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
           ],
         ),
       ),
+        );
+      },
     );
   }
 }

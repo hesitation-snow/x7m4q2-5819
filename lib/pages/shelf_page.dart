@@ -5,6 +5,7 @@ import '../services/background_work_queue.dart';
 import '../services/book_access_probe.dart';
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -20,8 +21,14 @@ import 'book_detail_page.dart';
 class ShelfPage extends StatefulWidget {
   final bool embedded;
   final bool? listMode;
+  final ValueListenable<int>? scrollToTopTrigger;
 
-  const ShelfPage({super.key, this.embedded = false, this.listMode});
+  const ShelfPage({
+    super.key,
+    this.embedded = false,
+    this.listMode,
+    this.scrollToTopTrigger,
+  });
 
   @override
   State<ShelfPage> createState() => _ShelfPageState();
@@ -59,6 +66,7 @@ class _ShelfPageState extends State<ShelfPage> {
   int _anchorBookIndex = 0;
   double _anchorFraction = 0.0;
   final ScrollController _gridScrollController = ScrollController();
+  final ScrollController _listScrollController = ScrollController();
 
   @override
   void initState() {
@@ -69,8 +77,17 @@ class _ShelfPageState extends State<ShelfPage> {
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
     LKStore.braveBookRevision.addListener(_onHideBraveRev);
     LKStore.gridColumnCount.addListener(_onGridColumnsChanged);
+    widget.scrollToTopTrigger?.addListener(_scrollToTop);
     _loadListMode();
     unawaited(_startLoad());
+  }
+
+  void _scrollToTop() {
+    _topBarFrac.value = 1.0;
+    final c = _listMode ? _listScrollController : _gridScrollController;
+    if (c.hasClients && c.offset > 0) {
+      unawaited(AppMotion.scrollTo(context, c, 0));
+    }
   }
 
   @override
@@ -81,7 +98,9 @@ class _ShelfPageState extends State<ShelfPage> {
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
     LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     LKStore.gridColumnCount.removeListener(_onGridColumnsChanged);
+    widget.scrollToTopTrigger?.removeListener(_scrollToTop);
     _gridScrollController.dispose();
+    _listScrollController.dispose();
     _topBarFrac.dispose();
     super.dispose();
   }
@@ -279,6 +298,10 @@ class _ShelfPageState extends State<ShelfPage> {
   @override
   void didUpdateWidget(ShelfPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.scrollToTopTrigger != widget.scrollToTopTrigger) {
+      oldWidget.scrollToTopTrigger?.removeListener(_scrollToTop);
+      widget.scrollToTopTrigger?.addListener(_scrollToTop);
+    }
     if (widget.listMode != null && widget.listMode != oldWidget.listMode) {
       setState(() => _listMode = widget.listMode!);
     }
@@ -621,8 +644,16 @@ class _ShelfPageState extends State<ShelfPage> {
       _ShelfSort.recentlyUpdated => '最近更新',
       _ShelfSort.title => '按书名',
     };
+    final filterLabel = switch (_filter) {
+      _ShelfFilter.all => null,
+      _ShelfFilter.unread => '有更新',
+      _ShelfFilter.serializing => '连载中',
+      _ShelfFilter.completed => '已完结',
+    };
     final summary = Text(
-      '$count 部作品 · $sortLabel',
+      filterLabel == null
+          ? '$count 部作品 · $sortLabel'
+          : '$count 部作品 · $filterLabel · $sortLabel',
       style: theme.textTheme.labelMedium
           ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
       maxLines: 1,
@@ -756,6 +787,7 @@ class _ShelfPageState extends State<ShelfPage> {
               break;
           }
         });
+        _scrollToTop();
       },
       constraints: const BoxConstraints(minWidth: 224, maxWidth: 288),
       padding: const EdgeInsets.all(8),
@@ -852,7 +884,7 @@ class _ShelfPageState extends State<ShelfPage> {
 
   Future<void> _showBookActions(LKBook book) async {
     if (_removing.isNotEmpty) return;
-    final remove = await showModalBottomSheet<bool>(
+    final action = await showModalBottomSheet<String>(
       context: context,
       useSafeArea: true,
       sheetAnimationStyle: AppMotion.style(context),
@@ -863,16 +895,30 @@ class _ShelfPageState extends State<ShelfPage> {
         icon: Icons.library_books_outlined,
         children: [
           M3OptionTile(
+            icon: Icons.menu_book_outlined,
+            title: '打开书籍详情',
+            subtitle: book.title,
+            onTap: () => Navigator.pop(sheetCtx, 'open'),
+          ),
+          M3OptionTile(
             icon: Icons.playlist_remove_rounded,
             title: '从书架移除',
             subtitle: book.title,
             danger: true,
-            onTap: () => Navigator.pop(sheetCtx, true),
+            onTap: () => Navigator.pop(sheetCtx, 'remove'),
           ),
         ],
       ),
     );
-    if (remove != true || !mounted || !_removing.add(book.bookId)) return;
+    if (!mounted) return;
+    if (action == 'open') {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => BookDetailPage(bookId: book.bookId)),
+      );
+      return;
+    }
+    if (action != 'remove' || !_removing.add(book.bookId)) return;
     final local = _localMode;
     final uid = LKClient.shared.session.uid;
     try {
@@ -1007,6 +1053,7 @@ class _ShelfPageState extends State<ShelfPage> {
                     )
                   : _listMode
                       ? ListView.builder(
+                          controller: _listScrollController,
                           scrollCacheExtent:
                               const ScrollCacheExtent.viewport(1.0),
                           physics: const AlwaysScrollableScrollPhysics(),

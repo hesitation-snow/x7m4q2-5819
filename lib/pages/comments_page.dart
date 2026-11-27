@@ -60,6 +60,12 @@ class _CommentsPageState extends State<CommentsPage> {
   final _input = TextEditingController();
   final _inputBarKey = GlobalKey<_CommentsInputBarState>();
   bool _inputActive = false;
+  bool _discardDialogOpen = false;
+  bool _togglingDynamicLike = false;
+  bool _togglingDynamicFav = false;
+
+  bool get _hasDraft =>
+      _input.text.trim().isNotEmpty || _pendingMedia.isNotEmpty;
 
   /// 表情包(code → 图片地址),评论渲染与表情面板共用
   final Map<String, String> _emojiUrl = {};
@@ -610,18 +616,28 @@ class _CommentsPageState extends State<CommentsPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundImage:
-                      YomiruAvatarCache.providerOrNull(item.avatar),
-                  child: YomiruAvatarCache.providerOrNull(item.avatar) == null
-                      ? const Icon(Icons.person)
+                GestureDetector(
+                  onTap: item.authorUid > 0
+                      ? () => openUserProfile(context, item.authorUid)
                       : null,
+                  child: CircleAvatar(
+                    radius: 18,
+                    backgroundImage:
+                        YomiruAvatarCache.providerOrNull(item.avatar),
+                    child: YomiruAvatarCache.providerOrNull(item.avatar) == null
+                        ? const Icon(Icons.person)
+                        : null,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(item.nickname.isEmpty ? '未知用户' : item.nickname,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  child: GestureDetector(
+                    onTap: item.authorUid > 0
+                        ? () => openUserProfile(context, item.authorUid)
+                        : null,
+                    child: Text(item.nickname.isEmpty ? '未知用户' : item.nickname,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
                 ),
                 Text(item.time,
                     style: TextStyle(
@@ -686,15 +702,122 @@ class _CommentsPageState extends State<CommentsPage> {
               _mediaGallery(item.media),
               if (poll != null) _pollCard(poll),
               const SizedBox(height: 8),
-              Text('评论 ${item.commentCount} · 赞 ${item.likeCount}',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              Row(
+                children: [
+                  Text('评论 ${item.commentCount} · 赞 ${item.likeCount}',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant)),
+                  const Spacer(),
+                  if (LKClient.shared.session.isLoggedIn &&
+                      item.dynamicId > 0) ...[
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: item.liked ? '取消点赞' : '点赞',
+                      onPressed: _togglingDynamicLike
+                          ? null
+                          : () => _toggleDynamicLike(item),
+                      icon: Icon(
+                        item.liked
+                            ? Icons.thumb_up_rounded
+                            : Icons.thumb_up_outlined,
+                        size: 18,
+                        color: item.liked
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: item.favorited ? '取消收藏' : '收藏',
+                      onPressed: _togglingDynamicFav
+                          ? null
+                          : () => _toggleDynamicFavorite(item),
+                      icon: Icon(
+                        item.favorited
+                            ? Icons.star_rounded
+                            : Icons.star_outline_rounded,
+                        size: 19,
+                        color: item.favorited
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _toggleDynamicLike(LKDynamicItem item) async {
+    if (_togglingDynamicLike || item.dynamicId <= 0) return;
+    final nextLiked = !item.liked;
+    final delta = nextLiked ? 1 : -1;
+    setState(() => _togglingDynamicLike = true);
+    try {
+      await LKApi.toggleDynamicLike(item.dynamicId, nextLiked);
+      if (!mounted) return;
+      setState(() {
+        _dynamicDetail = item.copyWith(
+          liked: nextLiked,
+          hasLikedState: true,
+          likeCount: (item.likeCount + delta).clamp(0, 1 << 30),
+        );
+      });
+    } catch (_) {
+      if (mounted) showLkError(context, '点赞操作失败，请重试');
+    } finally {
+      if (mounted) setState(() => _togglingDynamicLike = false);
+    }
+  }
+
+  Future<void> _toggleDynamicFavorite(LKDynamicItem item) async {
+    if (_togglingDynamicFav || item.dynamicId <= 0) return;
+    final nextFav = !item.favorited;
+    setState(() => _togglingDynamicFav = true);
+    try {
+      await LKApi.toggleDynamicFavorite(item.dynamicId, nextFav);
+      if (!mounted) return;
+      setState(() {
+        _dynamicDetail = LKDynamicItem(
+          dynamicId: item.dynamicId,
+          authorUid: item.authorUid,
+          targetType: item.targetType,
+          eventType: item.eventType,
+          nickname: item.nickname,
+          avatar: item.avatar,
+          authorMedals: item.authorMedals,
+          title: item.title,
+          summary: item.summary,
+          likeCount: item.likeCount,
+          commentCount: item.commentCount,
+          favoriteCount:
+              (item.favoriteCount + (nextFav ? 1 : -1)).clamp(0, 1 << 30),
+          liked: item.liked,
+          hasLikedState: item.hasLikedState,
+          favorited: nextFav,
+          read: item.read,
+          time: item.time,
+          bookId: item.bookId,
+          bookTitle: item.bookTitle,
+          bookCover: item.bookCover,
+          bookMarkedBrave: item.bookMarkedBrave,
+          media: item.media,
+          topicTags: item.topicTags,
+          poll: item.poll,
+        );
+      });
+      showFloatingPrompt(context, nextFav ? '已收藏动态' : '已取消收藏');
+    } catch (_) {
+      if (mounted) showLkError(context, '收藏操作失败，请重试');
+    } finally {
+      if (mounted) setState(() => _togglingDynamicFav = false);
+    }
   }
 
   Future<void> _copyDynamicContent(LKDynamicItem item) async {
@@ -829,10 +952,13 @@ class _CommentsPageState extends State<CommentsPage> {
         spacing: 8,
         children: [
           TextButton.icon(
-            onPressed: () => setState(() {
-              _replyTarget = comment;
-              _replyParentCommentId = isReply ? parentCommentId : 0;
-            }),
+            onPressed: () {
+              setState(() {
+                _replyTarget = comment;
+                _replyParentCommentId = isReply ? parentCommentId : 0;
+              });
+              _inputBarKey.currentState?.focusInput();
+            },
             icon: const Icon(Icons.reply_rounded, size: 17),
             label: Text(
                 _replyTarget?.commentId == comment.commentId ? '正在回复' : '回复'),
@@ -1002,7 +1128,6 @@ class _CommentsPageState extends State<CommentsPage> {
     return InkWell(
       hoverColor: touchPlatform ? Colors.transparent : null,
       focusColor: touchPlatform ? Colors.transparent : null,
-      onTap: c.userUid > 0 ? () => openUserProfile(context, c.userUid) : null,
       onLongPress: () => _copyComment(c),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
@@ -1011,7 +1136,15 @@ class _CommentsPageState extends State<CommentsPage> {
           children: [
             SizedBox(
               width: 56,
-              child: Align(alignment: Alignment.topCenter, child: avatar),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: GestureDetector(
+                  onTap: c.userUid > 0
+                      ? () => openUserProfile(context, c.userUid)
+                      : null,
+                  child: avatar,
+                ),
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -1021,7 +1154,14 @@ class _CommentsPageState extends State<CommentsPage> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(child: author),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: c.userUid > 0
+                              ? () => openUserProfile(context, c.userUid)
+                              : null,
+                          child: author,
+                        ),
+                      ),
                       _likeButton(c),
                     ],
                   ),
@@ -1040,29 +1180,77 @@ class _CommentsPageState extends State<CommentsPage> {
     );
   }
 
+  Future<void> _confirmDiscardAndPop() async {
+    if (_publishing || _uploadingImage) {
+      showFloatingPrompt(context, '评论或图片仍在发送中，请稍候');
+      return;
+    }
+    if (!_hasDraft) {
+      Navigator.of(context).pop();
+      return;
+    }
+    if (_discardDialogOpen) return;
+    _discardDialogOpen = true;
+    try {
+      final discard = await showDialog<bool>(
+        animationStyle: AppMotion.style(context),
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text('放弃这条评论？'),
+          content: const Text('已输入的内容和图片不会被保存。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('继续编辑'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('放弃'),
+            ),
+          ],
+        ),
+      );
+      if (discard == true && mounted) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      _discardDialogOpen = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final inputActive =
         _inputActive || MediaQuery.viewInsetsOf(context).bottom > 0;
-    return PopScope(
-      canPop: !inputActive,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) {
-          _inputBarKey.currentState?._dismissInput();
-        }
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _input,
+      builder: (context, _, __) {
+        final hasDraft = _hasDraft;
+        return PopScope(
+          canPop: !inputActive && !hasDraft && !_publishing && !_uploadingImage,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) return;
+            if (inputActive) {
+              _inputBarKey.currentState?._dismissInput();
+            } else {
+              unawaited(_confirmDiscardAndPop());
+            }
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            // 只响应未被子控件处理的点击；输入激活时评论区域由遮罩拦截，避免误触下方条目。
+            onTap: () => _inputBarKey.currentState?._dismissInput(),
+            child: _buildScaffold(context, inputActive: inputActive),
+          ),
+        );
       },
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        // 只响应未被子控件处理的点击；输入激活时评论区域由遮罩拦截，避免误触下方条目。
-        onTap: () => _inputBarKey.currentState?._dismissInput(),
-        child: _buildScaffold(context, inputActive: inputActive),
-      ),
     );
   }
 
   void _showDynamicActionsSheet() {
     final item = _dynamicDetail ?? widget.dynamicPreview;
     if (item == null) return;
+    final loggedIn = LKClient.shared.session.isLoggedIn;
     showModalBottomSheet<void>(
       sheetAnimationStyle: AppMotion.style(context),
       context: context,
@@ -1074,6 +1262,30 @@ class _CommentsPageState extends State<CommentsPage> {
         title: '动态操作',
         icon: Icons.more_horiz_rounded,
         children: [
+          if (loggedIn && item.dynamicId > 0) ...[
+            M3OptionTile(
+              title: item.liked ? '已点赞（点击取消）' : '点赞此动态',
+              icon: item.liked
+                  ? Icons.thumb_up_rounded
+                  : Icons.thumb_up_outlined,
+              selected: item.liked,
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                unawaited(_toggleDynamicLike(item));
+              },
+            ),
+            M3OptionTile(
+              title: item.favorited ? '已收藏（点击取消）' : '收藏此动态',
+              icon: item.favorited
+                  ? Icons.star_rounded
+                  : Icons.star_outline_rounded,
+              selected: item.favorited,
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                unawaited(_toggleDynamicFavorite(item));
+              },
+            ),
+          ],
           M3OptionTile(
             title: '复制动态链接',
             icon: Icons.link_rounded,
@@ -1204,11 +1416,15 @@ class _CommentsPageState extends State<CommentsPage> {
                     _replyParentCommentId = 0;
                   }),
           onPickImage: _pickImage,
-          pendingImageUrl:
-              _pendingMedia.isEmpty ? null : _pendingMedia.last.url,
-          onRemoveImage: _pendingMedia.isEmpty
+          pendingMedia: _pendingMedia,
+          uploadingImage: _uploadingImage,
+          onRemoveMediaAt: _pendingMedia.isEmpty
               ? null
-              : () => setState(() => _pendingMedia.removeLast()),
+              : (index) {
+                  if (index >= 0 && index < _pendingMedia.length) {
+                    setState(() => _pendingMedia.removeAt(index));
+                  }
+                },
           onPublish: _publish,
         ),
       ]),
@@ -1225,8 +1441,9 @@ class _CommentsInputBar extends StatefulWidget {
   final String? replyLabel;
   final VoidCallback? onCancelReply;
   final VoidCallback? onPickImage;
-  final String? pendingImageUrl;
-  final VoidCallback? onRemoveImage;
+  final List<LKDynamicMedia> pendingMedia;
+  final bool uploadingImage;
+  final ValueChanged<int>? onRemoveMediaAt;
   final VoidCallback onPublish;
   final bool publishing;
   final ValueChanged<bool>? onInputActiveChanged;
@@ -1240,8 +1457,9 @@ class _CommentsInputBar extends StatefulWidget {
     this.replyLabel,
     this.onCancelReply,
     this.onPickImage,
-    this.pendingImageUrl,
-    this.onRemoveImage,
+    this.pendingMedia = const [],
+    this.uploadingImage = false,
+    this.onRemoveMediaAt,
     required this.onPublish,
     this.publishing = false,
     this.onInputActiveChanged,
@@ -1310,7 +1528,7 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
     }
 
     final inputHeight = media.textScaler.scale(64).clamp(96.0, 180.0) +
-        (widget.pendingImageUrl == null ? 0 : 70) +
+        (widget.pendingMedia.isEmpty && !widget.uploadingImage ? 0 : 70) +
         (widget.replyLabel == null ? 0 : 36);
     final available = (media.size.height -
             media.viewPadding.vertical -
@@ -1321,6 +1539,17 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
     final defaultH =
         (media.size.height * 0.40).clamp(minH, available).toDouble();
     return defaultH;
+  }
+
+  void focusInput() {
+    if (_showEmoji) {
+      _returnToKeyboard();
+      return;
+    }
+    _transitionTimer?.cancel();
+    _keyboardTransitioning = false;
+    _focus.requestFocus();
+    _syncInputActive();
   }
 
   void _dismissInput() {
@@ -1478,36 +1707,67 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
                     ),
                   ),
                 ),
-              if (widget.pendingImageUrl != null &&
-                  widget.pendingImageUrl!.isNotEmpty)
+              if (widget.pendingMedia.isNotEmpty || widget.uploadingImage)
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Padding(
                     padding: const EdgeInsets.only(bottom: 6),
-                    child: Stack(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: CachedNetworkImage(
-                            fadeOutDuration: AppMotion.duration(context, 1000),
-                            fadeInDuration: AppMotion.duration(context, 500),
-                            imageUrl: widget.pendingImageUrl!,
-                            width: 56,
-                            height: 56,
-                            memCacheWidth: imageCacheDimension(context, 56),
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                        Positioned(
-                          right: -8,
-                          top: -8,
-                          child: IconButton(
-                            visualDensity: VisualDensity.compact,
-                            icon: const Icon(Icons.cancel, size: 18),
-                            onPressed: widget.onRemoveImage,
-                          ),
-                        ),
-                      ],
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (var i = 0; i < widget.pendingMedia.length; i++)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Stack(
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: CachedNetworkImage(
+                                      fadeOutDuration:
+                                          AppMotion.duration(context, 1000),
+                                      fadeInDuration:
+                                          AppMotion.duration(context, 500),
+                                      imageUrl: widget.pendingMedia[i].url,
+                                      width: 56,
+                                      height: 56,
+                                      memCacheWidth:
+                                          imageCacheDimension(context, 56),
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                  Positioned(
+                                    right: -8,
+                                    top: -8,
+                                    child: IconButton(
+                                      tooltip: '移除图片',
+                                      visualDensity: VisualDensity.compact,
+                                      icon: const Icon(Icons.cancel, size: 18),
+                                      onPressed: widget.onRemoveMediaAt == null
+                                          ? null
+                                          : () => widget.onRemoveMediaAt!(i),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (widget.uploadingImage)
+                            Container(
+                              width: 56,
+                              height: 56,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color:
+                                    theme.colorScheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const SizedBox.square(
+                                dimension: 20,
+                                child: MotionProgressIndicator(strokeWidth: 2),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1572,9 +1832,17 @@ class _CommentsInputBarState extends State<_CommentsInputBar> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                FilledButton(
-                    onPressed: widget.publishing ? null : widget.onPublish,
-                    child: Text(widget.publishing ? '处理中…' : '发布')),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: widget.controller,
+                  builder: (context, value, _) {
+                    final canPublish =
+                        !widget.publishing && value.text.trim().isNotEmpty;
+                    return FilledButton(
+                      onPressed: canPublish ? widget.onPublish : null,
+                      child: Text(widget.publishing ? '处理中…' : '发布'),
+                    );
+                  },
+                ),
               ]),
             ]),
           ),

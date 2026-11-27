@@ -295,29 +295,51 @@ class _MessagesPageState extends State<_MessagesPageBody>
     try {
       final unreadConversations =
           _conversations.where((c) => c.unread > 0).toList();
+      final clearedPeerUids = <int>{};
+      var failures = 0;
       if (unreadConversations.isNotEmpty) {
         await Future.wait(
-          unreadConversations
-              .map((c) => LKApi.dmMarkRead(c.peerUid).catchError((_) {})),
+          unreadConversations.map((c) async {
+            try {
+              await LKApi.dmMarkRead(c.peerUid);
+              clearedPeerUids.add(c.peerUid);
+            } catch (_) {
+              failures++;
+            }
+          }),
         );
       }
       if (!mounted || !_session.isCurrent) return;
-      setState(() {
-        _summaryMutationSerial++;
-        _summary = _summary.clearDm();
-        _conversations = [
-          for (final c in _conversations)
-            LKConversation(
-              peerUid: c.peerUid,
-              peerName: c.peerName,
-              peerAvatar: c.peerAvatar,
-              lastMessage: c.lastMessage,
-              updatedAt: c.updatedAt,
-              unread: 0,
-            ),
-        ];
-      });
-      showFloatingPrompt(context, '私信已全部标记为已读');
+      if (clearedPeerUids.isNotEmpty) {
+        setState(() {
+          _conversations = [
+            for (final c in _conversations)
+              clearedPeerUids.contains(c.peerUid)
+                  ? LKConversation(
+                      peerUid: c.peerUid,
+                      peerName: c.peerName,
+                      peerAvatar: c.peerAvatar,
+                      lastMessage: c.lastMessage,
+                      updatedAt: c.updatedAt,
+                      unread: 0,
+                    )
+                  : c,
+          ];
+          if (!_dmHasMore && failures == 0) {
+            _summaryMutationSerial++;
+            _summary = _summary.clearDm();
+          }
+        });
+      }
+      if (_dmHasMore || failures > 0) {
+        await _loadSummary();
+      }
+      if (!mounted || !_session.isCurrent) return;
+      if (failures > 0) {
+        showLkError(context, '部分私信标记失败，请重试');
+      } else {
+        showFloatingPrompt(context, '私信已全部标记为已读');
+      }
     } catch (error) {
       if (mounted && _session.isCurrent) showLkError(context, error);
     } finally {
@@ -429,7 +451,11 @@ class _MessagesPageState extends State<_MessagesPageBody>
           ),
           IconButton(
             tooltip: type == 'dm' ? '私信全部已读' : '通知全部已读',
-            onPressed: _markingAll
+            onPressed: _markingAll ||
+                    (type == 'dm'
+                        ? _summary.dmCount == 0 &&
+                            !_conversations.any((c) => c.unread > 0)
+                        : _summary.countFor(type) == 0)
                 ? null
                 : () => type == 'dm'
                     ? _markAllDmsRead()
@@ -876,14 +902,19 @@ class _MessagesPageState extends State<_MessagesPageBody>
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                radius: 21,
-                backgroundColor: scheme.surfaceContainerHighest,
-                backgroundImage: YomiruAvatarCache.providerOrNull(avatar),
-                child: YomiruAvatarCache.providerOrNull(avatar) == null
-                    ? Icon(_categoryFor(item.type).icon,
-                        size: 21, color: scheme.onSurfaceVariant)
+              GestureDetector(
+                onTap: item.uid > 0
+                    ? () => openUserProfile(context, item.uid)
                     : null,
+                child: CircleAvatar(
+                  radius: 21,
+                  backgroundColor: scheme.surfaceContainerHighest,
+                  backgroundImage: YomiruAvatarCache.providerOrNull(avatar),
+                  child: YomiruAvatarCache.providerOrNull(avatar) == null
+                      ? Icon(_categoryFor(item.type).icon,
+                          size: 21, color: scheme.onSurfaceVariant)
+                      : null,
+                ),
               ),
               const SizedBox(width: 11),
               Expanded(
@@ -1201,15 +1232,21 @@ class _MessagesPageState extends State<_MessagesPageBody>
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             children: [
-              CircleAvatar(
-                backgroundColor: scheme.surfaceContainerHighest,
-                backgroundImage:
-                    YomiruAvatarCache.providerOrNull(conversation.peerAvatar),
-                child: YomiruAvatarCache.providerOrNull(
-                            conversation.peerAvatar) ==
-                        null
-                    ? Icon(Icons.person_outline, color: scheme.onSurfaceVariant)
+              GestureDetector(
+                onTap: conversation.peerUid > 0
+                    ? () => openUserProfile(context, conversation.peerUid)
                     : null,
+                child: CircleAvatar(
+                  backgroundColor: scheme.surfaceContainerHighest,
+                  backgroundImage:
+                      YomiruAvatarCache.providerOrNull(conversation.peerAvatar),
+                  child: YomiruAvatarCache.providerOrNull(
+                              conversation.peerAvatar) ==
+                          null
+                      ? Icon(Icons.person_outline,
+                          color: scheme.onSurfaceVariant)
+                      : null,
+                ),
               ),
               const SizedBox(width: 14),
               Expanded(

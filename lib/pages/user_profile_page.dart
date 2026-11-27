@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
@@ -14,6 +15,8 @@ import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
 import '../widgets/content_state_view.dart';
 import '../widgets/emoji_text.dart';
+import '../widgets/m3_controls.dart';
+import '../widgets/m3_menu_sheet.dart';
 import 'book_detail_page.dart';
 import 'dm_chat_page.dart';
 import 'media_viewer_page.dart';
@@ -59,6 +62,10 @@ class _UserProfilePageState extends State<UserProfilePage>
   int _relationRevision = 0;
   int _dynamicLoadSerial = 0;
   int _bookshelfLoadSerial = 0;
+  final Set<int> _likePending = {};
+  final Set<int> _favoritePending = {};
+  final Map<int, bool> _likeOverrides = {};
+  final Map<int, bool> _favoriteOverrides = {};
   String? _publicationError;
 
   @override
@@ -677,6 +684,11 @@ class _UserProfilePageState extends State<UserProfilePage>
     final medals = item.authorMedals.isNotEmpty
         ? item.authorMedals
         : (_globalMedals[item.authorUid] ?? const <LKMedal>[]);
+    final canOpenAuthor =
+        item.authorUid > 0 && item.authorUid != widget.uid;
+    final liked = _likeOverrides[item.dynamicId] ?? item.liked;
+    final likeCount = item.likeCount +
+        (liked == item.liked ? 0 : (liked ? 1 : -1));
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Card(
@@ -694,6 +706,8 @@ class _UserProfilePageState extends State<UserProfilePage>
                     ),
                   )
               : null,
+          onLongPress:
+              item.dynamicId > 0 ? () => _showDynamicActions(item) : null,
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -703,7 +717,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     GestureDetector(
-                      onTap: item.authorUid > 0
+                      onTap: canOpenAuthor
                           ? () => openUserProfile(context, item.authorUid)
                           : null,
                       child: CircleAvatar(
@@ -724,7 +738,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           GestureDetector(
-                            onTap: item.authorUid > 0
+                            onTap: canOpenAuthor
                                 ? () => openUserProfile(context, item.authorUid)
                                 : null,
                             child: Text(
@@ -846,7 +860,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    Text('赞 ${item.likeCount} · 评论 ${item.commentCount}',
+                    Text('赞 ${likeCount.clamp(0, 1 << 30)} · 评论 ${item.commentCount}',
                         style: TextStyle(
                             fontSize: 12,
                             color: Theme.of(context)
@@ -865,6 +879,79 @@ class _UserProfilePageState extends State<UserProfilePage>
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showDynamicActions(LKDynamicItem d) {
+    if (d.dynamicId <= 0) return;
+    final loggedIn = LKClient.shared.session.isLoggedIn;
+    final liked = _likeOverrides[d.dynamicId] ?? d.liked;
+    final favorited = _favoriteOverrides[d.dynamicId] ?? d.favorited;
+    showModalBottomSheet<void>(
+      sheetAnimationStyle: AppMotion.style(context),
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
+      isScrollControlled: true,
+      builder: (sheetCtx) => M3MenuSheet(
+        title: '动态操作',
+        icon: Icons.more_horiz_rounded,
+        children: [
+          M3OptionTile(
+            title: '复制动态链接',
+            icon: Icons.link_rounded,
+            onTap: () async {
+              Navigator.pop(sheetCtx);
+              await Clipboard.setData(
+                  ClipboardData(text: dynamicWebsiteUrl(d.dynamicId)));
+              if (mounted) {
+                showLkSnackBar(context, '已复制动态链接', tone: LkNoticeTone.success);
+              }
+            },
+          ),
+          if (loggedIn) ...[
+            M3OptionTile(
+              title: liked ? '已点赞（点击取消）' : '点赞此动态',
+              icon: liked ? Icons.thumb_up_rounded : Icons.thumb_up_outlined,
+              selected: liked,
+              onTap: () async {
+                Navigator.pop(sheetCtx);
+                if (!_likePending.add(d.dynamicId)) return;
+                try {
+                  await LKApi.toggleDynamicLike(d.dynamicId, !liked);
+                  if (mounted) {
+                    setState(() => _likeOverrides[d.dynamicId] = !liked);
+                  }
+                } catch (_) {
+                  if (mounted) showLkError(context, '点赞操作失败，请重试');
+                } finally {
+                  _likePending.remove(d.dynamicId);
+                }
+              },
+            ),
+            M3OptionTile(
+              title: favorited ? '已收藏（点击取消）' : '收藏此动态',
+              icon: favorited ? Icons.star_rounded : Icons.star_outline_rounded,
+              selected: favorited,
+              onTap: () async {
+                Navigator.pop(sheetCtx);
+                if (!_favoritePending.add(d.dynamicId)) return;
+                try {
+                  await LKApi.toggleDynamicFavorite(d.dynamicId, !favorited);
+                  if (mounted) {
+                    setState(() => _favoriteOverrides[d.dynamicId] = !favorited);
+                  }
+                } catch (_) {
+                  if (mounted) showLkError(context, '收藏操作失败，请重试');
+                } finally {
+                  _favoritePending.remove(d.dynamicId);
+                }
+              },
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -901,6 +988,8 @@ class _UserProfilePageState extends State<UserProfilePage>
       child: LayoutBuilder(
         builder: (context, constraints) {
           Widget image(LKDynamicMedia item, {double? width, double? height}) {
+            final scheme = Theme.of(context).colorScheme;
+            final isDataSaver = LKStore.dataSaverMode.value;
             return GestureDetector(
               onTap: () => Navigator.push(
                 context,
@@ -909,7 +998,31 @@ class _UserProfilePageState extends State<UserProfilePage>
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(9),
-                child: CachedNetworkImage(
+                child: isDataSaver
+                    ? Container(
+                        width: width,
+                        height: height,
+                        color: scheme.surfaceContainerHighest
+                            .withValues(alpha: 0.5),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.image_outlined,
+                                  size: 28, color: scheme.onSurfaceVariant),
+                              const SizedBox(height: 4),
+                              Text(
+                                '流量节省模式\n点击查看大图',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: scheme.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : CachedNetworkImage(
                   fadeOutDuration: AppMotion.duration(context, 1000),
                   fadeInDuration: AppMotion.duration(context, 500),
                   imageUrl: item.url,

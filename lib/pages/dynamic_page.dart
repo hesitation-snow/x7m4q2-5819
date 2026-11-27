@@ -4,6 +4,7 @@ import '../services/app_motion.dart';
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
@@ -57,7 +58,12 @@ String dynamicFeedCacheVariant(({String tab, bool anonymous}) source) =>
 class DynamicPage extends StatefulWidget {
   /// 内嵌模式(作为底部 Tab 使用时无独立 Scaffold/AppBar)
   final bool embedded;
-  const DynamicPage({super.key, this.embedded = false});
+  final ValueListenable<int>? scrollToTopTrigger;
+  const DynamicPage({
+    super.key,
+    this.embedded = false,
+    this.scrollToTopTrigger,
+  });
 
   @override
   State<DynamicPage> createState() => _DynamicPageState();
@@ -86,6 +92,7 @@ class _DynamicPageState extends State<DynamicPage> {
   Map<String, String> _emojiUrls = const {};
   int _unreadCount = 0;
   final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
+  final ScrollController _scrollController = ScrollController();
   List<LKDynamicItem> _visibleItems = const [];
   // Reserve the real chip touch target and scaled title height in the
   // collapsing header, rather than clipping the controls at the old 100px.
@@ -149,10 +156,27 @@ class _DynamicPageState extends State<DynamicPage> {
     LKStore.dynamicFeedMode.addListener(_onFeedSourceChanged);
     LKStore.hideBraveBooks.addListener(_onBraveFilterChanged);
     LKStore.braveBookRevision.addListener(_onBraveFilterChanged);
+    widget.scrollToTopTrigger?.addListener(_scrollToTop);
     _loadGlobalMedals();
     _loadEmojis();
     _loadUnread();
     unawaited(_startLoad());
+  }
+
+  void _scrollToTop() {
+    _topBarFrac.value = 1.0;
+    if (_scrollController.hasClients && _scrollController.offset > 0) {
+      unawaited(AppMotion.scrollTo(context, _scrollController, 0));
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DynamicPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.scrollToTopTrigger != widget.scrollToTopTrigger) {
+      oldWidget.scrollToTopTrigger?.removeListener(_scrollToTop);
+      widget.scrollToTopTrigger?.addListener(_scrollToTop);
+    }
   }
 
   @override
@@ -161,6 +185,8 @@ class _DynamicPageState extends State<DynamicPage> {
     LKStore.dynamicFeedMode.removeListener(_onFeedSourceChanged);
     LKStore.hideBraveBooks.removeListener(_onBraveFilterChanged);
     LKStore.braveBookRevision.removeListener(_onBraveFilterChanged);
+    widget.scrollToTopTrigger?.removeListener(_scrollToTop);
+    _scrollController.dispose();
     _topBarFrac.dispose();
     super.dispose();
   }
@@ -889,6 +915,7 @@ class _DynamicPageState extends State<DynamicPage> {
                             ],
                           )
                     : CustomScrollView(
+                        controller: _scrollController,
                         physics: const AlwaysScrollableScrollPhysics(),
                         slivers: [
                           SliverMasonryGrid(

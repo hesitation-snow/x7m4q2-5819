@@ -262,6 +262,8 @@ class _ReaderPageState extends State<ReaderPage>
   List<_Page> _pages = [_Page(const [], chapterEnd: true)];
   int _pageIndex = 0;
   bool _chapterSwitching = false;
+  double _pagedOverscrollAccum = 0;
+  int _pagedOverscrollDir = 0;
   _ReadingAnchor? _pendingPagedAnchor;
   int? _pendingPositionTransitionId;
   bool _restoringPagedProgress = false;
@@ -1608,6 +1610,10 @@ class _ReaderPageState extends State<ReaderPage>
       return;
     }
     if (_exitInFlight || ModalRoute.of(context)?.isCurrent != true) return;
+    if (_loading || _loadError != null) {
+      await _exitReader(result);
+      return;
+    }
     if (_exitConfirmationTimer?.isActive != true) {
       _exitPrompt = showLkSnackBar(
         context,
@@ -4845,6 +4851,46 @@ class _ReaderPageState extends State<ReaderPage>
                                                           item.id !=
                                                           bookmark.id)
                                                       .toList());
+                                                  if (mounted) {
+                                                    showLkSnackBar(
+                                                      context,
+                                                      '已删除书签',
+                                                      duration: const Duration(
+                                                          seconds: 4),
+                                                      action: SnackBarAction(
+                                                        label: '撤销',
+                                                        onPressed: () async {
+                                                          if (!sameAccount()) {
+                                                            return;
+                                                          }
+                                                          try {
+                                                            await ReaderBookmarkStore
+                                                                .add(
+                                                              uid: uid,
+                                                              bookmark:
+                                                                  bookmark,
+                                                            );
+                                                            final refreshed =
+                                                                await ReaderBookmarkStore
+                                                                    .list(
+                                                              uid: uid,
+                                                              bookId:
+                                                                  widget.bookId,
+                                                              chapterId: widget
+                                                                  .chapterId,
+                                                            );
+                                                            if (sheetContext
+                                                                    .mounted &&
+                                                                sameAccount()) {
+                                                              setSheet(() =>
+                                                                  items =
+                                                                      refreshed);
+                                                            }
+                                                          } catch (_) {}
+                                                        },
+                                                      ),
+                                                    );
+                                                  }
                                                 } catch (_) {
                                                   if (mounted &&
                                                       sameAccount()) {
@@ -5761,7 +5807,12 @@ class _ReaderPageState extends State<ReaderPage>
       padding: EdgeInsets.only(bottom: _typography.paragraphSpacing),
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onDoubleTap: () => unawaited(_toggleTtsAtBlock(index)),
+        onDoubleTap: _isListeningActive
+            ? () {
+                _suppressNextTextTap = true;
+                unawaited(_toggleTtsAtBlock(index));
+              }
+            : null,
         child: Listener(
           behavior: HitTestBehavior.translucent,
           onPointerDown: _textPointerDown,
@@ -5919,48 +5970,90 @@ class _ReaderPageState extends State<ReaderPage>
       },
       child: Padding(
         padding: EdgeInsets.only(top: viewTop, bottom: viewBottom),
-        child: NotificationListener<OverscrollNotification>(
-          onNotification: (n) {
-            if (n.overscroll > 0) {
-              if (_pageIndex >= _pages.length - 1 &&
-                  _nextId != null &&
-                  !_chapterSwitching) {
-                _open(_nextId!, _nextTitle ?? '', volumeId: _nextVolumeId);
-              }
-            } else if (n.overscroll < 0) {
-              if (_pageIndex <= 0 && _prevId != null && !_chapterSwitching) {
-                _open(_prevId!, _prevTitle ?? '', volumeId: _prevVolumeId);
-              }
-            }
-            return false;
-          },
-          child: NotificationListener<ScrollNotification>(
-            onNotification: (n) {
-              if (_isListeningActive &&
-                  !_restoringPagedProgress &&
-                  !_programmaticPageJump) {
-                final isUserDrag = (n is ScrollStartNotification &&
-                        n.dragDetails != null) ||
-                    (n is ScrollUpdateNotification &&
-                        n.dragDetails != null) ||
-                    (n is UserScrollNotification &&
-                        n.direction != ScrollDirection.idle);
-                if (isUserDrag) {
-                  _pauseTtsAutoFollow(scheduleAutoResume: false);
-                } else if (n is ScrollUpdateNotification &&
-                    n.scrollDelta != null &&
-                    n.scrollDelta!.abs() > 0.5) {
-                  _pauseTtsAutoFollow(scheduleAutoResume: true);
-                } else if ((n is ScrollEndNotification ||
-                        (n is UserScrollNotification &&
-                            n.direction == ScrollDirection.idle)) &&
-                    _ttsFollowPaused) {
-                  _scheduleTtsFollowAutoResume();
+        child: Stack(
+          children: [
+            NotificationListener<OverscrollNotification>(
+              onNotification: (n) {
+                if (n.metrics.axis == Axis.horizontal) {
+                  if (n.overscroll > 0 &&
+                      _pageIndex >= _pages.length - 1 &&
+                      _nextId != null &&
+                      !_chapterSwitching) {
+                    final nextAccum = (_pagedOverscrollDir == 1
+                            ? _pagedOverscrollAccum
+                            : 0.0) +
+                        n.overscroll;
+                    if (nextAccum >= 72.0) {
+                      _pagedOverscrollAccum = 0;
+                      _pagedOverscrollDir = 0;
+                      _open(_nextId!, _nextTitle ?? '',
+                          volumeId: _nextVolumeId);
+                    } else if (nextAccum != _pagedOverscrollAccum ||
+                        _pagedOverscrollDir != 1) {
+                      setState(() {
+                        _pagedOverscrollDir = 1;
+                        _pagedOverscrollAccum = nextAccum;
+                      });
+                    }
+                  } else if (n.overscroll < 0 &&
+                      _pageIndex <= 0 &&
+                      _prevId != null &&
+                      !_chapterSwitching) {
+                    final nextAccum = (_pagedOverscrollDir == -1
+                            ? _pagedOverscrollAccum
+                            : 0.0) +
+                        (-n.overscroll);
+                    if (nextAccum >= 72.0) {
+                      _pagedOverscrollAccum = 0;
+                      _pagedOverscrollDir = 0;
+                      _open(_prevId!, _prevTitle ?? '',
+                          volumeId: _prevVolumeId);
+                    } else if (nextAccum != _pagedOverscrollAccum ||
+                        _pagedOverscrollDir != -1) {
+                      setState(() {
+                        _pagedOverscrollDir = -1;
+                        _pagedOverscrollAccum = nextAccum;
+                      });
+                    }
+                  }
                 }
-              }
-              return false;
-            },
-            child: PageView.builder(
+                return false;
+              },
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (n) {
+                  if (n is ScrollEndNotification &&
+                      (_pagedOverscrollAccum != 0 ||
+                          _pagedOverscrollDir != 0)) {
+                    setState(() {
+                      _pagedOverscrollAccum = 0;
+                      _pagedOverscrollDir = 0;
+                    });
+                  }
+                  if (_isListeningActive &&
+                      !_restoringPagedProgress &&
+                      !_programmaticPageJump) {
+                    final isUserDrag = (n is ScrollStartNotification &&
+                            n.dragDetails != null) ||
+                        (n is ScrollUpdateNotification &&
+                            n.dragDetails != null) ||
+                        (n is UserScrollNotification &&
+                            n.direction != ScrollDirection.idle);
+                    if (isUserDrag) {
+                      _pauseTtsAutoFollow(scheduleAutoResume: false);
+                    } else if (n is ScrollUpdateNotification &&
+                        n.scrollDelta != null &&
+                        n.scrollDelta!.abs() > 0.5) {
+                      _pauseTtsAutoFollow(scheduleAutoResume: true);
+                    } else if ((n is ScrollEndNotification ||
+                            (n is UserScrollNotification &&
+                                n.direction == ScrollDirection.idle)) &&
+                        _ttsFollowPaused) {
+                      _scheduleTtsFollowAutoResume();
+                    }
+                  }
+                  return false;
+                },
+                child: PageView.builder(
               controller: _pageController,
               itemCount: _pages.length,
               physics: instant
@@ -6065,6 +6158,45 @@ class _ReaderPageState extends State<ReaderPage>
             ),
           ),
         ),
+            if (_pagedOverscrollDir != 0 && _pagedOverscrollAccum >= 16)
+              IgnorePointer(
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 18),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .inverseSurface
+                            .withValues(alpha: 0.85),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 6),
+                        child: Text(
+                          _pagedOverscrollDir > 0
+                              ? (_pagedOverscrollAccum >= 72
+                                  ? '松手或继续滑动进入下一章'
+                                  : '继续滑动切换下一章')
+                              : (_pagedOverscrollAccum >= 72
+                                  ? '松手或继续滑动进入上一章'
+                                  : '继续滑动切换上一章'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onInverseSurface,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -6158,7 +6290,12 @@ class _ReaderPageState extends State<ReaderPage>
         padding: EdgeInsets.only(bottom: _typography.paragraphSpacing),
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onDoubleTap: () => unawaited(_toggleTtsAtBlock(it.blockIndex)),
+          onDoubleTap: _isListeningActive
+              ? () {
+                  _suppressNextTextTap = true;
+                  unawaited(_toggleTtsAtBlock(it.blockIndex));
+                }
+              : null,
           child: Listener(
             behavior: HitTestBehavior.translucent,
             onPointerDown: _textPointerDown,

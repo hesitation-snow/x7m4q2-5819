@@ -474,12 +474,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
     }
   }
 
+  Future<void> _pushAndRefreshLibrary(Route<void> route) async {
+    await Navigator.push(context, route);
+    if (mounted) unawaited(_loadLibraryState());
+  }
+
   void _openCatalog([LKVolume? requestedVolume]) {
     final book = _book;
     final volume = requestedVolume ?? _initialCatalogVolume;
     if (book == null || volume == null) return;
-    Navigator.push(
-      context,
+    unawaited(_pushAndRefreshLibrary(
       MaterialPageRoute(
         builder: (_) => ChaptersPage(
           bookId: book.bookId,
@@ -492,7 +496,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
           volumes: _volumes,
         ),
       ),
-    );
+    ));
   }
 
   Future<void> _loadLibraryState() async {
@@ -530,8 +534,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
     }
   }
 
+  bool _shelfBusy = false;
+
   Future<void> _toggleShelf() async {
+    if (_shelfBusy) return;
     final add = !_inShelf;
+    setState(() => _shelfBusy = true);
     try {
       if (LKClient.shared.session.isLoggedIn) {
         await LKApi.toggleShelf(widget.bookId, add);
@@ -547,9 +555,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
         }
         await LKStore.setLocalShelf(book, add);
       }
-      if (mounted) setState(() => _inShelf = add);
+      if (mounted) {
+        setState(() => _inShelf = add);
+        showFloatingPrompt(context, add ? '已加入书架' : '已移出书架');
+      }
     } catch (e) {
       if (mounted) showLkError(context, e);
+    } finally {
+      if (mounted) setState(() => _shelfBusy = false);
     }
   }
 
@@ -559,8 +572,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
     final chapterId = _readChapterId > 0 ? _readChapterId : b.defaultChapterId;
     final volumeId = _readVolumeId > 0 ? _readVolumeId : b.defaultVolumeId;
     if (chapterId > 0) {
-      Navigator.push(
-        context,
+      unawaited(_pushAndRefreshLibrary(
         MaterialPageRoute(
             builder: (_) => ReaderPage(
                   bookId: b.bookId,
@@ -570,7 +582,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                   chapterTitle: _readChapterTitle,
                   volumeId: volumeId,
                 )),
-      );
+      ));
       return;
     }
     if (_volumes.isNotEmpty) _openCatalog();
@@ -1065,12 +1077,19 @@ class _BookDetailPageState extends State<BookDetailPage> {
                               Row(children: [
                                 Expanded(
                                   child: OutlinedButton.icon(
-                                    onPressed: _toggleShelf,
-                                    icon: Icon(
-                                        _inShelf
-                                            ? Icons.bookmark_added_rounded
-                                            : Icons.bookmark_add_outlined,
-                                        size: 18),
+                                    onPressed: _shelfBusy ? null : _toggleShelf,
+                                    icon: _shelfBusy
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: MotionProgressIndicator(
+                                                strokeWidth: 2),
+                                          )
+                                        : Icon(
+                                            _inShelf
+                                                ? Icons.bookmark_added_rounded
+                                                : Icons.bookmark_add_outlined,
+                                            size: 18),
                                     label: Text(_inShelf ? '已加书架' : '加入书架'),
                                   ),
                                 ),
@@ -1459,8 +1478,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
       }
     }
     if (!mounted || chapterId <= 0) return;
-    Navigator.push(
-      context,
+    unawaited(_pushAndRefreshLibrary(
       MaterialPageRoute(
         builder: (_) => ReaderPage(
           bookId: book.bookId,
@@ -1471,7 +1489,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
           volumeId: volume.volumeId,
         ),
       ),
-    );
+    ));
   }
 
   bool get _allVolumesExpanded =>
@@ -1588,8 +1606,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
     }
     return chs
         .map((c) => InkWell(
-              onTap: () => Navigator.push(
-                context,
+              onTap: () => unawaited(_pushAndRefreshLibrary(
                 MaterialPageRoute(
                     builder: (_) => ReaderPage(
                           bookId: book.bookId,
@@ -1599,7 +1616,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                           chapterTitle: c.title,
                           volumeId: v.volumeId,
                         )),
-              ),
+              )),
               child: Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1665,10 +1682,12 @@ class _ChaptersPageState extends State<ChaptersPage> {
   static const int _pageSize = 50;
 
   final ScrollController _scroll = ScrollController();
+  final GlobalKey _currentChapterKey = GlobalKey();
   List<LKChapter> _chapters = const [];
   String? _error;
   bool _initialLoading = true;
   bool _loadingMore = false;
+  bool _locatingCurrent = false;
   bool _hasMore = true;
   bool _descending = false;
   int _total = 0;
@@ -1753,6 +1772,42 @@ class _ChaptersPageState extends State<ChaptersPage> {
   }
 
   Future<void> _refresh() => _loadPage(reset: true, forceRefresh: true);
+
+  Future<void> _jumpToCurrentChapter() async {
+    final targetId = widget.currentChapterId;
+    if (targetId <= 0 || _locatingCurrent) return;
+    setState(() => _locatingCurrent = true);
+    try {
+      while (mounted &&
+          !_chapters.any((c) => c.chapterId == targetId) &&
+          _hasMore &&
+          _error == null) {
+        if (_initialLoading || _loadingMore) {
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+        } else {
+          await _loadPage();
+        }
+      }
+      if (!mounted) return;
+      if (_chapters.any((c) => c.chapterId == targetId)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final ctx = _currentChapterKey.currentContext;
+          if (ctx != null && mounted) {
+            unawaited(Scrollable.ensureVisible(
+              ctx,
+              duration: AppMotion.duration(context, 240),
+              curve: Curves.easeOutCubic,
+              alignment: 0.3,
+            ));
+          }
+        });
+      } else {
+        showFloatingPrompt(context, '当前章节不在此卷目录中');
+      }
+    } finally {
+      if (mounted) setState(() => _locatingCurrent = false);
+    }
+  }
 
   Future<void> _loadPage(
       {bool reset = false, bool forceRefresh = false}) async {
@@ -1907,6 +1962,18 @@ class _ChaptersPageState extends State<ChaptersPage> {
           ],
         ),
         actions: [
+          if (widget.currentChapterId > 0)
+            IconButton(
+              tooltip: '定位当前章节',
+              onPressed: _locatingCurrent ? null : _jumpToCurrentChapter,
+              icon: _locatingCurrent
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: MotionProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.my_location_rounded),
+            ),
           if (_availableVolumes.length > 1)
             PopupMenuButton<int>(
               tooltip: '切换分卷',
@@ -1964,8 +2031,11 @@ class _ChaptersPageState extends State<ChaptersPage> {
                     itemBuilder: (_, i) {
                       if (i == _chapters.length) return _footer();
                       final c = _chapters[i];
+                      final isCurrent = c.chapterId == widget.currentChapterId;
                       return Column(
-                        key: ValueKey('chapter-${c.chapterId}'),
+                        key: isCurrent
+                            ? _currentChapterKey
+                            : ValueKey('chapter-${c.chapterId}'),
                         children: [
                           ListTile(
                             selected: c.chapterId == widget.currentChapterId,

@@ -27,6 +27,9 @@ class SearchPage extends StatefulWidget {
 
 class _SearchPageState extends State<SearchPage> {
   final _controller = TextEditingController();
+  final _focus = FocusNode();
+  bool _hasFocus = false;
+  double _lastViewInset = 0;
   final List<dynamic> _items = [];
 
   /// 热门标签(tag_items):{title, jumpType, jumpValue}
@@ -70,6 +73,7 @@ class _SearchPageState extends State<SearchPage> {
   @override
   void initState() {
     super.initState();
+    _focus.addListener(_onFocusChanged);
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
     LKStore.braveBookRevision.addListener(_onHideBraveRev);
     _tag = widget.initialTag;
@@ -79,8 +83,23 @@ class _SearchPageState extends State<SearchPage> {
     }
   }
 
+  void _onFocusChanged() {
+    if (mounted && _hasFocus != _focus.hasFocus) {
+      setState(() => _hasFocus = _focus.hasFocus);
+    }
+  }
+
+  void _dismissKeyboard() {
+    if (_focus.hasFocus) {
+      _focus.unfocus();
+    }
+  }
+
   @override
   void dispose() {
+    _focus
+      ..removeListener(_onFocusChanged)
+      ..dispose();
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
     LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     _controller.dispose();
@@ -304,126 +323,174 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: MotionRefreshIndicator(
-        onRefresh: _refresh,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverAppBar(
-              floating: true,
-              pinned: false,
-              snap: false,
-              titleSpacing: 0,
-              title: Container(
-                constraints: const BoxConstraints(minHeight: 38),
-                margin: const EdgeInsets.only(right: 8),
-                child: Builder(builder: (context) {
-                  final scheme = Theme.of(context).colorScheme;
-                  final searchBorder = OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    borderSide: BorderSide.none,
-                  );
-                  return TextField(
-                    controller: _controller,
-                    autofocus: true,
-                    textInputAction: TextInputAction.search,
-                    onChanged: _onQueryChanged,
-                    onSubmitted: (_) => _search(0, false),
-                    style: const TextStyle(fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: '搜索书名 / 作者 / 标签',
-                      isDense: true,
-                      fillColor: scheme.surfaceContainerHigh,
-                      prefixIcon: const Icon(Icons.search_rounded, size: 19),
-                      border: searchBorder,
-                      enabledBorder: searchBorder,
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        borderSide:
-                            BorderSide(color: scheme.primary, width: 1.5),
-                      ),
-                    ),
-                  );
-                }),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => _search(0, false),
-                  child: const Text('搜索'),
-                ),
-              ],
-            ),
-            SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 排序
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                    child: Row(
-                      children: [
-                        _segBtn('相关', 'relevance'),
-                        const SizedBox(width: 8),
-                        _segBtn('最新', 'new'),
-                      ],
-                    ),
-                  ),
-                  // 分类
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    child: Row(
-                      children: [
-                        _chip('全部', _channel == null, () {
-                          setState(() => _channel = null);
-                          _search(0, false);
-                        }),
-                        for (final c in _channels)
-                          _chip(c['label']!, _channel == c['code'], () {
-                            setState(() {
-                              _channel = c['code'];
-                              _tag = null;
-                            });
+    final inset = MediaQuery.viewInsetsOf(context).bottom;
+    if (_lastViewInset > 0 && inset == 0 && _focus.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            _focus.hasFocus &&
+            MediaQuery.viewInsetsOf(context).bottom == 0) {
+          _focus.unfocus();
+        }
+      });
+    }
+    _lastViewInset = inset;
+    final inputActive = _hasFocus || inset > 0;
+    return PopScope(
+      canPop: !inputActive,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _dismissKeyboard();
+      },
+      child: Scaffold(
+        body: MotionRefreshIndicator(
+          onRefresh: _refresh,
+          child: CustomScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverAppBar(
+                floating: true,
+                pinned: false,
+                snap: false,
+                titleSpacing: 0,
+                title: Container(
+                  constraints: const BoxConstraints(minHeight: 38),
+                  margin: const EdgeInsets.only(right: 8),
+                  child: Builder(builder: (context) {
+                    final scheme = Theme.of(context).colorScheme;
+                    final searchBorder = OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: BorderSide.none,
+                    );
+                    return ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _controller,
+                      builder: (context, value, _) {
+                        return TextField(
+                          controller: _controller,
+                          focusNode: _focus,
+                          autofocus: widget.initialTag == null,
+                          textInputAction: TextInputAction.search,
+                          onChanged: _onQueryChanged,
+                          onSubmitted: (_) {
+                            _dismissKeyboard();
                             _search(0, false);
-                          }),
-                      ],
-                    ),
-                  ),
-                  // 标签(含最近更新)
-                  if (_tags.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: [
-                          _chip('全部标签', _tag == null, () {
-                            setState(() => _tag = null);
-                            _search(0, false);
-                          }, trailingPadding: false),
-                          for (final t in _tags)
-                            _chip(
-                              t['title']!,
-                              _tag == t['jumpValue'],
-                              () {
-                                setState(() {
-                                  _tag = t['jumpValue'];
-                                  _channel = null;
-                                });
-                                _search(0, false);
-                              },
-                              trailingPadding: false,
+                          },
+                          style: const TextStyle(fontSize: 14),
+                          decoration: InputDecoration(
+                            hintText: '搜索书名 / 作者 / 标签',
+                            isDense: true,
+                            fillColor: scheme.surfaceContainerHigh,
+                            prefixIcon:
+                                const Icon(Icons.search_rounded, size: 19),
+                            suffixIcon: value.text.isEmpty
+                                ? null
+                                : IconButton(
+                                    tooltip: '清空搜索',
+                                    icon: const Icon(Icons.close_rounded,
+                                        size: 18),
+                                    onPressed: () {
+                                      _controller.clear();
+                                      _onQueryChanged('');
+                                      _focus.requestFocus();
+                                    },
+                                  ),
+                            border: searchBorder,
+                            enabledBorder: searchBorder,
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              borderSide:
+                                  BorderSide(color: scheme.primary, width: 1.5),
                             ),
+                          ),
+                        );
+                      },
+                    );
+                  }),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      _dismissKeyboard();
+                      _search(0, false);
+                    },
+                    child: const Text('搜索'),
+                  ),
+                ],
+              ),
+              SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 排序
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                      child: Row(
+                        children: [
+                          _segBtn('相关', 'relevance'),
+                          const SizedBox(width: 8),
+                          _segBtn('最新', 'new'),
                         ],
                       ),
                     ),
-                ],
+                    // 分类
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      child: Row(
+                        children: [
+                          _chip('全部', _channel == null, () {
+                            _dismissKeyboard();
+                            setState(() => _channel = null);
+                            _search(0, false);
+                          }),
+                          for (final c in _channels)
+                            _chip(c['label']!, _channel == c['code'], () {
+                              _dismissKeyboard();
+                              setState(() {
+                                _channel = c['code'];
+                                _tag = null;
+                              });
+                              _search(0, false);
+                            }),
+                        ],
+                      ),
+                    ),
+                    // 标签(含最近更新)
+                    if (_tags.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          children: [
+                            _chip('全部标签', _tag == null, () {
+                              _dismissKeyboard();
+                              setState(() => _tag = null);
+                              _search(0, false);
+                            }, trailingPadding: false),
+                            for (final t in _tags)
+                              _chip(
+                                t['title']!,
+                                _tag == t['jumpValue'],
+                                () {
+                                  _dismissKeyboard();
+                                  setState(() {
+                                    _tag = t['jumpValue'];
+                                    _channel = null;
+                                  });
+                                  _search(0, false);
+                                },
+                                trailingPadding: false,
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
-            ..._resultSlivers(context),
-          ],
+              ..._resultSlivers(context),
+            ],
+          ),
         ),
       ),
     );
@@ -517,6 +584,7 @@ class _SearchPageState extends State<SearchPage> {
       label: label,
       selected: sel,
       onSelected: (_) {
+        _dismissKeyboard();
         setState(() => _sort = value);
         _search(0, false);
       },

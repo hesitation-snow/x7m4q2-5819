@@ -62,6 +62,9 @@ class _HomePageState extends State<HomePage> {
   late List<String> _channelOrder;
   late String _channelCode;
   late final PageController _channelPager;
+  final ValueNotifier<int> _homeScrollTop = ValueNotifier<int>(0);
+  final ValueNotifier<int> _shelfScrollTop = ValueNotifier<int>(0);
+  final ValueNotifier<int> _dynamicScrollTop = ValueNotifier<int>(0);
   bool _listMode = LKStore.feedListMode.value;
 
   @override
@@ -87,6 +90,9 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionRev);
     _channelPager.dispose();
+    _homeScrollTop.dispose();
+    _shelfScrollTop.dispose();
+    _dynamicScrollTop.dispose();
     _barFrac.dispose();
     super.dispose();
   }
@@ -128,6 +134,17 @@ class _HomePageState extends State<HomePage> {
   void _selectTab(int index) {
     if (index == _tab && _loadedTabs.contains(index)) {
       _barFrac.value = 1.0;
+      switch (index) {
+        case 0:
+          _homeScrollTop.value++;
+          break;
+        case 1:
+          _shelfScrollTop.value++;
+          break;
+        case 2:
+          _dynamicScrollTop.value++;
+          break;
+      }
       return;
     }
     setState(() {
@@ -159,7 +176,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _selectHomeChannel(String code) {
-    if (code == _channelCode) return;
+    if (code == _channelCode) {
+      _barFrac.value = 1.0;
+      _homeScrollTop.value++;
+      return;
+    }
     setState(() => _channelCode = code);
     _barFrac.value = 1.0;
     _moveChannelPagerTo(code);
@@ -222,6 +243,7 @@ class _HomePageState extends State<HomePage> {
                 channelCode: code,
                 path: homeChannelByCode(code).path,
                 listMode: _listMode,
+                scrollToTopTrigger: _homeScrollTop,
               ),
           ],
         ),
@@ -233,6 +255,7 @@ class _HomePageState extends State<HomePage> {
             channelCode: _channelCode,
             path: homeChannelByCode(_channelCode).path,
             listMode: _listMode,
+            scrollToTopTrigger: _homeScrollTop,
           ),
       ],
     );
@@ -242,8 +265,15 @@ class _HomePageState extends State<HomePage> {
     if (!_loadedTabs.contains(index)) return const SizedBox.shrink();
     return switch (index) {
       0 => _homeChannelBody(),
-      1 => ShelfPage(embedded: true, listMode: _listMode),
-      2 => const DynamicPage(embedded: true),
+      1 => ShelfPage(
+          embedded: true,
+          listMode: _listMode,
+          scrollToTopTrigger: _shelfScrollTop,
+        ),
+      2 => DynamicPage(
+          embedded: true,
+          scrollToTopTrigger: _dynamicScrollTop,
+        ),
       3 => MyTab(onOpenShelf: () => _selectTab(1)),
       _ => const SizedBox.shrink(),
     };
@@ -643,11 +673,13 @@ class FeedTab extends StatefulWidget {
   final String channelCode;
   final String path;
   final bool listMode;
+  final ValueListenable<int>? scrollToTopTrigger;
   const FeedTab(
       {super.key,
       required this.channelCode,
       required this.path,
-      required this.listMode});
+      required this.listMode,
+      this.scrollToTopTrigger});
 
   @override
   State<FeedTab> createState() => _FeedTabState();
@@ -689,9 +721,20 @@ class _FeedTabState extends State<FeedTab>
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
     LKStore.braveBookRevision.addListener(_onHideBraveRev);
     LKStore.gridColumnCount.addListener(_onGridColumnsChanged);
+    widget.scrollToTopTrigger?.addListener(_scrollToTop);
     if (_showRecommend) _loadRecommend();
     unawaited(_startLoad());
   }
+
+  void _scrollToTop() {
+    if (!_mountedAndCurrentTab) return;
+    final c = _listMode ? _listScrollController : _gridScrollController;
+    if (c.hasClients && c.offset > 0) {
+      unawaited(AppMotion.scrollTo(context, c, 0));
+    }
+  }
+
+  bool get _mountedAndCurrentTab => mounted && (TickerMode.valuesOf(context).enabled);
 
   @override
   void dispose() {
@@ -699,6 +742,7 @@ class _FeedTabState extends State<FeedTab>
     LKStore.hideBraveBooks.removeListener(_onHideBraveRev);
     LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     LKStore.gridColumnCount.removeListener(_onGridColumnsChanged);
+    widget.scrollToTopTrigger?.removeListener(_scrollToTop);
     _gridScrollController.dispose();
     _listScrollController.dispose();
     super.dispose();
@@ -886,6 +930,10 @@ class _FeedTabState extends State<FeedTab>
   @override
   void didUpdateWidget(FeedTab old) {
     super.didUpdateWidget(old);
+    if (old.scrollToTopTrigger != widget.scrollToTopTrigger) {
+      old.scrollToTopTrigger?.removeListener(_scrollToTop);
+      widget.scrollToTopTrigger?.addListener(_scrollToTop);
+    }
     if (old.channelCode != widget.channelCode || old.path != widget.path) {
       _requestSerial++;
       _items.clear();

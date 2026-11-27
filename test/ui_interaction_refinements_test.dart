@@ -124,7 +124,8 @@ void main() {
     );
     expect(find.text('回复 @评论者'), findsNothing);
 
-    // 4. First Back unfocuses text field; second Back pops the page.
+    // 4. With text draft present: first Back unfocuses text field;
+    //    second Back asks to discard draft, confirming pops the page.
     await tester.tap(find.byType(TextField));
     await tester.pump();
     expect(
@@ -140,6 +141,9 @@ void main() {
     );
 
     await nav.maybePop();
+    await tester.pumpAndSettle();
+    expect(find.text('放弃这条评论？'), findsOneWidget);
+    await tester.tap(find.text('放弃'));
     await tester.pumpAndSettle();
     expect(find.byType(CommentsPage), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());

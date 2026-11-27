@@ -36,6 +36,8 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
   final Map<int, TransformationController> _transforms = {};
   int _index = 0;
   bool _zoomed = false;
+  bool _showChrome = true;
+  double _dragOffsetY = 0;
   int _retry = 0;
 
   @override
@@ -62,6 +64,7 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
         _transforms.putIfAbsent(index, TransformationController.new);
     Offset tap = Offset.zero;
     return GestureDetector(
+      onTap: () => setState(() => _showChrome = !_showChrome),
       onDoubleTapDown: (details) => tap = details.localPosition,
       onDoubleTap: () {
         final zoom = controller.value.getMaxScaleOnAxis() > 1.01;
@@ -153,57 +156,108 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
   @override
   Widget build(BuildContext context) {
     final top = MediaQuery.paddingOf(context).top;
-    final bottom = MediaQuery.paddingOf(context).bottom;
+    final fadeDuration = AppMotion.duration(context, 180);
+    final dragProgress = (_dragOffsetY.abs() / 260).clamp(0.0, 1.0);
+    final bgAlpha = (1.0 - dragProgress * 0.55).clamp(0.25, 1.0);
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Colors.black.withValues(alpha: bgAlpha),
       body: Stack(
         children: [
           Positioned.fill(
-            child: PageView.builder(
-                controller: _pages,
-                itemCount: _urls.length,
-                physics: _zoomed ? const NeverScrollableScrollPhysics() : null,
-                onPageChanged: (index) => setState(() {
-                      for (final controller in _transforms.values) {
-                        controller.value = Matrix4.identity();
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onVerticalDragUpdate: _zoomed
+                  ? null
+                  : (details) => setState(
+                        () => _dragOffsetY += details.delta.dy,
+                      ),
+              onVerticalDragEnd: _zoomed
+                  ? null
+                  : (details) {
+                      final velocity = details.velocity.pixelsPerSecond.dy;
+                      if (_dragOffsetY.abs() > 110 || velocity.abs() > 700) {
+                        Navigator.pop(context);
+                      } else {
+                        setState(() => _dragOffsetY = 0);
                       }
-                      _index = index;
-                      _zoomed = false;
-                    }),
-                itemBuilder: (_, index) => _image(index)),
+                    },
+              onVerticalDragCancel: () {
+                if (_dragOffsetY != 0) setState(() => _dragOffsetY = 0);
+              },
+              child: Transform.translate(
+                offset: Offset(0, _dragOffsetY),
+                child: PageView.builder(
+                    controller: _pages,
+                    itemCount: _urls.length,
+                    physics:
+                        _zoomed ? const NeverScrollableScrollPhysics() : null,
+                    onPageChanged: (index) => setState(() {
+                          for (final controller in _transforms.values) {
+                            controller.value = Matrix4.identity();
+                          }
+                          _index = index;
+                          _zoomed = false;
+                        }),
+                    itemBuilder: (_, index) => _image(index)),
+              ),
+            ),
           ),
-          Positioned(
-              top: top + 20,
+          if (_urls.length > 1)
+            Positioned(
+              top: top + 18,
               left: 70,
               right: 70,
               child: IgnorePointer(
-                  child: Text('${_index + 1} / ${_urls.length}',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white70)))),
+                child: AnimatedOpacity(
+                  opacity: _showChrome ? 1 : 0,
+                  duration: fadeDuration,
+                  child: Text(
+                    '${_index + 1} / ${_urls.length}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ),
+              ),
+            ),
           Positioned(
             top: top + 4,
             left: 8,
-            child: IconButton(
-              tooltip: '关闭',
-              icon: const Icon(Icons.close_rounded, color: Colors.white),
-              onPressed: () => Navigator.pop(context),
+            child: IgnorePointer(
+              ignoring: !_showChrome,
+              child: AnimatedOpacity(
+                opacity: _showChrome ? 1 : 0,
+                duration: fadeDuration,
+                child: IconButton(
+                  tooltip: '关闭',
+                  icon: const Icon(Icons.close_rounded, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
             ),
           ),
           Positioned(
-            left: 24,
-            right: 24,
-            bottom: bottom + 20,
-            child: FilledButton.icon(
-              onPressed: _saving ? null : _save,
-              icon: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: MotionProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.download_rounded),
-              label: Text(_saving ? '保存中' : '保存到相册'),
+            top: top + 4,
+            right: 8,
+            child: IgnorePointer(
+              ignoring: !_showChrome,
+              child: AnimatedOpacity(
+                opacity: _showChrome ? 1 : 0,
+                duration: fadeDuration,
+                child: IconButton(
+                  tooltip: _saving ? '保存中' : '保存到相册',
+                  onPressed: _saving ? null : _save,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: MotionProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.download_rounded, color: Colors.white),
+                ),
+              ),
             ),
           ),
         ],

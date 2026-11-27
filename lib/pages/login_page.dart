@@ -31,7 +31,14 @@ class _LoginPageState extends State<LoginPage> {
     if (_busy) return;
     final u = _user.text.trim();
     final p = _pwd.text;
-    if (u.isEmpty || p.isEmpty) return;
+    if (u.isEmpty) {
+      showFloatingPrompt(context, '请输入登录邮箱');
+      return;
+    }
+    if (p.isEmpty) {
+      showFloatingPrompt(context, '请输入密码');
+      return;
+    }
     setState(() => _busy = true);
     try {
       await LKApi.login(u, p);
@@ -85,67 +92,83 @@ class _LoginPageState extends State<LoginPage> {
   Widget build(BuildContext context) {
     final s = LKClient.shared.session;
     final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: const Text('登录轻之国度')),
-      body: SafeArea(
-        top: false,
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: Card(
-                elevation: 0,
-                color: scheme.surfaceContainerLow,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20)),
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Center(
-                        child: Container(
-                          width: 64,
-                          height: 64,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: scheme.primaryContainer,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Icon(Icons.menu_book_outlined,
-                              size: 32, color: scheme.onPrimaryContainer),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      TextField(
-                        controller: _user,
-                        keyboardType: TextInputType.emailAddress,
-                        autofillHints: const [AutofillHints.email],
-                        decoration: const InputDecoration(
-                            labelText: '邮箱',
-                            prefixIcon: Icon(Icons.person_outline)),
-                      ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        controller: _pwd,
-                        obscureText: _obscurePwd,
-                        decoration: InputDecoration(
-                          labelText: '密码',
-                          prefixIcon: const Icon(Icons.lock_outline),
-                          suffixIcon: IconButton(
-                            tooltip: _obscurePwd ? '显示密码' : '隐藏密码',
-                            icon: Icon(_obscurePwd
-                                ? Icons.visibility_outlined
-                                : Icons.visibility_off_outlined),
-                            onPressed: () =>
-                                setState(() => _obscurePwd = !_obscurePwd),
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Scaffold(
+        appBar: AppBar(title: const Text('登录轻之国度')),
+        body: SafeArea(
+          top: false,
+          child: Center(
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Card(
+                  elevation: 0,
+                  color: scheme.surfaceContainerLow,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 64,
+                            height: 64,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: scheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Icon(Icons.menu_book_outlined,
+                                size: 32, color: scheme.onPrimaryContainer),
                           ),
                         ),
-                        onSubmitted: (_) => _login(),
-                      ),
-                      const SizedBox(height: 24),
+                        const SizedBox(height: 20),
+                        AutofillGroup(
+                          child: Column(
+                            children: [
+                              TextField(
+                                controller: _user,
+                                keyboardType: TextInputType.emailAddress,
+                                textInputAction: TextInputAction.next,
+                                autofillHints: const [
+                                  AutofillHints.email,
+                                  AutofillHints.username,
+                                ],
+                                decoration: const InputDecoration(
+                                    labelText: '邮箱',
+                                    prefixIcon: Icon(Icons.person_outline)),
+                              ),
+                              const SizedBox(height: 16),
+                              TextField(
+                                controller: _pwd,
+                                obscureText: _obscurePwd,
+                                textInputAction: TextInputAction.done,
+                                autofillHints: const [AutofillHints.password],
+                                decoration: InputDecoration(
+                                  labelText: '密码',
+                                  prefixIcon: const Icon(Icons.lock_outline),
+                                  suffixIcon: IconButton(
+                                    tooltip: _obscurePwd ? '显示密码' : '隐藏密码',
+                                    icon: Icon(_obscurePwd
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined),
+                                    onPressed: () => setState(
+                                        () => _obscurePwd = !_obscurePwd),
+                                  ),
+                                ),
+                                onSubmitted: (_) => _login(),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 24),
                       FilledButton(
                         onPressed: _busy ? null : _login,
                         child: _busy
@@ -194,6 +217,7 @@ class _LoginPageState extends State<LoginPage> {
             ),
           ),
         ),
+      ),
       ),
     );
   }

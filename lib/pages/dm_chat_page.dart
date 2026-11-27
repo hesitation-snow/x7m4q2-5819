@@ -8,6 +8,7 @@ import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../widgets/common.dart';
 import '../widgets/content_state_view.dart';
+import 'user_profile_page.dart';
 
 /// 私信聊天
 class DMChatPage extends StatelessWidget {
@@ -34,6 +35,7 @@ class _DMChatPageState extends State<_DMChatPageBody> {
   List<dynamic> _messages = [];
   final _input = TextEditingController();
   final _focus = FocusNode();
+  final _scroll = ScrollController();
   bool _hasFocus = false;
   double _lastViewInset = 0;
   final _session = SessionStamp();
@@ -70,6 +72,7 @@ class _DMChatPageState extends State<_DMChatPageBody> {
     _focus
       ..removeListener(_onFocusChanged)
       ..dispose();
+    _scroll.dispose();
     _input.dispose();
     super.dispose();
   }
@@ -154,6 +157,13 @@ class _DMChatPageState extends State<_DMChatPageBody> {
       if (!mounted || !_session.isCurrent) return;
       if (_input.text == draft) _input.clear();
       await _load();
+      if (mounted && _session.isCurrent) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _scroll.hasClients && _scroll.offset > 0) {
+            unawaited(AppMotion.scrollTo(context, _scroll, 0));
+          }
+        });
+      }
     } catch (e) {
       if (mounted && _session.isCurrent) showLkError(context, e);
     } finally {
@@ -188,8 +198,22 @@ class _DMChatPageState extends State<_DMChatPageBody> {
       },
       child: Scaffold(
         backgroundColor: scheme.surfaceContainerLowest,
-        appBar:
-            AppBar(title: Text(widget.peerName.isEmpty ? '私信' : widget.peerName)),
+        appBar: AppBar(
+          title: GestureDetector(
+            onTap: widget.peerUid > 0
+                ? () => openUserProfile(context, widget.peerUid)
+                : null,
+            child: Text(widget.peerName.isEmpty ? '私信' : widget.peerName),
+          ),
+          actions: [
+            if (widget.peerUid > 0)
+              IconButton(
+                tooltip: '查看主页',
+                icon: const Icon(Icons.person_outline_rounded),
+                onPressed: () => openUserProfile(context, widget.peerUid),
+              ),
+          ],
+        ),
         body: Column(children: [
           Expanded(
             child: Stack(
@@ -203,7 +227,7 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                           )
                         : NotificationListener<ScrollNotification>(
                             onNotification: (n) {
-                              if (n.metrics.extentBefore < 80 &&
+                              if (n.metrics.extentAfter < 80 &&
                                   _hasMore &&
                                   !_loadingMore &&
                                   !_loading &&
@@ -215,11 +239,13 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                             child: MotionRefreshIndicator(
                               onRefresh: _load,
                               child: ListView.builder(
+                                controller: _scroll,
+                                reverse: true,
                                 physics: const AlwaysScrollableScrollPhysics(),
                                 padding: const EdgeInsets.all(12),
                                 itemCount: totalCount,
                                 itemBuilder: (_, i) {
-                                  if (showTopLoader && i == 0) {
+                                  if (showTopLoader && i == _messages.length) {
                                     return Center(
                                       child: Padding(
                                         padding: const EdgeInsets.symmetric(
@@ -242,7 +268,7 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                                       ),
                                     );
                                   }
-                                  final actualIndex = showTopLoader ? i - 1 : i;
+                                  final actualIndex = _messages.length - 1 - i;
                                   final m = _messages[actualIndex];
                                   final mine = m.isMine(myUid);
                                   return Align(

@@ -231,7 +231,7 @@ void main() {
       );
 
       // Close the listening sheet so we can double-tap a different line below center.
-      await tester.tap(find.byTooltip('关闭朗读'));
+      await tester.tap(find.byTooltip('收起面板'));
       await tester.pumpAndSettle();
 
       final tappedBlockIndex = secondBlockIndex + 3;
@@ -412,7 +412,7 @@ void main() {
       await tester.tap(find.byTooltip('从当前位置朗读'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('关闭朗读'));
+      await tester.tap(find.byTooltip('收起面板'));
       await tester.pumpAndSettle();
 
       final firstMatch = RegExp(r'段落编号(\d+)：').firstMatch(spokenTexts.last);

@@ -468,15 +468,6 @@ class ListeningMenu extends StatelessWidget {
                                         : null,
                                 icon: const Icon(Icons.skip_next_rounded),
                               ),
-                              const SizedBox(width: 8),
-                              IconButton.filledTonal(
-                                tooltip: '停止',
-                                onPressed: () {
-                                  Navigator.pop(context);
-                                  unawaited(now.stop());
-                                },
-                                icon: const Icon(Icons.stop_rounded),
-                              ),
                             ],
                           ),
                           const SizedBox(height: 16),

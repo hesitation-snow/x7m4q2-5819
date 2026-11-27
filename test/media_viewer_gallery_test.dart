@@ -7,7 +7,7 @@ void main() {
       (tester) async {
     await tester.pumpWidget(const MaterialApp(
         home: MediaViewerPage(url: 'https://example.invalid/one.png')));
-    expect(find.text('1 / 1'), findsOneWidget);
+    expect(find.text('1 / 1'), findsNothing);
     final detector = tester.widget<GestureDetector>(find.byWidgetPredicate(
         (w) => w is GestureDetector && w.onDoubleTap != null));
     detector.onDoubleTapDown!(

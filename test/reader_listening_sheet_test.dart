@@ -154,7 +154,7 @@ void main() {
       await tester.drag(find.byKey(const ValueKey('listening-settings-scroll')),
           const Offset(0, -900));
       await tester.pumpAndSettle();
-      expect(find.byTooltip('关闭朗读').hitTestable(), findsOneWidget);
+      expect(find.byTooltip('收起面板').hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }
