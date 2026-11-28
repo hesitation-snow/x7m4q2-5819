@@ -943,6 +943,7 @@ class _FeedTabState extends State<FeedTab>
         _error = null;
         _loadMoreError = null;
         _loading = false;
+        _refreshing = true;
       });
     }
     await networkFuture;
@@ -983,6 +984,7 @@ class _FeedTabState extends State<FeedTab>
 
     var networkResolved = false;
     final networkFuture = LKApi.homeRecommend(pageSize: 8);
+    unawaited(networkFuture.catchError((Object _) => const <LKBook>[]));
     final prefsFuture = SharedPreferences.getInstance();
 
     try {
@@ -2259,8 +2261,9 @@ class _MyTabState extends State<MyTab> {
   @override
   void initState() {
     super.initState();
-    // 登录/登出后刷新用户卡片
+    // 登录/登出及账号资料更新后刷新用户卡片
     LKClient.sessionRev.addListener(_onRev);
+    LKClient.profileRefreshRev.addListener(_onRev);
     LKClient.followChanged.addListener(_onFollowChanged);
     _reloadProfile();
   }
@@ -2268,6 +2271,7 @@ class _MyTabState extends State<MyTab> {
   @override
   void dispose() {
     LKClient.sessionRev.removeListener(_onRev);
+    LKClient.profileRefreshRev.removeListener(_onRev);
     LKClient.followChanged.removeListener(_onFollowChanged);
     super.dispose();
   }

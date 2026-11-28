@@ -54,14 +54,27 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
     setState(() => _loggingIn = true);
+    final session = LKApi.client.session;
+    final prevKey = session.securityKey;
+    final prevUid = session.uid;
+    final prevNickname = session.nickname;
+    final prevAvatar = session.avatar;
     var authenticated = false;
     try {
-      await LKApi.login(u, p);
+      await LKApi.login(u, p, notifySessionChange: false);
       authenticated = true;
       await LKStore.save();
+      LKClient.sessionRev.value++;
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
+      if (authenticated) {
+        session
+          ..securityKey = prevKey
+          ..uid = prevUid
+          ..nickname = prevNickname
+          ..avatar = prevAvatar;
+      }
       if (mounted) {
         if (authenticated) {
           showLkError(context, '登录成功但本地保存失败，请检查设备存储后重试');

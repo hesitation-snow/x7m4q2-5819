@@ -105,10 +105,15 @@ class _MedalCenterPageState extends State<_MedalCenterPageBody> {
         }
       });
     }
+    var networkSettled = false;
     final networkFuture = LKApi.myMedals();
     if (_medals.isEmpty) {
       unawaited(LKStore.cachedMedals(uid).then((cached) {
-        if (!mounted || !current() || cached == null || _medals.isNotEmpty) {
+        if (!mounted ||
+            !current() ||
+            networkSettled ||
+            cached == null ||
+            _medals.isNotEmpty) {
           return;
         }
         setState(() {
@@ -125,6 +130,7 @@ class _MedalCenterPageState extends State<_MedalCenterPageBody> {
     }
     try {
       final medals = await networkFuture;
+      networkSettled = true;
       if (!mounted || !current()) return;
       _writeMemorySnapshot(medals);
       setState(() {
@@ -137,6 +143,7 @@ class _MedalCenterPageState extends State<_MedalCenterPageBody> {
       YomiruMedalCache.precache(
           context, medals.map((medal) => _imageUrl(medal.image)));
     } catch (e) {
+      networkSettled = true;
       if (mounted && current()) {
         final hasExisting = _medals.isNotEmpty;
         setState(() {

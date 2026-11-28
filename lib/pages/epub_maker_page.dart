@@ -177,6 +177,22 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
     }
   }
 
+  Future<void> _retryFailedTask(EpubDownloadTask task) async {
+    if (_starting) return;
+    _starting = true;
+    try {
+      await _service.startTask(
+        book: widget.book,
+        selectedVolumes: task.selectedVolumes,
+        options: task.options,
+      );
+    } catch (e) {
+      if (mounted) showLkError(context, e);
+    } finally {
+      _starting = false;
+    }
+  }
+
   Future<void> _confirmCancel() async {
     if (_cancelDialogOpen) return;
     _cancelDialogOpen = true;
@@ -374,16 +390,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                 ),
                 if (task.selectedVolumes.isNotEmpty)
                   FilledButton(
-                    onPressed: () async {
-                      final volumes = task.selectedVolumes;
-                      final options = task.options;
-                      _service.currentTask.value = null;
-                      await _service.startTask(
-                        book: widget.book,
-                        selectedVolumes: volumes,
-                        options: options,
-                      );
-                    },
+                    onPressed: () => _retryFailedTask(task),
                     child: const Text('重试'),
                   ),
               ],

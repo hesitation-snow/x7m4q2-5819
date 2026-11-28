@@ -349,6 +349,7 @@ class _DynamicPageState extends State<DynamicPage> {
         _page = 1;
         _hasMore = true;
         _loading = false;
+        _refreshing = true;
         _error = null;
         _rebuildVisibleItems();
       });

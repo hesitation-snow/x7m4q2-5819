@@ -3,7 +3,7 @@ import Flutter
 import UIKit
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var documentPickerDelegate: DocumentPickerDelegate?
   private var ttsHandler: ReaderTtsHandler?
 
@@ -11,9 +11,14 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
 
-    if let registrar = self.registrar(forPlugin: "YomiruEpubExport") {
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    let registry = engineBridge.pluginRegistry
+    GeneratedPluginRegistrant.register(with: registry)
+
+    if let registrar = registry.registrar(forPlugin: "YomiruEpubExport") {
       let epubChannel = FlutterMethodChannel(
         name: "moe.yutro.yomiru/epub_export",
         binaryMessenger: registrar.messenger()
@@ -62,7 +67,7 @@ import UIKit
       }
     }
 
-    if let registrar = self.registrar(forPlugin: "YomiruTts") {
+    if let registrar = registry.registrar(forPlugin: "YomiruTts") {
       let ttsChannel = FlutterMethodChannel(
         name: "moe.yutro.yomiru/tts",
         binaryMessenger: registrar.messenger()
@@ -77,8 +82,6 @@ import UIKit
         handler.handle(call, result: result)
       }
     }
-
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   private func topViewController() -> UIViewController? {
@@ -238,6 +241,7 @@ private final class ReaderTtsHandler: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     stopLiveSynthesizer()
+    configureAudioSessionForLiveSpeech()
 
     let utterance = AVSpeechUtterance(string: text)
     utterance.voice = resolveVoice(locale: nil, voiceId: nil)
@@ -278,16 +282,29 @@ private final class ReaderTtsHandler: NSObject, AVSpeechSynthesizerDelegate {
       rate = selectedRate
     }
 
-    let tempRoot = FileManager.default.temporaryDirectory
-      .resolvingSymlinksInPath()
-      .standardizedFileURL
-      .path
-    let tempPrefix = tempRoot.hasSuffix("/") ? tempRoot : tempRoot + "/"
+    var allowedRoots: [String] = [
+      FileManager.default.temporaryDirectory
+        .resolvingSymlinksInPath()
+        .standardizedFileURL
+        .path
+    ]
+    if let cachesUrl = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+      allowedRoots.append(
+        cachesUrl
+          .resolvingSymlinksInPath()
+          .standardizedFileURL
+          .path
+      )
+    }
     let resolvedTargetUrl = URL(fileURLWithPath: rawPath)
       .resolvingSymlinksInPath()
       .standardizedFileURL
     let resolvedTargetPath = resolvedTargetUrl.path
-    guard resolvedTargetPath.hasPrefix(tempPrefix) && resolvedTargetPath != tempRoot else {
+    let isAllowedPath = allowedRoots.contains { root in
+      let prefix = root.hasSuffix("/") ? root : root + "/"
+      return resolvedTargetPath.hasPrefix(prefix) && resolvedTargetPath != root
+    }
+    guard isAllowedPath else {
       result(
         FlutterError(
           code: "INVALID_ARGUMENT",
@@ -336,12 +353,24 @@ private final class ReaderTtsHandler: NSObject, AVSpeechSynthesizerDelegate {
     stopLiveSynthesizer()
   }
 
+  private func configureAudioSessionForLiveSpeech() {
+    do {
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+      try session.setActive(true)
+    } catch {
+      // Ignore session activation failures on simulator or restricted states.
+    }
+  }
+
   private func stopLiveSynthesizer() {
     let previousId = activeLiveUtteranceId
     activeLiveUtteranceId = nil
-    if liveSynthesizer.isSpeaking || liveSynthesizer.isPaused {
+    let wasActive = liveSynthesizer.isSpeaking || liveSynthesizer.isPaused
+    if wasActive || previousId != nil {
       liveSynthesizer.stopSpeaking(at: .immediate)
-    } else if let id = previousId {
+    }
+    if !wasActive, let id = previousId {
       utteranceIds = utteranceIds.filter { $0.value != id }
       sendEvent("onStopped", arguments: ["utteranceId": id])
     }
@@ -430,24 +459,29 @@ private final class ReaderTtsHandler: NSObject, AVSpeechSynthesizerDelegate {
     return nil
   }
 
-  private func sendEvent(_ method: String, arguments: [String: Any]) {
+  private func runOnMain(_ work: @escaping () -> Void) {
     if Thread.isMainThread {
-      channel.invokeMethod(method, arguments: arguments)
+      work()
     } else {
-      DispatchQueue.main.async { [weak self] in
-        self?.channel.invokeMethod(method, arguments: arguments)
-      }
+      DispatchQueue.main.async(execute: work)
+    }
+  }
+
+  private func sendEvent(_ method: String, arguments: [String: Any]) {
+    runOnMain { [weak self] in
+      self?.channel.invokeMethod(method, arguments: arguments)
     }
   }
 
   // MARK: - AVSpeechSynthesizerDelegate (Live Playback)
 
   func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-    guard synthesizer === liveSynthesizer,
-          let id = utteranceIds[ObjectIdentifier(utterance)] else {
-      return
+    guard synthesizer === liveSynthesizer else { return }
+    let key = ObjectIdentifier(utterance)
+    runOnMain { [weak self] in
+      guard let self = self, let id = self.utteranceIds[key] else { return }
+      self.sendEvent("onStart", arguments: ["utteranceId": id])
     }
-    sendEvent("onStart", arguments: ["utteranceId": id])
   }
 
   func speechSynthesizer(
@@ -455,40 +489,49 @@ private final class ReaderTtsHandler: NSObject, AVSpeechSynthesizerDelegate {
     willSpeakRangeOfSpeechString characterRange: NSRange,
     utterance: AVSpeechUtterance
   ) {
-    guard synthesizer === liveSynthesizer,
-          let id = utteranceIds[ObjectIdentifier(utterance)] else {
-      return
+    guard synthesizer === liveSynthesizer else { return }
+    let key = ObjectIdentifier(utterance)
+    runOnMain { [weak self] in
+      guard let self = self, let id = self.utteranceIds[key] else { return }
+      self.sendEvent(
+        "onProgress",
+        arguments: [
+          "utteranceId": id,
+          "start": characterRange.location,
+          "end": characterRange.location + characterRange.length,
+        ]
+      )
     }
-    sendEvent(
-      "onProgress",
-      arguments: [
-        "utteranceId": id,
-        "start": characterRange.location,
-        "end": characterRange.location + characterRange.length,
-      ]
-    )
   }
 
   func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-    guard synthesizer === liveSynthesizer,
-          let id = utteranceIds.removeValue(forKey: ObjectIdentifier(utterance)) else {
-      return
+    guard synthesizer === liveSynthesizer else { return }
+    let key = ObjectIdentifier(utterance)
+    runOnMain { [weak self] in
+      guard let self = self,
+            let id = self.utteranceIds.removeValue(forKey: key) else {
+        return
+      }
+      if self.activeLiveUtteranceId == id {
+        self.activeLiveUtteranceId = nil
+      }
+      self.sendEvent("onComplete", arguments: ["utteranceId": id])
     }
-    if activeLiveUtteranceId == id {
-      activeLiveUtteranceId = nil
-    }
-    sendEvent("onComplete", arguments: ["utteranceId": id])
   }
 
   func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-    guard synthesizer === liveSynthesizer,
-          let id = utteranceIds.removeValue(forKey: ObjectIdentifier(utterance)) else {
-      return
+    guard synthesizer === liveSynthesizer else { return }
+    let key = ObjectIdentifier(utterance)
+    runOnMain { [weak self] in
+      guard let self = self,
+            let id = self.utteranceIds.removeValue(forKey: key) else {
+        return
+      }
+      if self.activeLiveUtteranceId == id {
+        self.activeLiveUtteranceId = nil
+      }
+      self.sendEvent("onStopped", arguments: ["utteranceId": id])
     }
-    if activeLiveUtteranceId == id {
-      activeLiveUtteranceId = nil
-    }
-    sendEvent("onStopped", arguments: ["utteranceId": id])
   }
 }
 
@@ -558,8 +601,8 @@ private final class FileSynthesisJob: NSObject, AVSpeechSynthesizerDelegate {
   }
 
   func cancel() {
-    queue.async { [weak self] in
-      guard let self = self, !self.finished else { return }
+    queue.async {
+      guard !self.finished else { return }
       self.synthesizer.stopSpeaking(at: .immediate)
       self.finishFailure(code: "TTS_STOPPED", message: "Synthesis stopped")
     }

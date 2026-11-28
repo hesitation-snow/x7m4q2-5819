@@ -59,6 +59,9 @@ class LKClient {
   /// 登录态版本号:登录/登出/会话变更时自增,UI 监听刷新(如"我的"页用户卡片)
   static final ValueNotifier<int> sessionRev = ValueNotifier<int>(0);
 
+  /// 同账号资料字段变更通知（如勇者答题通过），仅触发“我的”资料卡刷新，不中断阅读/听书/下载任务。
+  static final ValueNotifier<int> profileRefreshRev = ValueNotifier<int>(0);
+
   /// 会话被服务端判定失效后的全局通知，由应用根节点负责提示用户。
   static final ValueNotifier<int> sessionExpiredRev = ValueNotifier<int>(0);
   static Future<void> Function()? sessionExpiredHandler;

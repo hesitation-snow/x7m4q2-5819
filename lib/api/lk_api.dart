@@ -37,7 +37,8 @@ class LKApi {
 
   // ==================== 鉴权 ====================
 
-  static Future<void> login(String username, String password) async {
+  static Future<void> login(String username, String password,
+      {bool notifySessionChange = true}) async {
     final d = await client.post('/api/bff/auth-password-login-v1', {
       'username': username,
       'password': password,
@@ -56,7 +57,7 @@ class LKApi {
     client.session
       ..nickname = (u['nickname'] as String?) ?? ''
       ..avatar = (u['avatar'] as String?) ?? '';
-    LKClient.sessionRev.value++;
+    if (notifySessionChange) LKClient.sessionRev.value++;
   }
 
   static Future<bool> validateSession() async {
@@ -1243,7 +1244,6 @@ class LKApi {
   static Future<void> toggleFollow(int uid, bool follow) async {
     final viewerUid = client.session.uid;
     final key = client.session.securityKey;
-    final uid = client.session.uid;
     await client.post('/api/bff/toggle-user-follow-v1',
         client.authed({'uid': uid, 'act': follow ? 'follow' : 'unfollow'}));
     await Future.wait([

@@ -103,7 +103,8 @@ class _FollowListPageState extends State<_FollowListPageBody>
           context, result.items.map((item) => item.avatar));
       setState(() {
         if (reset) {
-          _followOverrides.removeWhere((_, v) => v == true);
+          _followOverrides
+              .removeWhere((uid, _) => !_followActionUids.contains(uid));
           _changedUsers.clear();
           _following.clear();
         }
@@ -173,7 +174,11 @@ class _FollowListPageState extends State<_FollowListPageBody>
       YomiruAvatarCache.precache(
           context, result.items.map((item) => item.avatar));
       setState(() {
-        if (reset) _followers.clear();
+        if (reset) {
+          _followOverrides
+              .removeWhere((uid, _) => !_followActionUids.contains(uid));
+          _followers.clear();
+        }
         _appendUnique(
             _followers,
             result.items

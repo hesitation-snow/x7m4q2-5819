@@ -181,8 +181,8 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
         _result = result;
         _submitting = false;
       });
-      // 通过考试后刷新“我的”资料卡上的勇者标识。
-      if (_resultPassed(result)) LKClient.sessionRev.value++;
+      // 通过考试后刷新“我的”资料卡上的勇者标识，不触发 sessionRev 以免清空成绩页或中断听书。
+      if (_resultPassed(result)) LKClient.profileRefreshRev.value++;
     } catch (e) {
       if (mounted && session.isCurrent) {
         setState(() => _submitting = false);

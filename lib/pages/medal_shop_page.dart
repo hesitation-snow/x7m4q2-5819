@@ -210,10 +210,13 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
         _refreshing = true;
       }
     });
+    var networkSettled = false;
     final networkFuture = LKApi.medalCenter();
     if (_data == null) {
       unawaited(_readDiskSnapshot(uid, allMedals).then((cached) {
-        if (!current() || cached == null || _data != null) return;
+        if (!current() || networkSettled || cached == null || _data != null) {
+          return;
+        }
         setState(() {
           _applyShopData(cached);
           _loading = false;
@@ -227,6 +230,7 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
     }
     try {
       final data = await networkFuture;
+      networkSettled = true;
       if (!mounted || !current()) return;
       _writeMemorySnapshot(uid, allMedals, data);
       setState(() {
@@ -240,6 +244,7 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
         if (mounted && _session.isCurrent) _precacheMedalImages();
       });
     } catch (e) {
+      networkSettled = true;
       if (mounted && current()) {
         final hasExisting = _data != null;
         setState(() {
