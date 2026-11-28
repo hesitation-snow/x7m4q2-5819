@@ -16,10 +16,12 @@ import '../api/models.dart';
 import '../services/avatar_cache.dart';
 import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import '../widgets/emoji_panel.dart';
 import '../widgets/emoji_text.dart';
 import '../widgets/m3_controls.dart';
 import '../widgets/m3_menu_sheet.dart';
+import '../widgets/scrollable_status.dart';
 import 'media_viewer_page.dart';
 import 'user_profile_page.dart';
 
@@ -57,6 +59,8 @@ class _CommentsPageState extends State<CommentsPage> {
   String _cursor = '';
   bool _hasMore = true;
   int _loadSerial = 0;
+  int _dynamicDetailSerial = 0;
+  bool _refreshing = false;
   final _input = TextEditingController();
   final _inputBarKey = GlobalKey<_CommentsInputBarState>();
   bool _inputActive = false;
@@ -68,11 +72,13 @@ class _CommentsPageState extends State<CommentsPage> {
       _input.text.trim().isNotEmpty || _pendingMedia.isNotEmpty;
 
   /// 表情包(code → 图片地址),评论渲染与表情面板共用
-  final Map<String, String> _emojiUrl = {};
-  List<LKEmojiGroup> _emojiGroups = [];
+  final Map<String, String> _emojiUrl =
+      Map<String, String>.from(YomiruEmojiCatalog.urls);
+  List<LKEmojiGroup> _emojiGroups = YomiruEmojiCatalog.groups;
   final _picker = ImagePicker();
   final List<LKDynamicMedia> _pendingMedia = [];
   LKDynamicItem? _dynamicDetail;
+  String? _dynamicDetailError;
   bool _uploadingImage = false;
   bool _publishing = false;
   final _liking = <int>{};
@@ -110,6 +116,7 @@ class _CommentsPageState extends State<CommentsPage> {
   void _onSessionChanged() {
     if (!mounted) return;
     _loadSerial++;
+    _dynamicDetailSerial++;
     _input.clear();
     setState(() {
       _page = 0;
@@ -117,9 +124,13 @@ class _CommentsPageState extends State<CommentsPage> {
       _hasMore = true;
       _loading = true;
       _loadingMore = false;
+      _refreshing = false;
       _error = null;
       _loadMoreError = null;
       _dynamicDetail = null;
+      _dynamicDetailError = null;
+      _togglingDynamicLike = false;
+      _togglingDynamicFav = false;
       _selectedPollOptions.clear();
       _pollSubmitting = false;
       _publishing = false;
@@ -220,6 +231,7 @@ class _CommentsPageState extends State<CommentsPage> {
         _loadingReplies.clear();
         _loadingMore = false;
         _loading = _comments.isEmpty;
+        _refreshing = _comments.isNotEmpty;
         _error = null;
         _loadMoreError = null;
       } else {
@@ -258,31 +270,39 @@ class _CommentsPageState extends State<CommentsPage> {
       });
     } catch (e) {
       if (mounted && requestSerial == _loadSerial) {
-        setState(() {
-          if (reset && _comments.isEmpty) {
-            _error = e.toString();
-          } else {
-            _loadMoreError = e.toString();
-          }
-        });
+        if (reset && _comments.isEmpty) {
+          setState(() => _error = e.toString());
+        } else if (reset) {
+          showLkError(context, e);
+        } else {
+          setState(() => _loadMoreError = e.toString());
+        }
       }
     } finally {
       if (mounted && requestSerial == _loadSerial) {
         setState(() {
           _loading = false;
           _loadingMore = false;
+          _refreshing = false;
         });
       }
     }
   }
 
   Future<void> _loadDynamicDetail() async {
+    final serial = ++_dynamicDetailSerial;
     final session = SessionStamp();
+    if (mounted && _dynamicDetailError != null) {
+      setState(() => _dynamicDetailError = null);
+    }
     try {
       final detail = await LKApi.dynamicDetail(widget.dynamicId);
-      if (!mounted || !session.isCurrent) return;
+      if (!mounted || !session.isCurrent || serial != _dynamicDetailSerial) {
+        return;
+      }
       setState(() {
         _dynamicDetail = detail;
+        _dynamicDetailError = null;
         _selectedPollOptions
           ..clear()
           ..addAll(detail.poll?.options
@@ -290,9 +310,15 @@ class _CommentsPageState extends State<CommentsPage> {
                   .map((option) => option.id) ??
               const []);
       });
-      await LKApi.markDynamicRead(dynamicId: widget.dynamicId);
+      unawaited(
+          LKApi.markDynamicRead(dynamicId: widget.dynamicId).catchError((_) {}));
     } catch (_) {
-      // 详情失败时仍保留信息流传入的预览内容。
+      if (!mounted || !session.isCurrent || serial != _dynamicDetailSerial) {
+        return;
+      }
+      if (_dynamicDetail == null && widget.dynamicPreview == null) {
+        setState(() => _dynamicDetailError = '动态加载失败，点击重试');
+      }
     }
   }
 
@@ -600,6 +626,15 @@ class _CommentsPageState extends State<CommentsPage> {
   Widget _dynamicHeader() {
     final item = _dynamicDetail ?? widget.dynamicPreview;
     if (item == null) {
+      if (_dynamicDetailError != null) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: ContentStateView(
+            message: _dynamicDetailError!,
+            onRetry: _loadDynamicDetail,
+          ),
+        );
+      }
       return const Padding(
         padding: EdgeInsets.all(16),
         child: LkLoadingIndicator(minHeight: 180),
@@ -756,12 +791,13 @@ class _CommentsPageState extends State<CommentsPage> {
 
   Future<void> _toggleDynamicLike(LKDynamicItem item) async {
     if (_togglingDynamicLike || item.dynamicId <= 0) return;
+    final session = SessionStamp();
     final nextLiked = !item.liked;
     final delta = nextLiked ? 1 : -1;
     setState(() => _togglingDynamicLike = true);
     try {
       await LKApi.toggleDynamicLike(item.dynamicId, nextLiked);
-      if (!mounted) return;
+      if (!mounted || !session.isCurrent) return;
       setState(() {
         _dynamicDetail = item.copyWith(
           liked: nextLiked,
@@ -770,19 +806,24 @@ class _CommentsPageState extends State<CommentsPage> {
         );
       });
     } catch (_) {
-      if (mounted) showLkError(context, '点赞操作失败，请重试');
+      if (mounted && session.isCurrent) {
+        showLkError(context, '点赞操作失败，请重试');
+      }
     } finally {
-      if (mounted) setState(() => _togglingDynamicLike = false);
+      if (mounted && session.isCurrent) {
+        setState(() => _togglingDynamicLike = false);
+      }
     }
   }
 
   Future<void> _toggleDynamicFavorite(LKDynamicItem item) async {
     if (_togglingDynamicFav || item.dynamicId <= 0) return;
+    final session = SessionStamp();
     final nextFav = !item.favorited;
     setState(() => _togglingDynamicFav = true);
     try {
       await LKApi.toggleDynamicFavorite(item.dynamicId, nextFav);
-      if (!mounted) return;
+      if (!mounted || !session.isCurrent) return;
       setState(() {
         _dynamicDetail = LKDynamicItem(
           dynamicId: item.dynamicId,
@@ -814,9 +855,13 @@ class _CommentsPageState extends State<CommentsPage> {
       });
       showFloatingPrompt(context, nextFav ? '已收藏动态' : '已取消收藏');
     } catch (_) {
-      if (mounted) showLkError(context, '收藏操作失败，请重试');
+      if (mounted && session.isCurrent) {
+        showLkError(context, '收藏操作失败，请重试');
+      }
     } finally {
-      if (mounted) setState(() => _togglingDynamicFav = false);
+      if (mounted && session.isCurrent) {
+        setState(() => _togglingDynamicFav = false);
+      }
     }
   }
 
@@ -916,22 +961,27 @@ class _CommentsPageState extends State<CommentsPage> {
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton.tonal(
-                  onPressed: _pollSubmitting || _selectedPollOptions.isEmpty
-                      ? null
-                      : () async {
-                          setState(() => _pollSubmitting = true);
-                          try {
-                            await LKApi.submitDynamicPollVote(widget.dynamicId,
-                                _selectedPollOptions.toList());
-                            await _loadDynamicDetail();
-                          } catch (e) {
-                            if (mounted) showLkError(context, e);
-                          } finally {
-                            if (mounted) {
-                              setState(() => _pollSubmitting = false);
-                            }
-                          }
-                        },
+                      onPressed: _pollSubmitting || _selectedPollOptions.isEmpty
+                          ? null
+                          : () async {
+                              final session = SessionStamp();
+                              setState(() => _pollSubmitting = true);
+                              try {
+                                await LKApi.submitDynamicPollVote(
+                                    widget.dynamicId,
+                                    _selectedPollOptions.toList());
+                                if (!mounted || !session.isCurrent) return;
+                                await _loadDynamicDetail();
+                              } catch (e) {
+                                if (mounted && session.isCurrent) {
+                                  showLkError(context, e);
+                                }
+                              } finally {
+                                if (mounted && session.isCurrent) {
+                                  setState(() => _pollSubmitting = false);
+                                }
+                              }
+                            },
                   child: Text(_pollSubmitting ? '提交中' : '投票'),
                 ),
               ),
@@ -1336,52 +1386,90 @@ class _CommentsPageState extends State<CommentsPage> {
         Expanded(
           child: Stack(
             children: [
-              _loading
-                  ? const LkLoadingIndicator()
+              _loading && !(_isDynamic && widget.dynamicPreview != null)
+                  ? MotionRefreshIndicator(
+                      onRefresh: () => Future.wait([
+                        _load(),
+                        if (_isDynamic) _loadDynamicDetail(),
+                      ]),
+                      child: const ScrollableStatus(child: LkLoadingIndicator()),
+                    )
                   : MotionRefreshIndicator(
-                      onRefresh: () => _load(),
-                      child: NotificationListener<ScrollNotification>(
-                        onNotification: _onCommentScroll,
-                        child: ListView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.only(bottom: 12),
-                          itemCount: (_isDynamic ? 1 : 0) +
-                              (_comments.isEmpty ? 1 : _comments.length) +
-                              (_hasMore ||
-                                      _loadingMore ||
-                                      _loadMoreError != null
-                                  ? 1
-                                  : 0),
-                          itemBuilder: (_, i) {
-                            if (_isDynamic && i == 0) return _dynamicHeader();
-                            final contentIndex = i - (_isDynamic ? 1 : 0);
-                            if (_comments.isEmpty && contentIndex == 0) {
-                              return SizedBox(
-                                height: 240,
-                                child: Center(
-                                  child: Text(
-                                    _error ??
-                                        (_isDynamic
+                      onRefresh: () => Future.wait([
+                        _load(),
+                        if (_isDynamic) _loadDynamicDetail(),
+                      ]),
+                      child: Stack(
+                        children: [
+                          NotificationListener<ScrollNotification>(
+                            onNotification: _onCommentScroll,
+                            child: ListView.builder(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.only(bottom: 12),
+                              itemCount: (_isDynamic ? 1 : 0) +
+                                  (_comments.isEmpty ? 1 : _comments.length) +
+                                  (_comments.isNotEmpty &&
+                                          (_hasMore ||
+                                              _loadingMore ||
+                                              _loadMoreError != null)
+                                      ? 1
+                                      : 0),
+                              itemBuilder: (_, i) {
+                                if (_isDynamic && i == 0) {
+                                  return _dynamicHeader();
+                                }
+                                final contentIndex = i - (_isDynamic ? 1 : 0);
+                                if (_comments.isEmpty && contentIndex == 0) {
+                                  if (_loading) {
+                                    return const LkLoadingIndicator(
+                                        minHeight: 160);
+                                  }
+                                  if (_error != null) {
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 24),
+                                      child: ContentStateView(
+                                        message: _error!,
+                                        onRetry: () => _load(),
+                                      ),
+                                    );
+                                  }
+                                  return SizedBox(
+                                    height: 240,
+                                    child: Center(
+                                      child: Text(
+                                        _isDynamic
                                             ? '还没有评论'
                                             : _isVolume
                                                 ? '本卷还没有评论'
-                                                : '还没有书评，来抢沙发'),
-                                    style: TextStyle(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
+                                                : '还没有书评，来抢沙发',
+                                        style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                ),
-                              );
-                            }
-                            if (contentIndex >= _comments.length) {
-                              return _commentPageFooter();
-                            }
-                            final c = _comments[contentIndex];
-                            return _commentItem(c);
-                          },
-                        ),
+                                  );
+                                }
+                                if (contentIndex >= _comments.length) {
+                                  return _commentPageFooter();
+                                }
+                                final c = _comments[contentIndex];
+                                return _commentItem(c);
+                              },
+                            ),
+                          ),
+                          if (_refreshing)
+                            const Positioned(
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              child: MotionLinearProgressIndicator(
+                                minHeight: 2,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
               if (inputActive)

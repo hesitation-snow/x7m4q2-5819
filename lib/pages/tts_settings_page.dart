@@ -12,8 +12,10 @@ import '../services/reader_audio_bootstrap.dart';
 import '../services/reader_audio_handler.dart';
 import '../services/reader_tts_preferences.dart';
 import '../services/system_tts.dart';
+import '../widgets/common.dart';
 import '../widgets/m3_controls.dart';
 import '../widgets/reader_listening_sheet.dart';
+import '../widgets/scrollable_status.dart';
 import '../widgets/tts_settings_sections.dart';
 import 'custom_tts_settings_page.dart';
 
@@ -49,6 +51,9 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
   String? _customProfileError;
 
   int _accountLoadSerial = 0;
+  int _engineLoadSerial = 0;
+  int _voiceLoadSerial = 0;
+  bool _openingCustom = false;
 
   bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
   bool get _isTtsSupported =>
@@ -75,32 +80,23 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
 
   void _onAccountChanged() {
     if (!mounted) return;
+    ++_engineLoadSerial;
+    ++_voiceLoadSerial;
+    setState(() {
+      _engines = const [];
+      _voices = const [];
+      _engineError = null;
+      _voiceError = null;
+      _enginesLoading = false;
+      _voicesLoading = false;
+    });
     unawaited(_loadAll());
   }
 
-  Future<void> _loadAll() async {
-    final serial = ++_accountLoadSerial;
-    final accountKey = ReaderTtsPreferences.currentAccountKey();
-    final loaded = await ReaderTtsPreferences.load(accountKey);
-    if (!mounted || serial != _accountLoadSerial) return;
-    setState(() {
-      _prefs = loaded;
-      _loading = false;
-    });
-    await _loadCustomProfile(accountKey, serial: serial);
-    if (!mounted || serial != _accountLoadSerial) return;
-    if (_prefs.sourceMode == 'system' && _isTtsSupported) {
-      await _prepareSystemSpeechOptions();
-    }
-  }
-
-  Future<void> _loadCustomProfile(String accountKey, {int? serial}) async {
-    final preferences = await SharedPreferences.getInstance();
-    if (!mounted ||
-        (serial != null && serial != _accountLoadSerial) ||
-        accountKey != ReaderTtsPreferences.currentAccountKey()) {
-      return;
-    }
+  (CustomSsmlTtsConfig?, String?) _parseCustomProfile(
+    SharedPreferences preferences,
+    String accountKey,
+  ) {
     final raw = preferences.getString(
       ReaderTtsPreferences.customMetadataKey(accountKey),
     );
@@ -108,16 +104,61 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
       final parsed = raw == null || raw.isEmpty
           ? null
           : CustomSsmlTtsConfig.fromMetadata(decodeCustomTtsMetadata(raw));
-      setState(() {
-        _customProfile = parsed;
-        _customProfileError = null;
-      });
+      return (parsed, null);
     } catch (_) {
-      setState(() {
-        _customProfile = null;
-        _customProfileError = '已保存的服务配置无效，请重新配置。';
-      });
+      return (null, '已保存的服务配置无效，请重新配置。');
     }
+  }
+
+  bool _isActiveAccountContext(String accountKey, int accountSerial) =>
+      mounted &&
+      accountSerial == _accountLoadSerial &&
+      accountKey == ReaderTtsPreferences.currentAccountKey();
+
+  Future<void> _loadAll() async {
+    final serial = ++_accountLoadSerial;
+    ++_engineLoadSerial;
+    ++_voiceLoadSerial;
+    final accountKey = ReaderTtsPreferences.currentAccountKey();
+    final results = await Future.wait<Object>([
+      ReaderTtsPreferences.load(accountKey),
+      SharedPreferences.getInstance(),
+    ]);
+    if (!_isActiveAccountContext(accountKey, serial)) return;
+    final loaded = results[0] as ReaderTtsPreferences;
+    final preferences = results[1] as SharedPreferences;
+    final (customProfile, customProfileError) =
+        _parseCustomProfile(preferences, accountKey);
+    final systemMode = loaded.sourceMode == 'system' && _isTtsSupported;
+    setState(() {
+      _prefs = loaded;
+      _customProfile = customProfile;
+      _customProfileError = customProfileError;
+      _enginesLoading = systemMode && _isAndroid;
+      _voicesLoading = systemMode;
+      _engineError = null;
+      _voiceError = null;
+      _loading = false;
+    });
+    if (systemMode) {
+      await _prepareSystemSpeechOptions(
+        accountKey: accountKey,
+        accountSerial: serial,
+      );
+    }
+  }
+
+  Future<void> _loadCustomProfile(String accountKey, {int? serial}) async {
+    final expectedSerial = serial ?? _accountLoadSerial;
+    final preferences = await SharedPreferences.getInstance();
+    if (!_isActiveAccountContext(accountKey, expectedSerial)) {
+      return;
+    }
+    final (parsed, error) = _parseCustomProfile(preferences, accountKey);
+    setState(() {
+      _customProfile = parsed;
+      _customProfileError = error;
+    });
   }
 
   Future<void> _savePrefs(ReaderTtsPreferences next) async {
@@ -125,32 +166,63 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
     await ReaderTtsPreferences.save(next);
   }
 
-  Future<void> _prepareSystemSpeechOptions() async {
+  Future<void> _prepareSystemSpeechOptions({
+    String? accountKey,
+    int? accountSerial,
+  }) async {
     if (!_isTtsSupported) return;
+    final activeKey = accountKey ?? ReaderTtsPreferences.currentAccountKey();
+    final activeSerial = accountSerial ?? _accountLoadSerial;
     if (_isAndroid) {
-      if (_engines.isEmpty) await _loadEngines();
-      if (!mounted) return;
+      if (_engines.isEmpty) {
+        await _loadEngines(
+          accountKey: activeKey,
+          accountSerial: activeSerial,
+        );
+      }
+      if (!_isActiveAccountContext(activeKey, activeSerial)) return;
       if (_prefs.systemEngineId != null) {
         try {
           await _systemTts.setEngine(_prefs.systemEngineId!);
         } catch (error) {
-          if (mounted) setState(() => _engineError = error.toString());
+          if (_isActiveAccountContext(activeKey, activeSerial)) {
+            setState(() {
+              _engineError = error.toString();
+              _voicesLoading = false;
+            });
+          }
           return;
         }
       }
     }
-    if (_voices.isEmpty) await _loadVoices();
+    if (!_isActiveAccountContext(activeKey, activeSerial)) return;
+    if (_voices.isEmpty) {
+      await _loadVoices(
+        accountKey: activeKey,
+        accountSerial: activeSerial,
+      );
+    }
   }
 
-  Future<void> _loadEngines() async {
-    if (_enginesLoading) return;
-    setState(() {
-      _enginesLoading = true;
-      _engineError = null;
-    });
+  Future<void> _loadEngines({
+    String? accountKey,
+    int? accountSerial,
+  }) async {
+    final activeKey = accountKey ?? ReaderTtsPreferences.currentAccountKey();
+    final activeSerial = accountSerial ?? _accountLoadSerial;
+    final serial = ++_engineLoadSerial;
+    if (!_enginesLoading || _engineError != null) {
+      setState(() {
+        _enginesLoading = true;
+        _engineError = null;
+      });
+    }
     try {
       final engines = await _systemTts.getEngines();
-      if (!mounted) return;
+      if (!_isActiveAccountContext(activeKey, activeSerial) ||
+          serial != _engineLoadSerial) {
+        return;
+      }
       final selectedExists = _prefs.systemEngineId == null ||
           engines.any((item) => item.id == _prefs.systemEngineId);
       setState(() {
@@ -161,7 +233,10 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
         await _savePrefs(_prefs.copyWith(clearSystemEngineId: true));
       }
     } catch (error) {
-      if (!mounted) return;
+      if (!_isActiveAccountContext(activeKey, activeSerial) ||
+          serial != _engineLoadSerial) {
+        return;
+      }
       setState(() {
         _enginesLoading = false;
         _engineError = error.toString();
@@ -169,15 +244,25 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
     }
   }
 
-  Future<void> _loadVoices() async {
-    if (_voicesLoading) return;
-    setState(() {
-      _voicesLoading = true;
-      _voiceError = null;
-    });
+  Future<void> _loadVoices({
+    String? accountKey,
+    int? accountSerial,
+  }) async {
+    final activeKey = accountKey ?? ReaderTtsPreferences.currentAccountKey();
+    final activeSerial = accountSerial ?? _accountLoadSerial;
+    final serial = ++_voiceLoadSerial;
+    if (!_voicesLoading || _voiceError != null) {
+      setState(() {
+        _voicesLoading = true;
+        _voiceError = null;
+      });
+    }
     try {
       final voices = await _systemTts.getVoices();
-      if (!mounted) return;
+      if (!_isActiveAccountContext(activeKey, activeSerial) ||
+          serial != _voiceLoadSerial) {
+        return;
+      }
       final preferredId = _prefs.systemVoiceId;
       final hasPreferred =
           preferredId != null && voices.any((voice) => voice.id == preferredId);
@@ -196,7 +281,10 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
         await _savePrefs(_prefs.copyWith(systemVoiceId: fallback.id));
       }
     } catch (error) {
-      if (!mounted) return;
+      if (!_isActiveAccountContext(activeKey, activeSerial) ||
+          serial != _voiceLoadSerial) {
+        return;
+      }
       setState(() {
         _voicesLoading = false;
         _voiceError = error.toString();
@@ -206,15 +294,30 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
 
   Future<void> _onSourceChanged(String source) async {
     if (_changingSource || source == _prefs.sourceMode) return;
-    setState(() => _changingSource = true);
+    final accountKey = ReaderTtsPreferences.currentAccountKey();
+    final accountSerial = _accountLoadSerial;
+    final switchingToSystem = source == 'system' && _isTtsSupported;
+    setState(() {
+      _changingSource = true;
+      if (switchingToSystem) {
+        _enginesLoading = _isAndroid && _engines.isEmpty;
+        _voicesLoading = _voices.isEmpty;
+        _engineError = null;
+        _voiceError = null;
+      }
+    });
     try {
       if (ListeningNow.instance.active) {
         await ListeningNow.instance.stop();
       }
+      if (!_isActiveAccountContext(accountKey, accountSerial)) return;
       await _savePrefs(_prefs.copyWith(sourceMode: source));
-      if (!mounted) return;
-      if (source == 'system') {
-        await _prepareSystemSpeechOptions();
+      if (!_isActiveAccountContext(accountKey, accountSerial)) return;
+      if (switchingToSystem) {
+        await _prepareSystemSpeechOptions(
+          accountKey: accountKey,
+          accountSerial: accountSerial,
+        );
       }
     } finally {
       if (mounted) setState(() => _changingSource = false);
@@ -223,15 +326,20 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
 
   Future<void> _onEngineChanged(String id) async {
     if (id == (_prefs.systemEngineId ?? 'default')) return;
+    final accountKey = ReaderTtsPreferences.currentAccountKey();
+    final accountSerial = _accountLoadSerial;
     if (ListeningNow.instance.active) {
       await ListeningNow.instance.stop();
     }
+    if (!_isActiveAccountContext(accountKey, accountSerial)) return;
     try {
       await _systemTts.setEngine(id);
-      if (!mounted) return;
+      if (!_isActiveAccountContext(accountKey, accountSerial)) return;
       setState(() {
         _voices = const [];
+        _voicesLoading = true;
         _engineError = null;
+        _voiceError = null;
       });
       await _savePrefs(_prefs.copyWith(
         systemEngineId: id == 'default' ? null : id,
@@ -239,57 +347,72 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
         clearSystemVoiceId: true,
         systemVoiceByLanguage: const <String, String>{},
       ));
-      if (!mounted) return;
-      await _loadVoices();
+      if (!_isActiveAccountContext(accountKey, accountSerial)) return;
+      await _loadVoices(
+        accountKey: accountKey,
+        accountSerial: accountSerial,
+      );
     } catch (error) {
-      if (mounted) setState(() => _engineError = error.toString());
+      if (_isActiveAccountContext(accountKey, accountSerial)) {
+        setState(() {
+          _voicesLoading = false;
+          _engineError = error.toString();
+        });
+      }
     }
   }
 
   Future<void> _openCustomTtsSettings() async {
-    if (ListeningNow.instance.active) {
-      await ListeningNow.instance.stop();
-    }
-    if (!mounted) return;
-    final preferences = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    var mediaHandler = activeReaderAudioHandler;
-    if (mediaHandler == null && _isTtsSupported) {
-      try {
-        mediaHandler =
-            await ensureReaderAudioHandler().timeout(const Duration(seconds: 3));
-      } catch (_) {
-        mediaHandler = activeReaderAudioHandler;
-      }
-    }
-    if (!mounted) return;
-    final accountKey = ReaderTtsPreferences.currentAccountKey();
-    final service = CustomSsmlTts(
-      credentialStorageKey: ReaderTtsPreferences.customCredentialKey(accountKey),
-    );
+    if (_openingCustom) return;
+    _openingCustom = true;
     try {
-      await Navigator.of(context).push<void>(MaterialPageRoute<void>(
-        builder: (_) => CustomTtsSettingsPage(
-          tts: service,
-          preferences: preferences,
-          metadataStorageKey:
-              ReaderTtsPreferences.customMetadataKey(accountKey),
-          createPlayer: () {
-            final currentHandler = activeReaderAudioHandler ?? mediaHandler;
-            if (currentHandler != null) {
-              return AudioHandlerCustomTtsPreviewPlayer(
-                ReaderAudioHandlerTtsAdapter(currentHandler),
-              );
-            }
-            return _UnavailableCustomPreviewPlayer();
-          },
-        ),
-      ));
-    } finally {
-      service.close();
-      if (mounted) {
-        await _loadCustomProfile(ReaderTtsPreferences.currentAccountKey());
+      if (ListeningNow.instance.active) {
+        await ListeningNow.instance.stop();
       }
+      if (!mounted) return;
+      final preferences = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      var mediaHandler = activeReaderAudioHandler;
+      if (mediaHandler == null && _isTtsSupported) {
+        try {
+          mediaHandler = await ensureReaderAudioHandler()
+              .timeout(const Duration(seconds: 3));
+        } catch (_) {
+          mediaHandler = activeReaderAudioHandler;
+        }
+      }
+      if (!mounted) return;
+      final accountKey = ReaderTtsPreferences.currentAccountKey();
+      final service = CustomSsmlTts(
+        credentialStorageKey:
+            ReaderTtsPreferences.customCredentialKey(accountKey),
+      );
+      try {
+        await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+          builder: (_) => CustomTtsSettingsPage(
+            tts: service,
+            preferences: preferences,
+            metadataStorageKey:
+                ReaderTtsPreferences.customMetadataKey(accountKey),
+            createPlayer: () {
+              final currentHandler = activeReaderAudioHandler ?? mediaHandler;
+              if (currentHandler != null) {
+                return AudioHandlerCustomTtsPreviewPlayer(
+                  ReaderAudioHandlerTtsAdapter(currentHandler),
+                );
+              }
+              return _UnavailableCustomPreviewPlayer();
+            },
+          ),
+        ));
+      } finally {
+        service.close();
+        if (mounted) {
+          await _loadCustomProfile(ReaderTtsPreferences.currentAccountKey());
+        }
+      }
+    } finally {
+      _openingCustom = false;
     }
   }
 
@@ -300,138 +423,147 @@ class _TtsSettingsPageState extends State<TtsSettingsPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('听书与 TTS')),
       body: _loading
-          ? const Center(child: MotionProgressIndicator())
-          : ListView(
-              key: const ValueKey('tts-settings-list'),
-              padding: EdgeInsets.fromLTRB(
-                16,
-                12,
-                16,
-                MediaQuery.of(context).padding.bottom + 24,
-              ),
+          ? const ScrollableStatus(child: LkLoadingIndicator())
+          : Stack(
               children: [
-                if (!isTtsSupported) ...[
-                  const AppSettingsGroup(
-                    children: [
-                      ListTile(
-                        leading: AppSettingIcon(Icons.info_outline_rounded),
-                        title: Text('当前平台仅支持保存偏好'),
-                        subtitle: Text('阅读器朗读播放目前支持 Android 与 iOS 设备。'),
+                ListView(
+                  key: const ValueKey('tts-settings-list'),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    12,
+                    16,
+                    MediaQuery.of(context).padding.bottom + 24,
+                  ),
+                  children: [
+                    if (!isTtsSupported) ...[
+                      const AppSettingsGroup(
+                        children: [
+                          ListTile(
+                            leading: AppSettingIcon(Icons.info_outline_rounded),
+                            title: Text('当前平台仅支持保存偏好'),
+                            subtitle: Text('阅读器朗读播放目前支持 Android 与 iOS 设备。'),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 20),
                     ],
-                  ),
-                  const SizedBox(height: 20),
-                ],
-                const AppSectionTitle('语音来源'),
-                ListeningSourcePicker(
-                  value: _prefs.sourceMode,
-                  enabled: !_changingSource,
-                  onChanged: _onSourceChanged,
+                    const AppSectionTitle('语音来源'),
+                    ListeningSourcePicker(
+                      value: _prefs.sourceMode,
+                      enabled: !_changingSource,
+                      onChanged: _onSourceChanged,
+                    ),
+                    const SizedBox(height: 20),
+                    const AppSectionTitle('语速'),
+                    ListeningRateControl(
+                      rate: _prefs.rate,
+                      onChanged: (value) =>
+                          setState(() => _prefs = _prefs.copyWith(rate: value)),
+                      onChangeEnd: (value) async {
+                        await _savePrefs(_prefs.copyWith(rate: value));
+                        if (_prefs.sourceMode == 'online' &&
+                            ListeningNow.instance.active) {
+                          try {
+                            await activeReaderAudioHandler
+                                ?.setPlaybackRate(value);
+                          } catch (_) {}
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    if (_prefs.sourceMode == 'online')
+                      TtsOnlineVoicesSection(
+                        edgeVoiceByLanguage: _prefs.edgeVoiceByLanguage,
+                        onVoiceChanged: (language, voiceId) async {
+                          final nextMap = Map<String, String>.from(
+                              _prefs.edgeVoiceByLanguage);
+                          if (voiceId == null || voiceId.isEmpty) {
+                            nextMap.remove(language);
+                          } else {
+                            nextMap[language] = voiceId;
+                          }
+                          await _savePrefs(_prefs.copyWith(
+                            edgeVoiceByLanguage: nextMap,
+                          ));
+                        },
+                      ),
+                    if (_prefs.sourceMode == 'system')
+                      TtsSystemVoicesSection(
+                        isAndroid: isAndroid,
+                        isSupported: isTtsSupported,
+                        showEnginePicker: isAndroid,
+                        engines: _engines,
+                        enginesLoading: _enginesLoading,
+                        engineError: _engineError,
+                        selectedEngineId: _prefs.systemEngineId,
+                        onRetryEngines: () => unawaited(_loadEngines()),
+                        onEngineSelected: (id) => unawaited(_onEngineChanged(id)),
+                        voices: _voices,
+                        voicesLoading: _voicesLoading,
+                        voiceError: _voiceError,
+                        selectedVoiceId: _prefs.systemVoiceId,
+                        onRetryVoices: () => unawaited(_loadVoices()),
+                        onVoiceSelected: (voice) =>
+                            unawaited(_savePrefs(_prefs.copyWith(
+                          systemVoiceId: voice.id,
+                        ))),
+                        voiceByLanguage: _prefs.systemVoiceByLanguage,
+                        onLanguageVoiceChanged: (language, voiceId) {
+                          final nextMap = Map<String, String>.from(
+                            _prefs.systemVoiceByLanguage,
+                          );
+                          if (voiceId == null || voiceId.isEmpty) {
+                            nextMap.remove(language);
+                          } else {
+                            nextMap[language] = voiceId;
+                          }
+                          unawaited(_savePrefs(_prefs.copyWith(
+                            systemVoiceByLanguage: nextMap,
+                          )));
+                        },
+                      ),
+                    if (_prefs.sourceMode == 'custom')
+                      TtsCustomVoiceSection(
+                        profile: _customProfile,
+                        profileError: _customProfileError,
+                        onConfigure: () => unawaited(_openCustomTtsSettings()),
+                      ),
+                    const SizedBox(height: 20),
+                    TtsPlaybackSettingsSection(
+                      languageFilter: _prefs.languageFilter,
+                      onLanguageFilterChanged: (value) async {
+                        if (ListeningNow.instance.active) {
+                          await ListeningNow.instance.stop();
+                        }
+                        await _savePrefs(_prefs.copyWith(languageFilter: value));
+                      },
+                      segmentInterval: _prefs.segmentInterval,
+                      onSegmentIntervalChanged: (interval) async {
+                        ListeningNow.instance.session
+                            ?.setSegmentInterval(interval);
+                        await _savePrefs(
+                            _prefs.copyWith(segmentInterval: interval));
+                      },
+                      sleepTimer: _prefs.sleepTimer,
+                      onSleepTimerChanged: (timer) async {
+                        ListeningNow.instance.session?.setSleepTimer(timer);
+                        await _savePrefs(_prefs.copyWith(sleepTimer: timer));
+                      },
+                      continuousChapter: _prefs.continuousChapter,
+                      onContinuousChapterChanged: (value) async {
+                        await _savePrefs(
+                            _prefs.copyWith(continuousChapter: value));
+                      },
+                    ),
+                  ],
                 ),
-                if (_changingSource) ...[
-                  const SizedBox(height: 8),
-                  const MotionLinearProgressIndicator(minHeight: 2),
-                ],
-                const SizedBox(height: 20),
-                const AppSectionTitle('语速'),
-                ListeningRateControl(
-                  rate: _prefs.rate,
-                  onChanged: (value) =>
-                      setState(() => _prefs = _prefs.copyWith(rate: value)),
-                  onChangeEnd: (value) async {
-                    await _savePrefs(_prefs.copyWith(rate: value));
-                    if (_prefs.sourceMode == 'online' &&
-                        ListeningNow.instance.active) {
-                      try {
-                        await activeReaderAudioHandler?.setPlaybackRate(value);
-                      } catch (_) {}
-                    }
-                  },
-                ),
-                const SizedBox(height: 20),
-                if (_prefs.sourceMode == 'online')
-                  TtsOnlineVoicesSection(
-                    edgeVoiceByLanguage: _prefs.edgeVoiceByLanguage,
-                    onVoiceChanged: (language, voiceId) async {
-                      final nextMap =
-                          Map<String, String>.from(_prefs.edgeVoiceByLanguage);
-                      if (voiceId == null || voiceId.isEmpty) {
-                        nextMap.remove(language);
-                      } else {
-                        nextMap[language] = voiceId;
-                      }
-                      await _savePrefs(_prefs.copyWith(
-                        edgeVoiceByLanguage: nextMap,
-                      ));
-                    },
+                if (_changingSource)
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: MotionLinearProgressIndicator(minHeight: 2),
                   ),
-                if (_prefs.sourceMode == 'system')
-                  TtsSystemVoicesSection(
-                    isAndroid: isAndroid,
-                    isSupported: isTtsSupported,
-                    showEnginePicker: isAndroid,
-                    engines: _engines,
-                    enginesLoading: _enginesLoading,
-                    engineError: _engineError,
-                    selectedEngineId: _prefs.systemEngineId,
-                    onRetryEngines: () => unawaited(_loadEngines()),
-                    onEngineSelected: (id) => unawaited(_onEngineChanged(id)),
-                    voices: _voices,
-                    voicesLoading: _voicesLoading,
-                    voiceError: _voiceError,
-                    selectedVoiceId: _prefs.systemVoiceId,
-                    onRetryVoices: () => unawaited(_loadVoices()),
-                    onVoiceSelected: (voice) =>
-                        unawaited(_savePrefs(_prefs.copyWith(
-                      systemVoiceId: voice.id,
-                    ))),
-                    voiceByLanguage: _prefs.systemVoiceByLanguage,
-                    onLanguageVoiceChanged: (language, voiceId) {
-                      final nextMap = Map<String, String>.from(
-                        _prefs.systemVoiceByLanguage,
-                      );
-                      if (voiceId == null || voiceId.isEmpty) {
-                        nextMap.remove(language);
-                      } else {
-                        nextMap[language] = voiceId;
-                      }
-                      unawaited(_savePrefs(_prefs.copyWith(
-                        systemVoiceByLanguage: nextMap,
-                      )));
-                    },
-                  ),
-                if (_prefs.sourceMode == 'custom')
-                  TtsCustomVoiceSection(
-                    profile: _customProfile,
-                    profileError: _customProfileError,
-                    onConfigure: () => unawaited(_openCustomTtsSettings()),
-                  ),
-                const SizedBox(height: 20),
-                TtsPlaybackSettingsSection(
-                  languageFilter: _prefs.languageFilter,
-                  onLanguageFilterChanged: (value) async {
-                    if (ListeningNow.instance.active) {
-                      await ListeningNow.instance.stop();
-                    }
-                    await _savePrefs(_prefs.copyWith(languageFilter: value));
-                  },
-                  segmentInterval: _prefs.segmentInterval,
-                  onSegmentIntervalChanged: (interval) async {
-                    ListeningNow.instance.session?.setSegmentInterval(interval);
-                    await _savePrefs(
-                        _prefs.copyWith(segmentInterval: interval));
-                  },
-                  sleepTimer: _prefs.sleepTimer,
-                  onSleepTimerChanged: (timer) async {
-                    ListeningNow.instance.session?.setSleepTimer(timer);
-                    await _savePrefs(_prefs.copyWith(sleepTimer: timer));
-                  },
-                  continuousChapter: _prefs.continuousChapter,
-                  onContinuousChapterChanged: (value) async {
-                    await _savePrefs(
-                        _prefs.copyWith(continuousChapter: value));
-                  },
-                ),
               ],
             ),
     );

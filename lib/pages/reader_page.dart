@@ -2041,7 +2041,12 @@ class _ReaderPageState extends State<ReaderPage>
         // 正文没有变化时只刷新锁定状态、标题和前后章信息,避免重排版。
         _updateDetailState(d);
       }
-      if (!mounted) return;
+      if (!mounted ||
+          serial != _loadSerial ||
+          accountRevision != LKClient.sessionRev.value ||
+          _readerCacheOwnerUid != cacheOwnerUid) {
+        return;
+      }
       setState(() => _loading = false);
       if (shouldResumeSpeech &&
           !_speechStarting &&
@@ -2332,12 +2337,13 @@ class _ReaderPageState extends State<ReaderPage>
   /// 服务端缺少 navigation 时，只请求当前章节附近的分页来补齐前后章。
   /// 即使单卷包含上千章，也不会为了两个相邻章节下载完整目录。
   Future<void> _resolveAdjacent() async {
+    final serial = _loadSerial;
     try {
       final detail = _detail;
       final chapterNo = detail?.chapterNo ?? 0;
       if (chapterNo <= 0) return;
       final volumes = await _allVolumes();
-      if (!mounted) return;
+      if (!mounted || serial != _loadSerial) return;
       final volumeIndex =
           volumes.indexWhere((v) => v.volumeId == _effectiveVolumeId);
       if (volumeIndex < 0) return;
@@ -2348,29 +2354,33 @@ class _ReaderPageState extends State<ReaderPage>
         pageSize: 50,
       );
       final page = await _chapterPageAt(volume.volumeId, sourcePage);
-      if (!mounted) return;
+      if (!mounted || serial != _loadSerial) return;
       final chapterIndex =
           page.items.indexWhere((c) => c.chapterId == widget.chapterId);
       if (chapterIndex < 0) return;
 
-      if (_prevId == null) {
+      Future<void> resolvePrev() async {
+        if (_prevId != null) return;
         if (chapterIndex > 0) {
           _usePreviousChapter(page.items[chapterIndex - 1], volume.volumeId);
         } else if (sourcePage > 1) {
           final previousPage =
               await _chapterPageAt(volume.volumeId, sourcePage - 1);
+          if (!mounted || serial != _loadSerial) return;
           if (previousPage.items.isNotEmpty) {
             _usePreviousChapter(previousPage.items.last, volume.volumeId);
           }
         } else if (volumeIndex > 0) {
           final previous = await _lastChapter(volumes[volumeIndex - 1]);
+          if (!mounted || serial != _loadSerial) return;
           if (previous != null) {
             _usePreviousChapter(previous, volumes[volumeIndex - 1].volumeId);
           }
         }
       }
 
-      if (_nextId == null) {
+      Future<void> resolveNext() async {
+        if (_nextId != null) return;
         if (chapterIndex < page.items.length - 1) {
           _useNextChapter(page.items[chapterIndex + 1], volume.volumeId);
         } else {
@@ -2379,18 +2389,22 @@ class _ReaderPageState extends State<ReaderPage>
           if (page.hasMore || sourcePage < pageCount) {
             final nextPage =
                 await _chapterPageAt(volume.volumeId, sourcePage + 1);
+            if (!mounted || serial != _loadSerial) return;
             if (nextPage.items.isNotEmpty) {
               _useNextChapter(nextPage.items.first, volume.volumeId);
             }
           } else if (volumeIndex < volumes.length - 1) {
             final next = await _firstChapter(volumes[volumeIndex + 1]);
+            if (!mounted || serial != _loadSerial) return;
             if (next != null) {
               _useNextChapter(next, volumes[volumeIndex + 1].volumeId);
             }
           }
         }
       }
-      if (mounted) setState(() {});
+
+      await Future.wait([resolvePrev(), resolveNext()]);
+      if (mounted && serial == _loadSerial) setState(() {});
     } catch (_) {}
   }
 
@@ -5949,9 +5963,12 @@ class _ReaderPageState extends State<ReaderPage>
       extraAction: !loggedIn && _accessRestricted
           ? FilledButton.icon(
               onPressed: () async {
+                final revBefore = LKClient.sessionRev.value;
                 await Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const LoginPage()));
-                if (mounted && LKClient.shared.session.isLoggedIn) {
+                if (mounted &&
+                    LKClient.shared.session.isLoggedIn &&
+                    LKClient.sessionRev.value == revBefore) {
                   _load();
                 }
               },

@@ -14,6 +14,7 @@ import '../api/store.dart';
 import '../services/avatar_cache.dart';
 import '../services/emoji_catalog.dart';
 import '../widgets/common.dart';
+import '../widgets/account_scope.dart';
 import '../widgets/emoji_panel.dart';
 import '../widgets/topic_picker_sheet.dart';
 
@@ -33,7 +34,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
   bool _composerFocused = false;
   final _picker = ImagePicker();
   final _media = <LKDynamicMedia>[];
-  List<LKEmojiGroup> _emojiGroups = const [];
+  List<LKEmojiGroup> _emojiGroups = YomiruEmojiCatalog.groups;
   List<LKTopicTag> _topics = LKApi.cachedTopicTags;
   List<LKTopicTag> _recentTopics = const [];
   LKTopicTag? _selectedTopic;
@@ -319,16 +320,17 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
 
   Future<void> _pickImage() async {
     if (_uploading || _media.length >= 9) return;
+    final session = SessionStamp();
     _hideEmojiPanel();
     final file = await _picker.pickImage(
         source: ImageSource.gallery, imageQuality: 88, maxWidth: 2048);
-    if (file == null) return;
+    if (file == null || !mounted || !session.isCurrent) return;
     setState(() => _uploading = true);
     try {
       final uploaded = await LKApi.uploadDynamicImage(file.path);
-      if (mounted) setState(() => _media.add(uploaded));
+      if (mounted && session.isCurrent) setState(() => _media.add(uploaded));
     } catch (e) {
-      if (mounted) showLkError(context, e);
+      if (mounted && session.isCurrent) showLkError(context, e);
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
@@ -345,6 +347,7 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
       showLkError(context, '请先登录');
       return;
     }
+    final session = SessionStamp();
     setState(() => _publishing = true);
     try {
       final topic = _selectedTopic;
@@ -354,12 +357,12 @@ class _DynamicPublishPageState extends State<DynamicPublishPage> {
         topic: topic,
         title: _titleController.text.trim(),
       );
-      if (topic != null && topic.isUsable) {
+      if (topic != null && topic.isUsable && session.isCurrent) {
         unawaited(LKStore.recordRecentTopicTag(topic));
       }
-      if (mounted) Navigator.pop(context, true);
+      if (mounted && session.isCurrent) Navigator.pop(context, true);
     } catch (e) {
-      if (mounted) showLkError(context, e);
+      if (mounted && session.isCurrent) showLkError(context, e);
     } finally {
       if (mounted) setState(() => _publishing = false);
     }

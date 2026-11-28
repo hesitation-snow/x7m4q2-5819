@@ -23,9 +23,11 @@ import '../services/listening_now.dart';
 import '../widgets/listening_dock.dart';
 import '../widgets/liquid_glass_bottom_bar.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import '../widgets/filtered_list_continuation.dart';
 import '../widgets/m3_controls.dart';
 import '../widgets/m3_menu_sheet.dart';
+import '../widgets/scrollable_status.dart';
 import 'book_detail_page.dart';
 import 'brave_quiz_page.dart';
 import 'channel_page.dart';
@@ -690,14 +692,20 @@ class _FeedTabState extends State<FeedTab>
   @override
   bool get wantKeepAlive => true;
 
+  static final Map<String, _FeedMemoryEntry> _feedMemoryCache = {};
+  static final Map<int, _RecommendMemoryEntry> _recommendMemoryCache = {};
+
   final List<LKBook> _items = [];
   static const _recommendCachePrefix = 'home_recommend_v2_';
   List<LKBook> _recommendBooks = [];
   int _page = 0;
-  bool _loading = false;
+  bool _loading = true;
+  bool _refreshing = false;
   bool _hasMore = true;
   String? _error;
+  String? _loadMoreError;
   int _requestSerial = 0;
+  int _recommendSerial = 0;
 
   int _lastGridColumnCount = LKStore.gridColumnCount.value;
   int _anchorBookIndex = 0;
@@ -722,7 +730,11 @@ class _FeedTabState extends State<FeedTab>
     LKStore.braveBookRevision.addListener(_onHideBraveRev);
     LKStore.gridColumnCount.addListener(_onGridColumnsChanged);
     widget.scrollToTopTrigger?.addListener(_scrollToTop);
-    if (_showRecommend) _loadRecommend();
+    _hydrateFeedMemory(_feedCacheKey());
+    if (_showRecommend) {
+      _hydrateRecommendMemory(LKClient.shared.session.uid);
+      _loadRecommend();
+    }
     unawaited(_startLoad());
   }
 
@@ -852,36 +864,104 @@ class _FeedTabState extends State<FeedTab>
 
   String _recommendCacheKeyFor(int uid) => '${_recommendCachePrefix}u$uid';
 
-  Future<void> _startLoad() async {
-    final request = _requestSerial;
-    final cacheKey = _feedCacheKey();
-    final cached = await LKStore.cachedBooksPage(cacheKey);
-    if (!mounted || request != _requestSerial || cacheKey != _feedCacheKey()) {
+  void _hydrateFeedMemory(String cacheKey) {
+    final entry = _feedMemoryCache[cacheKey];
+    if (entry == null) return;
+    if (!identical(entry.client, LKApi.client) ||
+        entry.uid != LKClient.shared.session.uid ||
+        entry.sessionRev != LKClient.sessionRev.value ||
+        entry.cacheEpoch != LKStore.contentCacheEpoch) {
+      _feedMemoryCache.remove(cacheKey);
       return;
     }
-    if (cached != null) {
+    if (entry.items.isNotEmpty) {
+      _items
+        ..clear()
+        ..addAll(entry.items);
+      _page = entry.page;
+      _hasMore = entry.hasMore;
+      _loading = false;
+      _error = null;
+      _loadMoreError = null;
+    }
+  }
+
+  void _writeFeedMemory(String cacheKey, List<LKBook> items, int page,
+      bool hasMore, LKClient client, int uid, int rev, int epoch) {
+    if (items.isEmpty) return;
+    _feedMemoryCache[cacheKey] = _FeedMemoryEntry(
+      client: client,
+      uid: uid,
+      sessionRev: rev,
+      cacheEpoch: epoch,
+      items: List<LKBook>.unmodifiable(items),
+      page: page,
+      hasMore: hasMore,
+    );
+  }
+
+  void _hydrateRecommendMemory(int uid) {
+    final entry = _recommendMemoryCache[uid];
+    if (entry == null) return;
+    if (!identical(entry.client, LKApi.client) ||
+        entry.sessionRev != LKClient.sessionRev.value ||
+        entry.cacheEpoch != LKStore.contentCacheEpoch) {
+      _recommendMemoryCache.remove(uid);
+      return;
+    }
+    if (entry.books.isNotEmpty) {
+      _recommendBooks = entry.books;
+    }
+  }
+
+  Future<void> _startLoad() async {
+    final rev = LKClient.sessionRev.value;
+    final cacheKey = _feedCacheKey();
+    var networkDone = false;
+    final networkFuture = _load(
+      1,
+      false,
+      silent: true,
+      singlePage: true,
+      onNetworkResolved: () => networkDone = true,
+    );
+    final cached = await LKStore.cachedBooksPage(cacheKey);
+    if (!mounted ||
+        networkDone ||
+        rev != LKClient.sessionRev.value ||
+        cacheKey != _feedCacheKey()) {
+      await networkFuture;
+      return;
+    }
+    if (cached != null && cached.isNotEmpty && _items.isEmpty) {
       setState(() {
         _items
           ..clear()
           ..addAll(cached);
-        _page = cached.isEmpty ? 0 : 1;
+        _page = 1;
         _hasMore = true;
         _error = null;
+        _loadMoreError = null;
+        _loading = false;
       });
     }
-    await _load(1, false, silent: _items.isNotEmpty, singlePage: true);
+    await networkFuture;
   }
 
   void _onSessionChanged() {
     if (!mounted) return;
     _requestSerial++;
+    _recommendSerial++;
+    _feedMemoryCache.clear();
     setState(() {
       _items.clear();
       _recommendBooks = [];
       _page = 0;
       _hasMore = true;
       _error = null;
-      _loading = false;
+      _loadMoreError = null;
+      _loading = true;
+      _refreshing = false;
     });
     if (_showRecommend) unawaited(_loadRecommend());
     unawaited(_startLoad());
@@ -889,42 +969,56 @@ class _FeedTabState extends State<FeedTab>
 
   /// 推荐卡只由信息流父状态加载一次，列表/网格模式共用同一份数据。
   Future<void> _loadRecommend() async {
+    final serial = ++_recommendSerial;
+    final rev = LKClient.sessionRev.value;
+    final client = LKApi.client;
+    final epoch = LKStore.contentCacheEpoch;
     final uid = LKClient.shared.session.uid;
     final cacheKey = _recommendCacheKeyFor(uid);
-    final p = await SharedPreferences.getInstance();
-    final raw = _recommendBooks.isEmpty ? p.getString(cacheKey) : null;
-    if (raw != null) {
-      try {
-        final cached = (jsonDecode(raw) as List)
-            .map((e) => LKBook.fromJson((e as Map).cast<String, dynamic>()))
-            .toList();
-        if (mounted &&
-            cacheKey == _recommendCacheKeyFor(LKClient.shared.session.uid) &&
-            cached.isNotEmpty) {
-          setState(() => _recommendBooks = cached);
-        }
-      } catch (_) {}
-    }
+    bool isCurrent() =>
+        mounted &&
+        serial == _recommendSerial &&
+        rev == LKClient.sessionRev.value &&
+        uid == LKClient.shared.session.uid;
+
+    var networkResolved = false;
+    final networkFuture = LKApi.homeRecommend(pageSize: 8);
+    final prefsFuture = SharedPreferences.getInstance();
+
     try {
-      final books = await LKApi.homeRecommend(pageSize: 8);
-      if (!mounted ||
-          cacheKey != _recommendCacheKeyFor(LKClient.shared.session.uid)) {
-        return;
+      final p = await prefsFuture;
+      final raw = _recommendBooks.isEmpty ? p.getString(cacheKey) : null;
+      if (raw != null && !networkResolved && isCurrent()) {
+        try {
+          final cached = (jsonDecode(raw) as List)
+              .map((e) => LKBook.fromJson((e as Map).cast<String, dynamic>()))
+              .toList();
+          if (cached.isNotEmpty) {
+            setState(() => _recommendBooks = cached);
+          }
+        } catch (_) {}
       }
-      if (books.isNotEmpty) setState(() => _recommendBooks = books);
+      final books = await networkFuture;
+      networkResolved = true;
+      if (!isCurrent()) return;
       if (books.isNotEmpty) {
+        _recommendMemoryCache[uid] = _RecommendMemoryEntry(
+          client: client,
+          sessionRev: rev,
+          cacheEpoch: epoch,
+          books: List<LKBook>.unmodifiable(books),
+        );
+        setState(() => _recommendBooks = books);
         unawaited(p.setString(
           cacheKey,
-          jsonEncode(books
-              .map((b) => {
-                    'book_id': b.bookId,
-                    'title': b.title,
-                    'cover_url': b.coverUrl,
-                  })
-              .toList()),
+          jsonEncode(books.map((b) => b.toJson()).toList()),
         ));
       }
-    } catch (_) {}
+    } catch (_) {
+      try {
+        await networkFuture;
+      } catch (_) {}
+    }
   }
 
   @override
@@ -940,7 +1034,14 @@ class _FeedTabState extends State<FeedTab>
       _page = 0;
       _hasMore = true;
       _error = null;
-      if (_showRecommend) _loadRecommend();
+      _loadMoreError = null;
+      _loading = true;
+      _refreshing = false;
+      _hydrateFeedMemory(_feedCacheKey());
+      if (_showRecommend) {
+        _hydrateRecommendMemory(LKClient.shared.session.uid);
+        _loadRecommend();
+      }
       unawaited(_startLoad());
     }
   }
@@ -948,17 +1049,33 @@ class _FeedTabState extends State<FeedTab>
   Future<void> _load(int page, bool append,
       {bool silent = false,
       bool forceRefresh = false,
-      bool singlePage = false}) async {
-    if (append && _loading) return;
+      bool singlePage = false,
+      VoidCallback? onNetworkResolved}) async {
+    if (append && (_loading || _refreshing)) return;
     final serial = append ? _requestSerial : ++_requestSerial;
+    final client = LKApi.client;
+    final uid = LKClient.shared.session.uid;
+    final rev = LKClient.sessionRev.value;
+    final epoch = LKStore.contentCacheEpoch;
     final path = widget.path;
     final channelCode = widget.channelCode;
     final cacheKey = _feedCacheKey();
     final isRank = path == 'rank';
     final rankScene = _rankScene;
+    final hasExisting = _items.isNotEmpty;
     setState(() {
-      _loading = true;
-      _error = null;
+      if (append) {
+        _loading = true;
+        _loadMoreError = null;
+      } else if (hasExisting) {
+        _refreshing = true;
+        _error = null;
+        _loadMoreError = null;
+      } else {
+        _loading = true;
+        _error = null;
+        _loadMoreError = null;
+      }
     });
     try {
       Future<LoadedPage<LKBook>> fetchPage(int number, String cursor) async {
@@ -988,9 +1105,12 @@ class _FeedTabState extends State<FeedTab>
                   isCurrent: () => mounted && serial == _requestSerial,
                 );
       if (!mounted || serial != _requestSerial) return;
+      onNetworkResolved?.call();
       final items = append
           ? mergePagedItems(_items, result.items, keyOf: (book) => book.bookId)
           : result.items;
+      _writeFeedMemory(
+          cacheKey, items, result.page, result.hasMore, client, uid, rev, epoch);
       setState(() {
         _items
           ..clear()
@@ -998,18 +1118,28 @@ class _FeedTabState extends State<FeedTab>
         _page = result.page;
         _hasMore = result.hasMore;
         _error = null;
+        _loadMoreError = null;
+        _loading = false;
+        _refreshing = false;
       });
       unawaited(LKStore.cacheBooksPage(cacheKey, _items));
     } catch (e) {
       if (mounted && serial == _requestSerial) {
-        setState(() => _error = e.toString());
-        if ((silent || !append) && _items.isNotEmpty) {
+        onNetworkResolved?.call();
+        if (append) {
+          setState(() => _loadMoreError = e.toString());
+        } else if (_items.isEmpty) {
+          setState(() => _error = e.toString());
+        } else {
           _showRefreshError();
         }
       }
     } finally {
       if (mounted && serial == _requestSerial) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
       }
     }
   }
@@ -1038,6 +1168,10 @@ class _FeedTabState extends State<FeedTab>
       _page = 0;
       _hasMore = true;
       _error = null;
+      _loadMoreError = null;
+      _loading = true;
+      _refreshing = false;
+      _hydrateFeedMemory(_feedCacheKey());
     });
     unawaited(_startLoad());
   }
@@ -1075,7 +1209,7 @@ class _FeedTabState extends State<FeedTab>
   }
 
   Widget _loadMoreFooter() {
-    if (_error != null) {
+    if (_loadMoreError != null) {
       return Center(
         child: TextButton.icon(
           onPressed: () => _load(_page + 1, true),
@@ -1085,7 +1219,7 @@ class _FeedTabState extends State<FeedTab>
       );
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_loading) _load(_page + 1, true);
+      if (mounted && !_loading && !_refreshing) _load(_page + 1, true);
     });
     return const Padding(
       padding: EdgeInsets.all(12),
@@ -1102,7 +1236,10 @@ class _FeedTabState extends State<FeedTab>
       return _refreshableHint(icon: Icons.wifi_off_rounded, text: _error!);
     }
     if (_items.isEmpty && _loading) {
-      return const SizedBox.expand(child: LkLoadingIndicator());
+      return MotionRefreshIndicator(
+        onRefresh: _refresh,
+        child: const ScrollableStatus(child: LkLoadingIndicator()),
+      );
     }
     if (_items.isEmpty) {
       return _refreshableHint(
@@ -1121,19 +1258,30 @@ class _FeedTabState extends State<FeedTab>
     if (visibleItems.isEmpty) {
       return MotionRefreshIndicator(
         onRefresh: _refresh,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
+        child: Stack(
           children: [
-            if (showRankSelector) _rankSelector(),
-            if (showRecommend) _HomeRecommendCard(books: visibleRecommend),
-            FilteredListContinuation(
-              message: '当前列表作品已根据“隐藏勇者书籍”设置过滤',
-              hasMore: _hasMore,
-              loading: _loading,
-              error: _error,
-              pageKey: _page,
-              onLoadMore: () => _load(_page + 1, true),
-            )
+            ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                if (showRankSelector) _rankSelector(),
+                if (showRecommend) _HomeRecommendCard(books: visibleRecommend),
+                FilteredListContinuation(
+                  message: '当前列表作品已根据“隐藏勇者书籍”设置过滤',
+                  hasMore: _hasMore,
+                  loading: _loading,
+                  error: _loadMoreError,
+                  pageKey: _page,
+                  onLoadMore: () => _load(_page + 1, true),
+                )
+              ],
+            ),
+            if (_refreshing)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: MotionLinearProgressIndicator(minHeight: 2),
+              ),
           ],
         ),
       );
@@ -1220,7 +1368,18 @@ class _FeedTabState extends State<FeedTab>
 
     return MotionRefreshIndicator(
       onRefresh: _refresh,
-      child: _listMode ? listView : gridView,
+      child: Stack(
+        children: [
+          _listMode ? listView : gridView,
+          if (_refreshing)
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: MotionLinearProgressIndicator(minHeight: 2),
+            ),
+        ],
+      ),
     );
   }
 
@@ -1788,14 +1947,13 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
         });
       }
     } catch (e) {
-      if (isCurrent()) {
-        setState(() {
-          if (loadMore) {
-            _loadMoreError = e;
-          } else {
-            _error = e.toString();
-          }
-        });
+      if (!mounted || !isCurrent()) return;
+      if (loadMore) {
+        setState(() => _loadMoreError = e);
+      } else if (_items.isEmpty) {
+        setState(() => _error = e.toString());
+      } else {
+        showLkError(context, e);
       }
     } finally {
       if (isCurrent()) {
@@ -1860,11 +2018,21 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
       );
     }
     if (_loading && _items.isEmpty) {
-      return const SizedBox.expand(child: LkLoadingIndicator());
+      return MotionRefreshIndicator(
+        onRefresh: _load,
+        child: const ScrollableStatus(child: LkLoadingIndicator()),
+      );
     }
     if (_error != null && _items.isEmpty) {
-      return Center(
-          child: Text(_error!, style: TextStyle(color: scheme.onSurfaceVariant)));
+      return MotionRefreshIndicator(
+        onRefresh: _load,
+        child: ScrollableStatus(
+          child: ContentStateView(
+            message: _error!,
+            onRetry: _load,
+          ),
+        ),
+      );
     }
     final hideBrave = LKStore.hideBraveBooks.value;
     final visibleItems = _items
@@ -2046,14 +2214,10 @@ class _CloudHistoryTabState extends State<CloudHistoryTab> {
 
   Widget _historyFooter() {
     if (_loadingMore) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 18),
-        child: Center(
-          child: SizedBox.square(
-            dimension: 22,
-            child: MotionProgressIndicator(strokeWidth: 2),
-          ),
-        ),
+      return const LkLoadingIndicator(
+        minHeight: 56,
+        size: 22,
+        strokeWidth: 2,
       );
     }
     if (_loadMoreError != null) {
@@ -2084,6 +2248,7 @@ class MyTab extends StatefulWidget {
 }
 
 class _MyTabState extends State<MyTab> {
+  int _loadedUid = 0;
   LKMyProfile? _profile;
   List<LKMedal> _medals = const [];
   bool _profileLoading = false;
@@ -2123,6 +2288,7 @@ class _MyTabState extends State<MyTab> {
     final session = LKClient.shared.session;
     final request = ++_profileRequest;
     if (!session.isLoggedIn) {
+      _loadedUid = 0;
       if (mounted) {
         setState(() {
           _profile = null;
@@ -2133,6 +2299,27 @@ class _MyTabState extends State<MyTab> {
         });
       }
       return;
+    }
+    final switchedAccount = session.uid != _loadedUid;
+    _loadedUid = session.uid;
+    if (mounted) {
+      setState(() {
+        if (switchedAccount) {
+          _profile = null;
+          _medals = const [];
+          _messageSummary = const LKMessageSummary();
+        }
+        _profileLoading = true;
+        _profileError = null;
+      });
+    } else {
+      _profileLoading = true;
+      _profileError = null;
+      if (switchedAccount) {
+        _profile = null;
+        _medals = const [];
+        _messageSummary = const LKMessageSummary();
+      }
     }
     final messageSummaryFuture = _reloadMessageSummary(request);
     if (!waitForMessages) unawaited(messageSummaryFuture);
@@ -2147,35 +2334,64 @@ class _MyTabState extends State<MyTab> {
     final cachedProfile = cached[0] as LKMyProfile?;
     final cachedMedals = cached[1] as List<LKMedal>?;
     if (!mounted || request != _profileRequest) return;
-    setState(() {
-      if (cachedProfile != null) _profile = cachedProfile;
-      _medals = cachedMedals ?? cachedProfile?.medals ?? const [];
-      _profileLoading = true;
-      _profileError = null;
-    });
-    try {
-      final profile = await profileFuture;
-      if (mounted) {
-        YomiruAvatarCache.precache(context, [profile.avatar, session.avatar]);
-      }
-      if (!mounted || request != _profileRequest) return;
-      final initialMedals = profile.medals.isNotEmpty
-          ? profile.medals
-          : (cachedMedals ?? const <LKMedal>[]);
+    if (cachedProfile != null ||
+        (_medals.isEmpty && cachedMedals != null && cachedMedals.isNotEmpty)) {
       setState(() {
-        _profile = profile;
-        _medals = initialMedals;
-        _profileLoading = false;
+        if (cachedProfile != null) _profile = cachedProfile;
+        if (_medals.isEmpty) {
+          _medals = cachedMedals ?? cachedProfile?.medals ?? const [];
+        }
+        _profileError = null;
       });
-      unawaited(LKStore.cacheMyProfile(session.uid, profile));
+    }
+    try {
+      if (_profile == null) {
+        final results = await Future.wait<Object?>([profileFuture, medalsFuture]);
+        if (!mounted || request != _profileRequest) return;
+        final profile = results[0]! as LKMyProfile;
+        final loadedMedals = results[1] as List<LKMedal>?;
+        YomiruAvatarCache.precache(context, [profile.avatar, session.avatar]);
+        final nextMedals = loadedMedals ??
+            (profile.medals.isNotEmpty
+                ? profile.medals
+                : (cachedMedals ?? const <LKMedal>[]));
+        setState(() {
+          _profile = profile;
+          _medals = nextMedals;
+          _profileLoading = false;
+          _profileError = null;
+        });
+        unawaited(LKStore.cacheMyProfile(session.uid, profile));
+        if (nextMedals.isNotEmpty) {
+          unawaited(LKStore.cacheMedals(session.uid, nextMedals));
+        }
+      } else {
+        final profile = await profileFuture;
+        if (mounted) {
+          YomiruAvatarCache.precache(context, [profile.avatar, session.avatar]);
+        }
+        if (!mounted || request != _profileRequest) return;
+        final initialMedals = profile.medals.isNotEmpty
+            ? profile.medals
+            : (_medals.isNotEmpty
+                ? _medals
+                : (cachedMedals ?? const <LKMedal>[]));
+        setState(() {
+          _profile = profile;
+          _medals = initialMedals;
+          _profileLoading = false;
+          _profileError = null;
+        });
+        unawaited(LKStore.cacheMyProfile(session.uid, profile));
 
-      final loadedMedals = await medalsFuture;
-      if (!mounted || request != _profileRequest) return;
-      if (loadedMedals != null) {
-        setState(() => _medals = loadedMedals);
-        unawaited(LKStore.cacheMedals(session.uid, loadedMedals));
-      } else if (initialMedals.isNotEmpty) {
-        unawaited(LKStore.cacheMedals(session.uid, initialMedals));
+        final loadedMedals = await medalsFuture;
+        if (!mounted || request != _profileRequest) return;
+        if (loadedMedals != null) {
+          setState(() => _medals = loadedMedals);
+          unawaited(LKStore.cacheMedals(session.uid, loadedMedals));
+        } else if (initialMedals.isNotEmpty) {
+          unawaited(LKStore.cacheMedals(session.uid, initialMedals));
+        }
       }
     } catch (_) {
       final loadedMedals = await medalsFuture;
@@ -2299,9 +2515,10 @@ class _MyTabState extends State<MyTab> {
                 if (s.isLoggedIn) ...[
                   const LkFadedDivider(),
                   if (_profileLoading && profile == null)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Center(child: MotionProgressIndicator()),
+                    const LkLoadingIndicator(
+                      minHeight: 48,
+                      size: 22,
+                      strokeWidth: 2,
                     ),
                   if (profile != null) _profileSummary(profile),
                   if (_profileError != null && profile == null)
@@ -2821,4 +3038,38 @@ class _DockedListeningDockOverlay extends StatelessWidget {
       },
     );
   }
+}
+
+class _FeedMemoryEntry {
+  const _FeedMemoryEntry({
+    required this.client,
+    required this.uid,
+    required this.sessionRev,
+    required this.cacheEpoch,
+    required this.items,
+    required this.page,
+    required this.hasMore,
+  });
+
+  final LKClient client;
+  final int uid;
+  final int sessionRev;
+  final int cacheEpoch;
+  final List<LKBook> items;
+  final int page;
+  final bool hasMore;
+}
+
+class _RecommendMemoryEntry {
+  const _RecommendMemoryEntry({
+    required this.client,
+    required this.sessionRev,
+    required this.cacheEpoch,
+    required this.books,
+  });
+
+  final LKClient client;
+  final int sessionRev;
+  final int cacheEpoch;
+  final List<LKBook> books;
 }

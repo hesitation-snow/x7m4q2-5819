@@ -8,6 +8,7 @@ import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../widgets/common.dart';
 import '../widgets/content_state_view.dart';
+import '../widgets/scrollable_status.dart';
 import 'user_profile_page.dart';
 
 /// 私信聊天
@@ -42,6 +43,7 @@ class _DMChatPageState extends State<_DMChatPageBody> {
   bool _sending = false;
   int _loadSerial = 0;
   bool _loading = true;
+  bool _refreshing = false;
   bool _loadingMore = false;
   int _page = 1;
   bool _hasMore = true;
@@ -80,8 +82,10 @@ class _DMChatPageState extends State<_DMChatPageBody> {
   Future<void> _load() async {
     if (!_session.isCurrent || !mounted) return;
     final serial = ++_loadSerial;
+    final hasMessages = _messages.isNotEmpty;
     setState(() {
-      _loading = _messages.isEmpty;
+      _loading = !hasMessages;
+      _refreshing = hasMessages;
       _loadingMore = false;
       _error = null;
       _loadMoreError = null;
@@ -101,16 +105,25 @@ class _DMChatPageState extends State<_DMChatPageBody> {
       });
     } catch (e) {
       if (mounted && _session.isCurrent && serial == _loadSerial) {
-        setState(() => _error = e);
-        if (_messages.isNotEmpty) showLkError(context, e);
+        if (_messages.isNotEmpty) {
+          showLkError(context, e);
+        } else {
+          setState(() => _error = e);
+        }
       }
     } finally {
-      if (mounted && serial == _loadSerial) setState(() => _loading = false);
+      if (mounted && serial == _loadSerial) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
   Future<void> _loadMore() async {
     if (_loading ||
+        _refreshing ||
         _loadingMore ||
         !_hasMore ||
         !_session.isCurrent ||
@@ -152,22 +165,25 @@ class _DMChatPageState extends State<_DMChatPageBody> {
     if (content.isEmpty || _sending || !_session.isCurrent) return;
     final draft = _input.text;
     setState(() => _sending = true);
+    var sent = false;
     try {
       await LKApi.dmSend(widget.peerUid, content);
+      sent = true;
       if (!mounted || !_session.isCurrent) return;
       if (_input.text == draft) _input.clear();
-      await _load();
-      if (mounted && _session.isCurrent) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _scroll.hasClients && _scroll.offset > 0) {
-            unawaited(AppMotion.scrollTo(context, _scroll, 0));
-          }
-        });
-      }
     } catch (e) {
       if (mounted && _session.isCurrent) showLkError(context, e);
     } finally {
       if (mounted && _session.isCurrent) setState(() => _sending = false);
+    }
+    if (!sent || !mounted || !_session.isCurrent) return;
+    await _load();
+    if (mounted && _session.isCurrent) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scroll.hasClients && _scroll.offset > 0) {
+          unawaited(AppMotion.scrollTo(context, _scroll, 0));
+        }
+      });
     }
   }
 
@@ -175,7 +191,7 @@ class _DMChatPageState extends State<_DMChatPageBody> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final myUid = LKClient.shared.session.uid;
-    final showTopLoader = _hasMore || _loadingMore;
+    final showTopLoader = _hasMore || _loadingMore || _loadMoreError != null;
     final totalCount = _messages.length + (showTopLoader ? 1 : 0);
     final inset = MediaQuery.viewInsetsOf(context).bottom;
     if (_lastViewInset > 0 && inset == 0 && _focus.hasFocus) {
@@ -206,6 +222,11 @@ class _DMChatPageState extends State<_DMChatPageBody> {
             child: Text(widget.peerName.isEmpty ? '私信' : widget.peerName),
           ),
           actions: [
+            IconButton(
+              tooltip: '刷新消息',
+              onPressed: _loading || _refreshing ? null : _load,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
             if (widget.peerUid > 0)
               IconButton(
                 tooltip: '查看主页',
@@ -219,11 +240,13 @@ class _DMChatPageState extends State<_DMChatPageBody> {
             child: Stack(
               children: [
                 _loading && _messages.isEmpty
-                    ? const LkLoadingIndicator()
+                    ? const ScrollableStatus(child: LkLoadingIndicator())
                     : _error != null && _messages.isEmpty
-                        ? ContentStateView(
-                            message: _error.toString(),
-                            onRetry: _load,
+                        ? ScrollableStatus(
+                            child: ContentStateView(
+                              message: _error.toString(),
+                              onRetry: _load,
+                            ),
                           )
                         : NotificationListener<ScrollNotification>(
                             onNotification: (n) {
@@ -231,43 +254,52 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                                   _hasMore &&
                                   !_loadingMore &&
                                   !_loading &&
+                                  !_refreshing &&
                                   _loadMoreError == null) {
                                 unawaited(_loadMore());
                               }
                               return false;
                             },
-                            child: MotionRefreshIndicator(
-                              onRefresh: _load,
-                              child: ListView.builder(
-                                controller: _scroll,
-                                reverse: true,
-                                physics: const AlwaysScrollableScrollPhysics(),
-                                padding: const EdgeInsets.all(12),
-                                itemCount: totalCount,
-                                itemBuilder: (_, i) {
-                                  if (showTopLoader && i == _messages.length) {
-                                    return Center(
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                            vertical: 8),
-                                        child: _loadingMore
-                                            ? const SizedBox.square(
-                                                dimension: 20,
-                                                child: MotionProgressIndicator(
-                                                    strokeWidth: 2),
-                                              )
-                                            : TextButton.icon(
-                                                onPressed: _loadMore,
-                                                icon: const Icon(
-                                                    Icons.history_rounded,
-                                                    size: 16),
-                                                label: const Text('加载更早记录',
-                                                    style: TextStyle(
-                                                        fontSize: 12)),
-                                              ),
-                                      ),
-                                    );
-                                  }
+                            child: ListView.builder(
+                              controller: _scroll,
+                              reverse: true,
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.all(12),
+                              itemCount: totalCount,
+                              itemBuilder: (_, i) {
+                                if (showTopLoader && i == _messages.length) {
+                                  return Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 8),
+                                      child: _loadingMore
+                                          ? const LkLoadingIndicator(
+                                              size: 20,
+                                              strokeWidth: 2,
+                                            )
+                                          : _loadMoreError != null
+                                              ? TextButton.icon(
+                                                  onPressed: _loadMore,
+                                                  icon: const Icon(
+                                                      Icons.refresh_rounded,
+                                                      size: 16),
+                                                  label: const Text(
+                                                      '加载更早记录失败，点击重试',
+                                                      style: TextStyle(
+                                                          fontSize: 12)),
+                                                )
+                                              : TextButton.icon(
+                                                  onPressed: _loadMore,
+                                                  icon: const Icon(
+                                                      Icons.history_rounded,
+                                                      size: 16),
+                                                  label: const Text('加载更早记录',
+                                                      style: TextStyle(
+                                                          fontSize: 12)),
+                                                ),
+                                    ),
+                                  );
+                                }
                                   final actualIndex = _messages.length - 1 - i;
                                   final m = _messages[actualIndex];
                                   final mine = m.isMine(myUid);
@@ -314,7 +346,13 @@ class _DMChatPageState extends State<_DMChatPageBody> {
                                 },
                               ),
                             ),
-                          ),
+                if (_refreshing)
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: MotionLinearProgressIndicator(minHeight: 2),
+                  ),
                 if (inputActive)
                   Positioned.fill(
                     child: GestureDetector(

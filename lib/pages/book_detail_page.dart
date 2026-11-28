@@ -13,6 +13,7 @@ import '../services/avatar_cache.dart';
 import '../services/book_access_probe.dart';
 import '../widgets/common.dart';
 import '../widgets/content_state_view.dart';
+import '../widgets/scrollable_status.dart';
 import 'catalog_paging.dart';
 import 'login_page.dart';
 import 'reader_page.dart';
@@ -159,6 +160,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   int _bookRequestSerial = 0;
   bool _volumesLoading = true;
   String? _volumesError;
+  String? _volumesAppendError;
   int _volumesRequestSerial = 0;
   int _volumesPage = 0;
   bool _volumesHasMore = true;
@@ -295,73 +297,97 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   Future<void> _loadPrimary(
       {required int request, bool forceRefresh = false}) async {
-    try {
-      final bootstrap = await LKApi.readerBootstrap(widget.bookId);
-      final detailBook = bootstrap.book;
-      final book = detailBook.bookId > 0
+    Future<(LKReaderBootstrap?, Object?)> bootstrapSafely() async {
+      try {
+        return (await LKApi.readerBootstrap(widget.bookId), null);
+      } catch (e) {
+        return (null, e);
+      }
+    }
+
+    Future<(LKBook?, Object?)> detailSafely() async {
+      try {
+        return (
+          await LKApi.bookDetail(widget.bookId, forceRefresh: forceRefresh),
+          null,
+        );
+      } catch (e) {
+        return (null, e);
+      }
+    }
+
+    final bootstrapFuture = bootstrapSafely();
+    final detailFuture = detailSafely();
+    final localShelfFuture = !LKClient.shared.session.isLoggedIn
+        ? LKStore.isLocalShelf(widget.bookId)
+        : Future<bool>.value(false);
+
+    var bootstrapApplied = false;
+    final detailDone = detailFuture.then((res) async {
+      final detailBook = res.$1;
+      if (detailBook == null || !mounted || request != _bookRequestSerial) {
+        return;
+      }
+      final detail = detailBook.bookId > 0
           ? detailBook
           : LKBook.fromJson({...detailBook.toJson(), 'book_id': widget.bookId});
-      var localShelf = false;
-      if (!LKClient.shared.session.isLoggedIn) {
-        localShelf = await LKStore.isLocalShelf(widget.bookId);
-      }
+      final localShelf = await localShelfFuture;
       if (!mounted || request != _bookRequestSerial) return;
       setState(() {
-        _book = book;
+        _book = _preservePublisher(detail, _book);
+        if (!bootstrapApplied && localShelf) _inShelf = true;
+        _bindPublisher(_book!);
+        _error = null;
+      });
+      unawaited(
+          _refreshPublisherFollowStatus(_book!, forceRefresh: forceRefresh));
+      if (!forceRefresh && _volumes.isNotEmpty) {
+        unawaited(_loadCatalogPreview());
+      }
+    });
+
+    final bootstrapDone = bootstrapFuture.then((res) async {
+      final bootstrap = res.$1;
+      if (bootstrap == null || !mounted || request != _bookRequestSerial) {
+        return;
+      }
+      final localShelf = await localShelfFuture;
+      if (!mounted || request != _bookRequestSerial) return;
+      bootstrapApplied = true;
+      final detailBook = bootstrap.book;
+      final bootBook = detailBook.bookId > 0
+          ? detailBook
+          : LKBook.fromJson({...detailBook.toJson(), 'book_id': widget.bookId});
+      setState(() {
+        _book =
+            _book != null ? _preservePublisher(_book!, bootBook) : bootBook;
         _inShelf = bootstrap.inShelf || localShelf;
         _hasHistory = bootstrap.hasHistory && bootstrap.readChapterId > 0;
         _readVolumeId = bootstrap.readVolumeId;
         _readChapterId = bootstrap.readChapterId;
         _readChapterTitle = bootstrap.readChapterTitle;
-        _bindPublisher(book);
+        _bindPublisher(_book!);
         _error = null;
       });
       unawaited(
-          _refreshPublisherFollowStatus(book, forceRefresh: forceRefresh));
-      // 聚合接口先让页面和阅读按钮可用，完整简介随后静默刷新。
-      if (forceRefresh) {
-        await _loadBook(request: request, background: true, forceRefresh: true);
-      } else {
-        unawaited(_loadBook(request: request, background: true));
-      }
-    } catch (_) {
-      if (!mounted || request != _bookRequestSerial) return;
-      await Future.wait<void>([
-        _loadBook(request: request, forceRefresh: forceRefresh),
-        _loadLibraryState(),
-      ]);
-    }
-  }
+          _refreshPublisherFollowStatus(_book!, forceRefresh: forceRefresh));
+    });
 
-  Future<void> _loadBook(
-      {required int request,
-      bool background = false,
-      bool forceRefresh = false}) async {
-    try {
-      final detailBook =
-          await LKApi.bookDetail(widget.bookId, forceRefresh: forceRefresh);
-      if (!mounted || request != _bookRequestSerial) return;
-      // 详情接口个别缓存/兼容响应可能缺少 book_id,但当前页面路由 ID 是可靠的。
-      final detail = detailBook.bookId > 0
-          ? detailBook
-          : LKBook.fromJson({...detailBook.toJson(), 'book_id': widget.bookId});
-      // 发布者资料以 reader-bootstrap 的 publisher 对象为准；详情接口
-      // 若只返回展示名称，不应覆盖已经取得的 UID 和头像。
-      final book = _preservePublisher(detail, _book);
-      if (!mounted) return;
-      setState(() {
-        _book = book;
-        _bindPublisher(book);
-        _error = null;
-      });
-      unawaited(_refreshPublisherFollowStatus(book));
-      if (!forceRefresh) unawaited(_loadCatalogPreview());
-    } catch (e) {
-      if (!background &&
-          mounted &&
-          request == _bookRequestSerial &&
-          _book == null) {
-        setState(() => _error = e.toString());
+    await Future.wait<void>([detailDone, bootstrapDone]);
+    if (!mounted || request != _bookRequestSerial) return;
+    final bootRes = await bootstrapFuture;
+    final detailRes = await detailFuture;
+    if (!mounted || request != _bookRequestSerial) return;
+    if (bootRes.$1 == null) {
+      if (detailRes.$1 != null) {
+        await _loadLibraryState();
+      } else {
+        final err = detailRes.$2 ?? bootRes.$2;
+        if (_book == null) {
+          setState(() => _error = err?.toString() ?? '书籍加载失败');
+        } else if (forceRefresh && err != null) {
+          showLkError(context, err);
+        }
       }
     }
   }
@@ -375,7 +401,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
     if (mounted) {
       setState(() {
         _volumesLoading = true;
-        _volumesError = null;
+        if (append) {
+          _volumesAppendError = null;
+        } else {
+          _volumesError = null;
+          _volumesAppendError = null;
+        }
       });
     }
     try {
@@ -404,11 +435,18 @@ class _BookDetailPageState extends State<BookDetailPage> {
           _volumeErrors.removeWhere((id, _) => !validIds.contains(id));
         }
         _volumesError = null;
+        _volumesAppendError = null;
       });
       if (!forceRefresh) unawaited(_loadCatalogPreview());
-    } catch (_) {
+    } catch (e) {
       if (mounted && request == _volumesRequestSerial) {
-        setState(() => _volumesError = '目录加载失败，请检查网络后重试');
+        if (append) {
+          setState(() => _volumesAppendError = '更多目录加载失败，点击重试');
+        } else if (_volumes.isNotEmpty) {
+          showLkError(context, e);
+        } else {
+          setState(() => _volumesError = '目录加载失败，请检查网络后重试');
+        }
       }
     } finally {
       if (mounted && request == _volumesRequestSerial) {
@@ -500,12 +538,20 @@ class _BookDetailPageState extends State<BookDetailPage> {
   }
 
   Future<void> _loadLibraryState() async {
+    final request = _bookRequestSerial;
+    final rev = LKClient.sessionRev.value;
+    final uid = LKClient.shared.session.uid;
+    bool current() =>
+        mounted &&
+        request == _bookRequestSerial &&
+        rev == LKClient.sessionRev.value &&
+        uid == LKClient.shared.session.uid;
     if (LKClient.shared.session.isLoggedIn) {
       try {
         final st = await LKApi.client.post(
             '/api/new-content-read/get-book-library-state',
             LKApi.client.authed({'book_id': widget.bookId}));
-        if (!mounted) return;
+        if (!current()) return;
         final historyRaw = st['history'];
         final history = historyRaw is Map
             ? Map<String, dynamic>.from(historyRaw)
@@ -529,7 +575,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
       } catch (_) {}
       return;
     }
-    if (await LKStore.isLocalShelf(widget.bookId) && mounted) {
+    if (await LKStore.isLocalShelf(widget.bookId) && current()) {
       setState(() => _inShelf = true);
     }
   }
@@ -668,6 +714,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   void _onPublisherSessionChanged() {
     if (!mounted) return;
+    _volumesRequestSerial++;
+    _catalogPreviewRequestSerial++;
+    _volumeChapterRequests.updateAll((_, v) => v + 1);
     final book = _book;
     setState(() {
       _inShelf = false;
@@ -676,6 +725,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
       _readChapterId = 0;
       _readChapterTitle = '';
       _publisherFollowBusy = false;
+      _catalogPreview = const [];
+      _catalogPreviewLoading = false;
+      _catalogPreviewError = null;
       if (book != null) _bindPublisher(book);
     });
     unawaited(_load(forceRefresh: true));
@@ -967,13 +1019,20 @@ class _BookDetailPageState extends State<BookDetailPage> {
       floatingActionButtonAnimator: FloatingActionButtonAnimator.noAnimation,
       appBar: b == null ? AppBar(title: const Text('书籍详情')) : null,
       body: _error != null && b == null
-          ? Center(
-              child: TextButton.icon(
-                  onPressed: _load,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('书籍加载失败，点击重试')))
+          ? MotionRefreshIndicator(
+              onRefresh: () => _load(forceRefresh: true),
+              child: ScrollableStatus(
+                child: ContentStateView(
+                  message: '书籍加载失败：$_error',
+                  onRetry: () => _load(forceRefresh: true),
+                ),
+              ),
+            )
           : b == null
-              ? const LkLoadingIndicator()
+              ? MotionRefreshIndicator(
+                  onRefresh: () => _load(forceRefresh: true),
+                  child: const ScrollableStatus(child: LkLoadingIndicator()),
+                )
               : MotionRefreshIndicator(
                   onRefresh: () => _load(forceRefresh: true),
                   child: CustomScrollView(
@@ -1197,7 +1256,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                                   child: _volumeCard(v),
                                 );
                               }
-                              if (_volumesError != null) {
+                              if (_volumesAppendError != null) {
                                 return Padding(
                                   padding:
                                       const EdgeInsets.symmetric(vertical: 8),
@@ -1594,12 +1653,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
       return const [
         Padding(
           padding: EdgeInsets.fromLTRB(14, 2, 14, 14),
-          child: Center(
-            child: SizedBox(
-              width: 18,
-              height: 18,
-              child: MotionProgressIndicator(strokeWidth: 2),
-            ),
+          child: LkLoadingIndicator(
+            minHeight: 32,
+            size: 18,
+            strokeWidth: 2,
           ),
         ),
       ];
@@ -1687,6 +1744,7 @@ class _ChaptersPageState extends State<ChaptersPage> {
   String? _error;
   bool _initialLoading = true;
   bool _loadingMore = false;
+  bool _refreshing = false;
   bool _locatingCurrent = false;
   bool _hasMore = true;
   bool _descending = false;
@@ -1771,14 +1829,20 @@ class _ChaptersPageState extends State<ChaptersPage> {
     });
   }
 
-  Future<void> _refresh() => _loadPage(reset: true, forceRefresh: true);
+  Future<void> _refresh() => _loadPage(
+        reset: true,
+        forceRefresh: true,
+        preserveExisting: _chapters.isNotEmpty,
+      );
 
   Future<void> _jumpToCurrentChapter() async {
     final targetId = widget.currentChapterId;
+    final serial = _requestSerial;
     if (targetId <= 0 || _locatingCurrent) return;
     setState(() => _locatingCurrent = true);
     try {
       while (mounted &&
+          serial == _requestSerial &&
           !_chapters.any((c) => c.chapterId == targetId) &&
           _hasMore &&
           _error == null) {
@@ -1788,7 +1852,7 @@ class _ChaptersPageState extends State<ChaptersPage> {
           await _loadPage();
         }
       }
-      if (!mounted) return;
+      if (!mounted || serial != _requestSerial) return;
       if (_chapters.any((c) => c.chapterId == targetId)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           final ctx = _currentChapterKey.currentContext;
@@ -1809,15 +1873,21 @@ class _ChaptersPageState extends State<ChaptersPage> {
     }
   }
 
-  Future<void> _loadPage(
-      {bool reset = false, bool forceRefresh = false}) async {
+  Future<void> _loadPage({
+    bool reset = false,
+    bool forceRefresh = false,
+    bool preserveExisting = false,
+  }) async {
     if (!reset && (_initialLoading || _loadingMore || !_hasMore)) {
       return;
     }
     final request = reset ? ++_requestSerial : _requestSerial;
     final logicalPage = reset ? 1 : _loadedLogicalPages + 1;
+    final keepingChapters = reset && preserveExisting && _chapters.isNotEmpty;
     setState(() {
-      if (reset) {
+      if (keepingChapters) {
+        _refreshing = true;
+      } else if (reset) {
         _chapters = const [];
         _loadedLogicalPages = 0;
         _hasMore = true;
@@ -1862,13 +1932,18 @@ class _ChaptersPageState extends State<ChaptersPage> {
       });
     } catch (e) {
       if (mounted && request == _requestSerial) {
-        setState(() => _error = e.toString());
+        if (keepingChapters) {
+          showLkError(context, e);
+        } else {
+          setState(() => _error = e.toString());
+        }
       }
     } finally {
       if (mounted && request == _requestSerial) {
         setState(() {
           _initialLoading = false;
           _loadingMore = false;
+          _refreshing = false;
         });
         _scheduleFillViewport();
       }
@@ -1900,15 +1975,10 @@ class _ChaptersPageState extends State<ChaptersPage> {
 
   Widget _footer() {
     if (_loadingMore) {
-      return const SizedBox(
-        height: 72,
-        child: Center(
-          child: SizedBox(
-            width: 22,
-            height: 22,
-            child: MotionProgressIndicator(strokeWidth: 2),
-          ),
-        ),
+      return const LkLoadingIndicator(
+        minHeight: 72,
+        size: 22,
+        strokeWidth: 2,
       );
     }
     if (_error != null) {
@@ -2022,14 +2092,16 @@ class _ChaptersPageState extends State<ChaptersPage> {
                       onRetry: () => _loadPage(reset: true),
                     ),
                   )
-                : ListView.builder(
-                    controller: _scroll,
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: EdgeInsets.only(
-                        bottom: MediaQuery.of(context).padding.bottom),
-                    itemCount: _chapters.length + 1,
-                    itemBuilder: (_, i) {
-                      if (i == _chapters.length) return _footer();
+                : Stack(
+                    children: [
+                      ListView.builder(
+                        controller: _scroll,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: EdgeInsets.only(
+                            bottom: MediaQuery.of(context).padding.bottom),
+                        itemCount: _chapters.length + 1,
+                        itemBuilder: (_, i) {
+                          if (i == _chapters.length) return _footer();
                       final c = _chapters[i];
                       final isCurrent = c.chapterId == widget.currentChapterId;
                       return Column(
@@ -2075,6 +2147,15 @@ class _ChaptersPageState extends State<ChaptersPage> {
                         ],
                       );
                     },
+                      ),
+                      if (_refreshing)
+                        const Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: MotionLinearProgressIndicator(minHeight: 2),
+                        ),
+                    ],
                   ),
       ),
     );

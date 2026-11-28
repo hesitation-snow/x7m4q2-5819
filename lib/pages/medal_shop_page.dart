@@ -1,15 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 
-import '../services/app_motion.dart';
-import '../widgets/account_scope.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/store.dart';
+import '../services/app_motion.dart';
 import '../services/avatar_cache.dart';
+import '../widgets/account_scope.dart';
 import '../widgets/common.dart';
 import '../widgets/content_state_view.dart';
+import '../widgets/scrollable_status.dart';
 
 class MedalShopPage extends StatelessWidget {
   const MedalShopPage({super.key});
@@ -68,9 +71,18 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
     'exchange',
   };
 
+  static final Map<String, _MedalShopMemoryEntry> _memoryCache = {};
+
+  static String _cacheScopeKey(int uid, bool allMedals) =>
+      '${uid}_${allMedals ? 'all' : 'default'}';
+
+  static String _diskCacheKey(int uid, bool allMedals) =>
+      'medal_shop_cache_v1_${_cacheScopeKey(uid, allMedals)}';
+
   Map<String, dynamic>? _data;
   String? _error;
   bool _loading = true;
+  bool _refreshing = false;
   final Set<String> _busy = <String>{};
   Set<String> _ownedMedalIds = <String>{};
   Set<String> _ownedMedalNames = <String>{};
@@ -80,11 +92,26 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
     super.initState();
     _tabs = MotionTabController(length: 2, vsync: this);
     LKStore.allMedalsEnabled.addListener(_onAllMedalsModeChanged);
+    final cached = _readMemorySnapshot();
+    if (cached != null) {
+      _applyShopData(cached);
+      _loading = false;
+    }
     _load();
   }
 
   void _onAllMedalsModeChanged() {
-    if (mounted) unawaited(_load());
+    if (!mounted) return;
+    final cached = _readMemorySnapshot();
+    if (cached != null) {
+      setState(() {
+        _applyShopData(cached);
+        _loading = false;
+        _refreshing = true;
+        _error = null;
+      });
+    }
+    unawaited(_load());
   }
 
   @override
@@ -94,41 +121,135 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
     super.dispose();
   }
 
+  Map<String, dynamic>? _readMemorySnapshot() {
+    final session = LKClient.shared.session;
+    if (!session.isLoggedIn || _session.uid <= 0) return null;
+    final key = _cacheScopeKey(_session.uid, LKStore.allMedalsEnabled.value);
+    final entry = _memoryCache[key];
+    if (entry == null || !entry.matchesCurrent(session)) return null;
+    return entry.data;
+  }
+
+  void _writeMemorySnapshot(
+      int uid, bool allMedals, Map<String, dynamic> data) {
+    final session = LKClient.shared.session;
+    if (!session.isLoggedIn || uid <= 0) return;
+    _memoryCache[_cacheScopeKey(uid, allMedals)] = _MedalShopMemoryEntry(
+      client: LKApi.client,
+      sessionRev: LKClient.sessionRev.value,
+      securityKey: session.securityKey,
+      cacheEpoch: LKStore.contentCacheEpoch,
+      data: data,
+    );
+  }
+
+  Future<Map<String, dynamic>?> _readDiskSnapshot(
+    int uid,
+    bool allMedals,
+  ) async {
+    if (uid <= 0) return null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_diskCacheKey(uid, allMedals));
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      return Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writeDiskSnapshot(
+    int uid,
+    bool allMedals,
+    Map<String, dynamic> data,
+    bool Function() isCurrent,
+  ) async {
+    if (uid <= 0 || !isCurrent()) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!isCurrent()) return;
+      await prefs.setString(_diskCacheKey(uid, allMedals), jsonEncode(data));
+    } catch (_) {}
+  }
+
+  void _applyShopData(Map<String, dynamic> data) {
+    _data = data;
+    final owned = _readOwnedMedals(data);
+    _ownedMedalIds = owned.$1;
+    _ownedMedalNames = owned.$2;
+    _taskItems = _itemsFor(_taskKeys);
+    _exchangeItems = _itemsFor(_exchangeKeys);
+  }
+
   Future<void> _load() async {
     if (!_session.isCurrent) return;
     final serial = ++_loadSerial;
+    final uid = _session.uid;
+    final allMedals = LKStore.allMedalsEnabled.value;
+    bool current() => mounted && _session.isCurrent && serial == _loadSerial;
     if (!LKClient.shared.session.isLoggedIn) {
       setState(() {
+        _data = null;
+        _taskItems = const [];
+        _exchangeItems = const [];
+        _ownedMedalIds = <String>{};
+        _ownedMedalNames = <String>{};
         _loading = false;
+        _refreshing = false;
         _error = '登录后才能查看勋章商城';
       });
       return;
     }
     setState(() {
-      _loading = true;
       _error = null;
+      if (_data == null) {
+        _loading = true;
+      } else {
+        _refreshing = true;
+      }
     });
+    final networkFuture = LKApi.medalCenter();
+    if (_data == null) {
+      unawaited(_readDiskSnapshot(uid, allMedals).then((cached) {
+        if (!current() || cached == null || _data != null) return;
+        setState(() {
+          _applyShopData(cached);
+          _loading = false;
+          _refreshing = true;
+          _error = null;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _session.isCurrent) _precacheMedalImages();
+        });
+      }));
+    }
     try {
-      final data = await LKApi.medalCenter();
-      if (!mounted || !_session.isCurrent || serial != _loadSerial) return;
+      final data = await networkFuture;
+      if (!mounted || !current()) return;
+      _writeMemorySnapshot(uid, allMedals, data);
       setState(() {
-        _data = data;
+        _applyShopData(data);
         _loading = false;
-        final owned = _readOwnedMedals(data);
-        _ownedMedalIds = owned.$1;
-        _ownedMedalNames = owned.$2;
-        _taskItems = _itemsFor(_taskKeys);
-        _exchangeItems = _itemsFor(_exchangeKeys);
+        _refreshing = false;
+        _error = null;
       });
+      unawaited(_writeDiskSnapshot(uid, allMedals, data, current));
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _session.isCurrent) _precacheMedalImages();
       });
     } catch (e) {
-      if (mounted && _session.isCurrent && serial == _loadSerial) {
+      if (mounted && current()) {
+        final hasExisting = _data != null;
         setState(() {
           _loading = false;
-          _error = e.toString();
+          _refreshing = false;
+          _error = hasExisting ? null : e.toString();
         });
+        if (hasExisting) {
+          showLkError(context, e);
+        }
       }
     }
   }
@@ -550,9 +671,11 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
         ),
       ),
       body: _loading && _data == null
-          ? const Center(child: LkLoadingIndicator())
+          ? const ScrollableStatus(child: LkLoadingIndicator())
           : _error != null && _data == null
-              ? ContentStateView(message: _error!, onRetry: _load)
+              ? ScrollableStatus(
+                  child: ContentStateView(message: _error!, onRetry: _load),
+                )
               : Column(
                   children: [
                     Material(
@@ -566,22 +689,33 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
                       ),
                     ),
                     Expanded(
-                      child: TabBarView(
-                        controller: _tabs,
-                        physics: AppMotion.isDisabled(context)
-                            ? const NeverScrollableScrollPhysics()
-                            : null,
+                      child: Stack(
                         children: [
-                          _sectionView(
-                            taskItems,
-                            task: true,
-                            emptyText: '暂无任务勋章',
+                          TabBarView(
+                            controller: _tabs,
+                            physics: AppMotion.isDisabled(context)
+                                ? const NeverScrollableScrollPhysics()
+                                : null,
+                            children: [
+                              _sectionView(
+                                taskItems,
+                                task: true,
+                                emptyText: '暂无任务勋章',
+                              ),
+                              _sectionView(
+                                exchangeItems,
+                                task: false,
+                                emptyText: '暂无可兑换勋章',
+                              ),
+                            ],
                           ),
-                          _sectionView(
-                            exchangeItems,
-                            task: false,
-                            emptyText: '暂无可兑换勋章',
-                          ),
+                          if (_refreshing)
+                            const Positioned(
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              child: MotionLinearProgressIndicator(minHeight: 2),
+                            ),
                         ],
                       ),
                     ),
@@ -704,4 +838,27 @@ class _MedalShopPageState extends State<_MedalShopPageBody>
             ),
     );
   }
+}
+
+class _MedalShopMemoryEntry {
+  const _MedalShopMemoryEntry({
+    required this.client,
+    required this.sessionRev,
+    required this.securityKey,
+    required this.cacheEpoch,
+    required this.data,
+  });
+
+  final Object client;
+  final int sessionRev;
+  final String securityKey;
+  final int cacheEpoch;
+  final Map<String, dynamic> data;
+
+  bool matchesCurrent(LKSession session) =>
+      session.isLoggedIn &&
+      identical(client, LKApi.client) &&
+      sessionRev == LKClient.sessionRev.value &&
+      securityKey == session.securityKey &&
+      cacheEpoch == LKStore.contentCacheEpoch;
 }

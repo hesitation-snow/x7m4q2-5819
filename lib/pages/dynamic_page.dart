@@ -18,7 +18,10 @@ import '../services/avatar_cache.dart';
 import '../services/emoji_catalog.dart';
 import '../services/dynamic_like_state.dart';
 import '../widgets/common.dart';
+import '../widgets/content_state_view.dart';
 import '../widgets/emoji_text.dart';
+import '../widgets/filtered_list_continuation.dart';
+import '../widgets/scrollable_status.dart';
 import '../widgets/topic_picker_sheet.dart';
 import 'book_detail_page.dart';
 import 'dynamic_publish_page.dart';
@@ -77,6 +80,9 @@ class _DynamicPageState extends State<DynamicPage> {
   bool _loading = false;
   String? _error;
   bool _errorFromAppend = false;
+  static final Map<String, _DynamicMemoryEntry> _memoryCache = {};
+
+  bool _refreshing = false;
   String _feedTab = 'mixed';
   String _contentFilter = 'all';
   LKTopicTag? _topicFilter;
@@ -89,7 +95,7 @@ class _DynamicPageState extends State<DynamicPage> {
   final Map<int, bool> _favoriteOverrides = {};
   final Set<int> _favoritePending = {};
   Map<int, List<LKMedal>> _globalMedals = {};
-  Map<String, String> _emojiUrls = const {};
+  Map<String, String> _emojiUrls = YomiruEmojiCatalog.urls;
   int _unreadCount = 0;
   final ValueNotifier<double> _topBarFrac = ValueNotifier<double>(1.0);
   final ScrollController _scrollController = ScrollController();
@@ -157,6 +163,7 @@ class _DynamicPageState extends State<DynamicPage> {
     LKStore.hideBraveBooks.addListener(_onBraveFilterChanged);
     LKStore.braveBookRevision.addListener(_onBraveFilterChanged);
     widget.scrollToTopTrigger?.addListener(_scrollToTop);
+    _hydrateMemorySnapshot(_dynamicCacheKey());
     _loadGlobalMedals();
     _loadEmojis();
     _loadUnread();
@@ -213,7 +220,8 @@ class _DynamicPageState extends State<DynamicPage> {
       _cursor = '';
       _page = 1;
       _hasMore = true;
-      _loading = false;
+      _loading = true;
+      _refreshing = false;
       _unreadCount = 0;
       _error = null;
       _errorFromAppend = false;
@@ -233,12 +241,77 @@ class _DynamicPageState extends State<DynamicPage> {
     );
   }
 
+  void _hydrateMemorySnapshot(String cacheKey) {
+    final entry = _memoryCache[cacheKey];
+    if (entry == null) return;
+    final uid = entry.anonymous ? 0 : LKClient.shared.session.uid;
+    if (!identical(entry.client, LKApi.client) ||
+        entry.uid != uid ||
+        entry.sessionRev != LKClient.sessionRev.value ||
+        entry.cacheEpoch != LKStore.contentCacheEpoch ||
+        (_topicFilter?.effectiveId ?? 0) != 0) {
+      _memoryCache.remove(cacheKey);
+      return;
+    }
+    if (entry.items.isNotEmpty) {
+      _items = [...entry.items];
+      _cursor = entry.cursor;
+      _page = entry.page;
+      _hasMore = entry.hasMore;
+      _loading = false;
+      _error = null;
+      _errorFromAppend = false;
+      _showingCachedFeed = true;
+      _rebuildVisibleItems();
+    }
+  }
+
+  void _writeMemorySnapshot(
+    String cacheKey, {
+    required LKClient client,
+    required int uid,
+    required int sessionRev,
+    required int cacheEpoch,
+    required bool anonymous,
+    required List<LKDynamicItem> items,
+    required String cursor,
+    required int page,
+    required bool hasMore,
+  }) {
+    if (items.isEmpty) return;
+    _memoryCache[cacheKey] = _DynamicMemoryEntry(
+      client: client,
+      uid: anonymous ? 0 : uid,
+      sessionRev: sessionRev,
+      cacheEpoch: cacheEpoch,
+      anonymous: anonymous,
+      items: List<LKDynamicItem>.unmodifiable(items),
+      cursor: cursor,
+      page: page,
+      hasMore: hasMore,
+    );
+  }
+
   Future<void> _startLoad() async {
-    if (mounted) setState(() => _loading = true);
-    final request = _requestSerial;
     final uid = LKClient.shared.session.uid;
+    final rev = LKClient.sessionRev.value;
     final feedTab = _feedTab;
     final cacheKey = _dynamicCacheKey(uid: uid, feedTab: feedTab);
+    if (mounted) {
+      setState(() {
+        if (_items.isEmpty) {
+          _loading = true;
+        } else {
+          _refreshing = true;
+        }
+      });
+    }
+    var networkDone = false;
+    final networkFuture = _load(
+      silent: true,
+      singlePage: true,
+      onNetworkResolved: () => networkDone = true,
+    );
     final results = await Future.wait<Object?>([
       LKStore.cachedDynamicPage(cacheKey),
       DynamicLikeState.load(LKClient.shared.session.isLoggedIn ? uid : 0)
@@ -247,16 +320,17 @@ class _DynamicPageState extends State<DynamicPage> {
     final cached = results[0] as List<LKDynamicItem>?;
     final likes = results[1] as Map<int, bool>;
     if (!mounted ||
-        request != _requestSerial ||
+        rev != LKClient.sessionRev.value ||
         uid != LKClient.shared.session.uid ||
         feedTab != _feedTab ||
         cacheKey != _dynamicCacheKey()) {
+      await networkFuture;
       return;
     }
     _likeFallback
       ..clear()
       ..addAll(likes);
-    if (cached != null) {
+    if (cached != null && cached.isNotEmpty && _items.isEmpty && !networkDone) {
       setState(() {
         _showingCachedFeed = true;
         _items = [...cached];
@@ -264,13 +338,12 @@ class _DynamicPageState extends State<DynamicPage> {
         _cursor = '';
         _page = 1;
         _hasMore = true;
-        // Keep the footer from starting an append before refresh begins.
-        _loading = true;
+        _loading = false;
         _error = null;
         _rebuildVisibleItems();
       });
     }
-    await _load(silent: _items.isNotEmpty);
+    await networkFuture;
   }
 
   Future<void> _loadUnread() async {
@@ -310,21 +383,39 @@ class _DynamicPageState extends State<DynamicPage> {
     }
   }
 
-  Future<void> _load({bool append = false, bool silent = false}) async {
-    if (append && (_loading || !_hasMore)) return;
+  Future<void> _load({
+    bool append = false,
+    bool silent = false,
+    bool singlePage = false,
+    VoidCallback? onNetworkResolved,
+  }) async {
+    if (append && (_loading || _refreshing || !_hasMore)) return;
     final requestSerial = ++_requestSerial;
     final feedTab = _feedTab;
     final topicTagId = _topicFilter?.effectiveId ?? 0;
     final page = append ? _page + 1 : 1;
+    final client = LKApi.client;
+    final uid = LKClient.shared.session.uid;
+    final rev = LKClient.sessionRev.value;
+    final epoch = LKStore.contentCacheEpoch;
     final source = dynamicFeedSource(feedTab,
         loggedIn: LKClient.shared.session.isLoggedIn,
         mode: LKStore.dynamicFeedMode.value);
     final previousCursor = _cursor;
     final cacheKey = _dynamicCacheKey();
+    final hasExisting = _items.isNotEmpty;
     if (mounted) {
       setState(() {
-        _loading = true;
-        if (!append) {
+        if (append) {
+          _loading = true;
+          _error = null;
+          _errorFromAppend = false;
+        } else if (hasExisting) {
+          _refreshing = true;
+          _error = null;
+          _errorFromAppend = false;
+        } else {
+          _loading = true;
           _error = null;
           _errorFromAppend = false;
         }
@@ -354,21 +445,24 @@ class _DynamicPageState extends State<DynamicPage> {
 
       final result = append
           ? await fetchPage(page, previousCursor)
-          : await refreshPageWindow(
-              loadPage: fetchPage,
-              keyOf: _dynamicKey,
-              targetItems: _items.length.clamp(0, 100),
-              isCurrent: () =>
-                  mounted &&
-                  requestSerial == _requestSerial &&
-                  topicTagId == (_topicFilter?.effectiveId ?? 0),
-            );
+          : singlePage
+              ? await fetchPage(1, '')
+              : await refreshPageWindow(
+                  loadPage: fetchPage,
+                  keyOf: _dynamicKey,
+                  targetItems: _items.length.clamp(0, 100),
+                  isCurrent: () =>
+                      mounted &&
+                      requestSerial == _requestSerial &&
+                      topicTagId == (_topicFilter?.effectiveId ?? 0),
+                );
       if (!mounted ||
           requestSerial != _requestSerial ||
           feedTab != _feedTab ||
           topicTagId != (_topicFilter?.effectiveId ?? 0)) {
         return;
       }
+      onNetworkResolved?.call();
       final medalUpdates = <int, List<LKMedal>>{};
       for (final item in result.items) {
         if (item.authorUid > 0 && item.authorMedals.isNotEmpty) {
@@ -380,6 +474,24 @@ class _DynamicPageState extends State<DynamicPage> {
       final oldKeys = _items.map(_dynamicKey).toSet();
       final addedItems =
           result.items.any((item) => !oldKeys.contains(_dynamicKey(item)));
+      final nextItems = append
+          ? mergePagedItems(_items, result.items, keyOf: _dynamicKey)
+          : [...result.items];
+      final nextHasMore = result.hasMore && !(append && !addedItems);
+      if (topicTagId == 0) {
+        _writeMemorySnapshot(
+          cacheKey,
+          client: client,
+          uid: uid,
+          sessionRev: rev,
+          cacheEpoch: epoch,
+          anonymous: source.anonymous,
+          items: nextItems,
+          cursor: result.cursor,
+          page: result.page,
+          hasMore: nextHasMore,
+        );
+      }
       setState(() {
         _showingCachedFeed = false;
         if (!source.anonymous) {
@@ -387,16 +499,14 @@ class _DynamicPageState extends State<DynamicPage> {
             if (item.hasLikedState) _likeActions.remove(item.dynamicId);
           }
         }
-        if (append) {
-          _items = mergePagedItems(_items, result.items, keyOf: _dynamicKey);
-        } else {
-          _items = [...result.items];
-        }
+        _items = nextItems;
         _cursor = result.cursor;
         _page = result.page;
-        _hasMore = result.hasMore && !(append && !addedItems);
+        _hasMore = nextHasMore;
         _error = null;
         _errorFromAppend = false;
+        _loading = false;
+        _refreshing = false;
         if (medalUpdates.isNotEmpty) {
           _globalMedals = {..._globalMedals, ...medalUpdates};
         }
@@ -410,17 +520,27 @@ class _DynamicPageState extends State<DynamicPage> {
       }
     } catch (e) {
       if (mounted && requestSerial == _requestSerial) {
-        setState(() {
-          _error = e.toString();
-          _errorFromAppend = append;
-        });
-        if ((silent || !append) && _items.isNotEmpty) {
+        onNetworkResolved?.call();
+        if (append) {
+          setState(() {
+            _error = e.toString();
+            _errorFromAppend = true;
+          });
+        } else if (_items.isEmpty) {
+          setState(() {
+            _error = e.toString();
+            _errorFromAppend = false;
+          });
+        } else {
           _showRefreshError();
         }
       }
     } finally {
       if (mounted && requestSerial == _requestSerial) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
       }
     }
   }
@@ -436,7 +556,10 @@ class _DynamicPageState extends State<DynamicPage> {
       _hasMore = true;
       _error = null;
       _errorFromAppend = false;
-      _loading = false;
+      _loading = true;
+      _refreshing = false;
+      _showingCachedFeed = false;
+      _hydrateMemorySnapshot(_dynamicCacheKey());
       _rebuildVisibleItems();
     });
     _topBarFrac.value = 1.0;
@@ -824,7 +947,7 @@ class _DynamicPageState extends State<DynamicPage> {
       );
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load(append: true);
+      if (mounted && !_loading && !_refreshing) _load(append: true);
     });
     return const Padding(
       padding: EdgeInsets.all(16),
@@ -844,17 +967,14 @@ class _DynamicPageState extends State<DynamicPage> {
       child: MotionRefreshIndicator(
         onRefresh: _load,
         child: _error != null && _items.isEmpty
-            ? _emptyState(_error!)
+            ? ScrollableStatus(
+                child: ContentStateView(
+                  message: _error!,
+                  onRetry: _load,
+                ),
+              )
             : _loading && visibleItems.isEmpty
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: MediaQuery.sizeOf(context).height * 0.65,
-                        child: const Center(child: LkLoadingIndicator()),
-                      ),
-                    ],
-                  )
+                ? const ScrollableStatus(child: LkLoadingIndicator())
                 : visibleItems.isEmpty && _topicFilter != null && !_loading
                     ? ListView(
                         physics: const AlwaysScrollableScrollPhysics(),
@@ -895,39 +1015,45 @@ class _DynamicPageState extends State<DynamicPage> {
                         ],
                       )
                     : visibleItems.isEmpty && !_hasMore && !_loading
-                    ? _emptyState(_contentFilter == 'book'
-                        ? '暂无作品发布动态'
-                        : LKStore.hideBraveBooks.value && _items.isNotEmpty
-                            ? '已按设置隐藏勇者相关动态'
-                            : '暂无动态')
-                    : visibleItems.isEmpty &&
-                            LKStore.hideBraveBooks.value &&
-                            _items.isNotEmpty
-                        ? ListView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            children: [
-                              SizedBox(
-                                height:
-                                    MediaQuery.sizeOf(context).height * 0.45,
-                                child: const Center(
-                                    child: Text('已按设置隐藏勇者相关动态')),
-                              ),
-                            ],
-                          )
-                    : CustomScrollView(
-                        controller: _scrollController,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        slivers: [
-                          SliverMasonryGrid(
-                            gridDelegate:
-                                SliverSimpleGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: columns,
-                            ),
-                            mainAxisSpacing: 0,
-                            crossAxisSpacing: 0,
-                            delegate: SliverChildBuilderDelegate((_, i) {
-                              Widget buildCard(int itemIndex) {
-                                final d = visibleItems[itemIndex];
+                        ? _emptyState(_contentFilter == 'book'
+                            ? '暂无作品发布动态'
+                            : LKStore.hideBraveBooks.value && _items.isNotEmpty
+                                ? '已按设置隐藏勇者相关动态'
+                                : '暂无动态')
+                        : visibleItems.isEmpty && _items.isNotEmpty
+                            ? ListView(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                children: [
+                                  FilteredListContinuation(
+                                    message: _contentFilter == 'book'
+                                        ? '当前页暂无作品发布动态'
+                                        : '已按设置隐藏勇者相关动态',
+                                    hasMore: _hasMore,
+                                    loading: _loading,
+                                    error: _errorFromAppend ? _error : null,
+                                    pageKey: _page,
+                                    onLoadMore: () => _load(append: true),
+                                  ),
+                                ],
+                              )
+                            : Stack(
+                                children: [
+                                  CustomScrollView(
+                                    controller: _scrollController,
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    slivers: [
+                                      SliverMasonryGrid(
+                                        gridDelegate:
+                                            SliverSimpleGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: columns,
+                                        ),
+                                        mainAxisSpacing: 0,
+                                        crossAxisSpacing: 0,
+                                        delegate: SliverChildBuilderDelegate(
+                                            (_, i) {
+                                          Widget buildCard(int itemIndex) {
+                                            final d = visibleItems[itemIndex];
                                 final hasBook = d.bookId > 0 &&
                                     d.bookTitle.trim().isNotEmpty;
                                 final medals = _medalsFor(d);
@@ -1224,6 +1350,17 @@ class _DynamicPageState extends State<DynamicPage> {
                           ),
                         ],
                       ),
+                                  if (_refreshing)
+                                    const Positioned(
+                                      top: 0,
+                                      left: 0,
+                                      right: 0,
+                                      child: MotionLinearProgressIndicator(
+                                        minHeight: 2,
+                                      ),
+                                    ),
+                                ],
+                              ),
       ),
     );
   }
@@ -1437,4 +1574,28 @@ class _DynamicPageState extends State<DynamicPage> {
       ),
     );
   }
+}
+
+class _DynamicMemoryEntry {
+  const _DynamicMemoryEntry({
+    required this.client,
+    required this.uid,
+    required this.sessionRev,
+    required this.cacheEpoch,
+    required this.anonymous,
+    required this.items,
+    required this.cursor,
+    required this.page,
+    required this.hasMore,
+  });
+
+  final LKClient client;
+  final int uid;
+  final int sessionRev;
+  final int cacheEpoch;
+  final bool anonymous;
+  final List<LKDynamicItem> items;
+  final String cursor;
+  final int page;
+  final bool hasMore;
 }

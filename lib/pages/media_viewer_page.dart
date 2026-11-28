@@ -38,7 +38,7 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
   bool _zoomed = false;
   bool _showChrome = true;
   double _dragOffsetY = 0;
-  int _retry = 0;
+  final Map<int, int> _retryCounts = <int, int>{};
 
   @override
   void initState() {
@@ -60,6 +60,7 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
 
   Widget _image(int index) {
     final url = _urls[index];
+    final retry = _retryCounts[index] ?? 0;
     final controller =
         _transforms.putIfAbsent(index, TransformationController.new);
     Offset tap = Offset.zero;
@@ -83,7 +84,7 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
             () => _zoomed = controller.value.getMaxScaleOnAxis() > 1.01),
         child: Center(
             child: CachedNetworkImage(
-          key: ValueKey('$url:$_retry'),
+          key: ValueKey('$url:$retry'),
           fadeOutDuration: AppMotion.duration(context, 150),
           fadeInDuration: AppMotion.duration(context, 150),
           cacheManager: widget.cacheManager,
@@ -104,7 +105,9 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
                     cacheKey: widget.cacheManager is IllustrationCacheManager
                         ? illustrationCacheKey(url)
                         : null);
-                if (mounted) setState(() => _retry++);
+                if (mounted) {
+                  setState(() => _retryCounts[index] = retry + 1);
+                }
               }),
         )),
       ),
@@ -121,8 +124,9 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
         // 保存与当前大图展示共用同一请求，不能另开 http.get 绕过插画队列。
         final file = await widget.cacheManager!.getSingleFile(url);
         bytes = await file.readAsBytes();
-      } else if (widget.cacheManager != null) {
-        final fileInfo = await widget.cacheManager!.getFileFromCache(url);
+      } else {
+        final manager = widget.cacheManager ?? DefaultCacheManager();
+        final fileInfo = await manager.getFileFromCache(url);
         if (fileInfo != null && fileInfo.file.existsSync()) {
           bytes = await fileInfo.file.readAsBytes();
         }

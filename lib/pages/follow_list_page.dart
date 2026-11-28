@@ -44,8 +44,14 @@ class _FollowListPageState extends State<_FollowListPageBody>
   bool _followersHasMore = true;
   bool _followingLoading = false;
   bool _followersLoading = false;
+  bool _followingRefreshing = false;
+  bool _followersRefreshing = false;
   String? _followingError;
   String? _followersError;
+  String? _followingLoadMoreError;
+  String? _followersLoadMoreError;
+  int _followingSerial = 0;
+  int _followersSerial = 0;
   final Set<int> _followActionUids = <int>{};
   final _session = SessionStamp();
   final Map<int, bool> _followOverrides = {};
@@ -70,23 +76,37 @@ class _FollowListPageState extends State<_FollowListPageBody>
   }
 
   Future<void> _loadFollowing({bool reset = false}) async {
-    if (!LKClient.shared.session.isLoggedIn || _followingLoading) return;
-    if (!reset && !_followingHasMore) return;
+    if (!LKClient.shared.session.isLoggedIn) return;
+    if (!reset && (_followingLoading || _followingRefreshing || !_followingHasMore)) {
+      return;
+    }
+    final serial = reset ? ++_followingSerial : _followingSerial;
     final page = reset ? 1 : _followingPage + 1;
     final revision = _relationRevision;
+    final hasExisting = _following.isNotEmpty;
     if (mounted && _session.isCurrent) {
       setState(() {
-        _followingLoading = true;
+        if (reset && hasExisting) {
+          _followingRefreshing = true;
+          _followingLoading = false;
+        } else {
+          _followingLoading = true;
+        }
         _followingError = null;
+        _followingLoadMoreError = null;
       });
     }
     try {
       final result = await LKApi.myFollowing(page);
-      if (!mounted || !_session.isCurrent) return;
+      if (!mounted || !_session.isCurrent || serial != _followingSerial) return;
       YomiruAvatarCache.precache(
           context, result.items.map((item) => item.avatar));
       setState(() {
-        if (reset) _following.clear();
+        if (reset) {
+          _followOverrides.removeWhere((_, v) => v == true);
+          _changedUsers.clear();
+          _following.clear();
+        }
         _appendUnique(
             _following,
             result.items
@@ -104,31 +124,52 @@ class _FollowListPageState extends State<_FollowListPageBody>
         }
         _followingHasMore = result.hasMore && result.items.isNotEmpty;
         _followingError = null;
+        _followingLoadMoreError = null;
       });
     } catch (e) {
-      if (mounted && _session.isCurrent) {
-        setState(() => _followingError = _friendlyError(e));
+      if (mounted && _session.isCurrent && serial == _followingSerial) {
+        final msg = _friendlyError(e);
+        if (!reset) {
+          setState(() => _followingLoadMoreError = msg);
+        } else if (_following.isNotEmpty) {
+          showLkError(context, msg);
+        } else {
+          setState(() => _followingError = msg);
+        }
       }
     } finally {
-      if (mounted && _session.isCurrent) {
-        setState(() => _followingLoading = false);
+      if (mounted && _session.isCurrent && serial == _followingSerial) {
+        setState(() {
+          _followingLoading = false;
+          _followingRefreshing = false;
+        });
       }
     }
   }
 
   Future<void> _loadFollowers({bool reset = false}) async {
-    if (!LKClient.shared.session.isLoggedIn || _followersLoading) return;
-    if (!reset && !_followersHasMore) return;
+    if (!LKClient.shared.session.isLoggedIn) return;
+    if (!reset && (_followersLoading || _followersRefreshing || !_followersHasMore)) {
+      return;
+    }
+    final serial = reset ? ++_followersSerial : _followersSerial;
     final page = reset ? 1 : _followersPage + 1;
+    final hasExisting = _followers.isNotEmpty;
     if (mounted && _session.isCurrent) {
       setState(() {
-        _followersLoading = true;
+        if (reset && hasExisting) {
+          _followersRefreshing = true;
+          _followersLoading = false;
+        } else {
+          _followersLoading = true;
+        }
         _followersError = null;
+        _followersLoadMoreError = null;
       });
     }
     try {
       final result = await LKApi.myFollowers(page);
-      if (!mounted || !_session.isCurrent) return;
+      if (!mounted || !_session.isCurrent || serial != _followersSerial) return;
       YomiruAvatarCache.precache(
           context, result.items.map((item) => item.avatar));
       setState(() {
@@ -143,14 +184,25 @@ class _FollowListPageState extends State<_FollowListPageBody>
         _followersTotal = result.total;
         _followersHasMore = result.hasMore && result.items.isNotEmpty;
         _followersError = null;
+        _followersLoadMoreError = null;
       });
     } catch (e) {
-      if (mounted && _session.isCurrent) {
-        setState(() => _followersError = _friendlyError(e));
+      if (mounted && _session.isCurrent && serial == _followersSerial) {
+        final msg = _friendlyError(e);
+        if (!reset) {
+          setState(() => _followersLoadMoreError = msg);
+        } else if (_followers.isNotEmpty) {
+          showLkError(context, msg);
+        } else {
+          setState(() => _followersError = msg);
+        }
       }
     } finally {
-      if (mounted && _session.isCurrent) {
-        setState(() => _followersLoading = false);
+      if (mounted && _session.isCurrent && serial == _followersSerial) {
+        setState(() {
+          _followersLoading = false;
+          _followersRefreshing = false;
+        });
       }
     }
   }
@@ -163,10 +215,7 @@ class _FollowListPageState extends State<_FollowListPageBody>
   }
 
   Future<void> _refresh() async {
-    if (_followingLoading || _followersLoading) return;
-    // An explicit refresh may reflect changes made from another device.
-    _followOverrides.clear();
-    _changedUsers.clear();
+    if (_followingRefreshing || _followersRefreshing) return;
     _relationRevision++;
     await Future.wait([
       _loadFollowing(reset: true),
@@ -277,7 +326,9 @@ class _FollowListPageState extends State<_FollowListPageBody>
         actions: [
           IconButton(
             tooltip: '刷新',
-            onPressed: _followingLoading || _followersLoading ? null : _refresh,
+            onPressed: _followingRefreshing || _followersRefreshing
+                ? null
+                : _refresh,
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
@@ -289,34 +340,37 @@ class _FollowListPageState extends State<_FollowListPageBody>
           ],
         ),
       ),
-      body: MotionRefreshIndicator(
-        onRefresh: _refresh,
-        child: TabBarView(
-          physics: AppMotion.isDisabled(context)
-              ? const NeverScrollableScrollPhysics()
-              : null,
-          controller: _tabs,
-          children: [
-            _buildList(
-              items: _following,
-              followingTab: true,
-              loading: _followingLoading,
-              hasMore: _followingHasMore,
-              error: _followingError,
-              onRetry: () => _loadFollowing(reset: true),
-              onLoadMore: () => _loadFollowing(),
-            ),
-            _buildList(
-              items: _followers,
-              followingTab: false,
-              loading: _followersLoading,
-              hasMore: _followersHasMore,
-              error: _followersError,
-              onRetry: () => _loadFollowers(reset: true),
-              onLoadMore: () => _loadFollowers(),
-            ),
-          ],
-        ),
+      body: TabBarView(
+        physics: AppMotion.isDisabled(context)
+            ? const NeverScrollableScrollPhysics()
+            : null,
+        controller: _tabs,
+        children: [
+          _buildList(
+            items: _following,
+            followingTab: true,
+            loading: _followingLoading,
+            refreshing: _followingRefreshing,
+            hasMore: _followingHasMore,
+            error: _followingError,
+            loadMoreError: _followingLoadMoreError,
+            onRefresh: () => _loadFollowing(reset: true),
+            onRetry: () => _loadFollowing(reset: true),
+            onLoadMore: () => _loadFollowing(),
+          ),
+          _buildList(
+            items: _followers,
+            followingTab: false,
+            loading: _followersLoading,
+            refreshing: _followersRefreshing,
+            hasMore: _followersHasMore,
+            error: _followersError,
+            loadMoreError: _followersLoadMoreError,
+            onRefresh: () => _loadFollowers(reset: true),
+            onRetry: () => _loadFollowers(reset: true),
+            onLoadMore: () => _loadFollowers(),
+          ),
+        ],
       ),
     );
   }
@@ -325,60 +379,91 @@ class _FollowListPageState extends State<_FollowListPageBody>
     required List<LKFollowUser> items,
     required bool followingTab,
     required bool loading,
+    required bool refreshing,
     required bool hasMore,
     required String? error,
+    required String? loadMoreError,
+    required Future<void> Function() onRefresh,
     required VoidCallback onRetry,
     required VoidCallback onLoadMore,
   }) {
     if (loading && items.isEmpty) {
-      return const ScrollableStatus(child: LkLoadingIndicator());
+      return MotionRefreshIndicator(
+        onRefresh: onRefresh,
+        child: const ScrollableStatus(child: LkLoadingIndicator()),
+      );
     }
     if (error != null && items.isEmpty) {
-      return ScrollableStatus(
-        child: ContentStateView(
-          message: error,
-          onRetry: onRetry,
+      return MotionRefreshIndicator(
+        onRefresh: onRefresh,
+        child: ScrollableStatus(
+          child: ContentStateView(
+            message: error,
+            onRetry: onRetry,
+          ),
         ),
       );
     }
     if (items.isEmpty) {
-      return const ScrollableStatus(
-        child: ContentStateView(
-          message: '这里暂时没有用户',
-          icon: Icons.people_outline_rounded,
+      return MotionRefreshIndicator(
+        onRefresh: onRefresh,
+        child: const ScrollableStatus(
+          child: ContentStateView(
+            message: '这里暂时没有用户',
+            icon: Icons.people_outline_rounded,
+          ),
         ),
       );
     }
-    final showLoadMore = hasMore || loading || error != null;
-    return ListView.separated(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        12,
-        16,
-        MediaQuery.paddingOf(context).bottom + 16,
+    final showLoadMore = hasMore || loading || loadMoreError != null;
+    return MotionRefreshIndicator(
+      onRefresh: onRefresh,
+      child: Stack(
+        children: [
+          ListView.separated(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              12,
+              16,
+              MediaQuery.paddingOf(context).bottom + 16,
+            ),
+            physics: const AlwaysScrollableScrollPhysics(),
+            itemCount: items.length + (showLoadMore ? 1 : 0),
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              if (index == items.length) {
+                if (loadMoreError != null) {
+                  return Center(
+                      child: TextButton(
+                    onPressed: onLoadMore,
+                    child: const Text('加载失败，点击重试'),
+                  ));
+                }
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted &&
+                      _session.isCurrent &&
+                      !loading &&
+                      !refreshing) {
+                    onLoadMore();
+                  }
+                });
+                return const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: LkLoadingIndicator()),
+                );
+              }
+              return _userTile(items[index], followingTab: followingTab);
+            },
+          ),
+          if (refreshing)
+            const Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: MotionLinearProgressIndicator(minHeight: 2),
+            ),
+        ],
       ),
-      physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: items.length + (showLoadMore ? 1 : 0),
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        if (index == items.length) {
-          if (error != null) {
-            return Center(
-                child: TextButton(
-              onPressed: onLoadMore,
-              child: const Text('加载失败，点击重试'),
-            ));
-          }
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _session.isCurrent && !loading) onLoadMore();
-          });
-          return const Padding(
-            padding: EdgeInsets.all(16),
-            child: Center(child: LkLoadingIndicator()),
-          );
-        }
-        return _userTile(items[index], followingTab: followingTab);
-      },
     );
   }
 

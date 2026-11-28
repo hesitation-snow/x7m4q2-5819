@@ -33,6 +33,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   int _readerCacheCount = 0;
   int? _cacheBytes;
+  int _cacheUsageSerial = 0;
   bool _clearingCache = false;
   bool _checkingUpdate = false;
   Timer? _aboutPressTimer;
@@ -80,11 +81,12 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadCacheUsage() async {
+    final serial = ++_cacheUsageSerial;
     final values = await Future.wait<int>([
       ReaderContentCache.count(),
       YomiruAppCache.sizeBytes(),
     ]);
-    if (!mounted) return;
+    if (!mounted || serial != _cacheUsageSerial) return;
     setState(() {
       _readerCacheCount = values[0];
       _cacheBytes = values[1];
@@ -115,8 +117,6 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _clearingCache = true);
     try {
       await YomiruAppCache.clearAll();
-      if (!mounted) return;
-      await _loadCacheUsage();
       if (!mounted) return;
       showFloatingPrompt(context, '缓存已清除');
     } catch (e) {

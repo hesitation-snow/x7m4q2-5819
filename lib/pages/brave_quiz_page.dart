@@ -1,11 +1,15 @@
+import 'dart:async';
+
 import '../services/app_motion.dart';
 import 'package:flutter/material.dart';
 
 import '../api/lk_api.dart';
 import '../api/lk_client.dart';
 import '../api/models.dart';
+import '../widgets/account_scope.dart';
 import '../widgets/common.dart';
 import '../widgets/m3_controls.dart';
+import '../widgets/scrollable_status.dart';
 import 'login_page.dart';
 
 /// 勇者考试页面。
@@ -28,17 +32,33 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
   bool _submitting = false;
   String? _error;
   int _questionIndex = 0;
+  int _loadSerial = 0;
 
   @override
   void initState() {
     super.initState();
+    LKClient.sessionRev.addListener(_onSessionChanged);
     _load();
   }
 
+  @override
+  void dispose() {
+    LKClient.sessionRev.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  void _onSessionChanged() {
+    if (!mounted) return;
+    unawaited(_load());
+  }
+
   Future<void> _load() async {
+    final serial = ++_loadSerial;
+    final session = SessionStamp();
     if (mounted) {
       setState(() {
         _loading = true;
+        _submitting = false;
         _error = null;
         _result = null;
         _paper = null;
@@ -48,12 +68,14 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
       });
     }
     if (!LKClient.shared.session.isLoggedIn) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && serial == _loadSerial && session.isCurrent) {
+        setState(() => _loading = false);
+      }
       return;
     }
     try {
       final status = await LKApi.getBraveQuizState();
-      if (!mounted) return;
+      if (!mounted || serial != _loadSerial || !session.isCurrent) return;
       if (status.answered || !status.available) {
         setState(() {
           _status = status;
@@ -62,17 +84,17 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
         return;
       }
       final paper = await LKApi.getBraveQuizQuestions();
+      if (!mounted || serial != _loadSerial || !session.isCurrent) return;
       if (paper.questions.isEmpty) {
         throw LKException(-1, '题目加载失败，请稍后重试');
       }
-      if (!mounted) return;
       setState(() {
         _status = status;
         _paper = paper;
         _loading = false;
       });
     } catch (e) {
-      if (mounted) {
+      if (mounted && serial == _loadSerial && session.isCurrent) {
         setState(() {
           _loading = false;
           _error = e.toString();
@@ -147,13 +169,14 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
   Future<void> _submit() async {
     final paper = _paper;
     if (paper == null || _submitting) return;
+    final session = SessionStamp();
     setState(() => _submitting = true);
     try {
       final result = await LKApi.submitBraveQuiz(
         sessionId: paper.sessionId,
         answers: _answers,
       );
-      if (!mounted) return;
+      if (!mounted || !session.isCurrent) return;
       setState(() {
         _result = result;
         _submitting = false;
@@ -161,7 +184,7 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
       // 通过考试后刷新“我的”资料卡上的勇者标识。
       if (_resultPassed(result)) LKClient.sessionRev.value++;
     } catch (e) {
-      if (mounted) {
+      if (mounted && session.isCurrent) {
         setState(() => _submitting = false);
         showLkError(context, e);
       }
@@ -227,10 +250,7 @@ class _BraveQuizPageState extends State<BraveQuizPage> {
   }
 
   Widget _buildLoading() {
-    return _scrollBody([
-      const SizedBox(height: 220),
-      const LkLoadingIndicator(),
-    ]);
+    return const ScrollableStatus(child: LkLoadingIndicator());
   }
 
   Widget _buildError() {

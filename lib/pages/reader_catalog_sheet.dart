@@ -199,9 +199,9 @@ class _ReaderCatalogSheetState extends State<ReaderCatalogSheet> {
       setState(() {
         _chapters[vid] = merged;
         _loadedChapterPages[vid] = {...loadedPages, loadedPage};
-        _chapterTotals[vid] = result.total > 0
-            ? result.total
-            : (_volumeFor(vid)?.chapterCount ?? merged.length);
+        if (result.total > 0) {
+          _chapterTotals[vid] = result.total;
+        }
         if (loadedPage >= maxLoadedPage) {
           _maxPageHasMore[vid] = result.hasMore;
         }
@@ -370,12 +370,26 @@ class _ReaderCatalogSheetState extends State<ReaderCatalogSheet> {
               ? const LkLoadingIndicator(minHeight: 120, size: 24)
               : displayVolumes.isEmpty && _error != null
                   ? Center(
-                      child: TextButton.icon(
-                        onPressed: _volumePageLoading
-                            ? null
-                            : () => _loadVolumes(append: _volumesPage > 0),
-                        icon: const Icon(Icons.refresh_rounded, size: 18),
-                        label: Text(_error!),
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _error!,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: scheme.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 12),
+                            FilledButton.tonalIcon(
+                              onPressed: _volumePageLoading
+                                  ? null
+                                  : () => _loadVolumes(append: _volumesPage > 0),
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: const Text('重试'),
+                            ),
+                          ],
+                        ),
                       ),
                     )
                   : displayVolumes.isEmpty
@@ -413,11 +427,10 @@ class _ReaderCatalogSheetState extends State<ReaderCatalogSheet> {
                                   }
                                 });
                               }
-                              return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 10),
-                                child: MotionLinearProgressIndicator(
-                                  minHeight: 2,
-                                ),
+                              return const LkLoadingIndicator(
+                                minHeight: 36,
+                                size: 18,
+                                strokeWidth: 2,
                               );
                             }
                             final v = displayVolumes[i];
@@ -500,11 +513,10 @@ class _ReaderCatalogSheetState extends State<ReaderCatalogSheet> {
                                       chs == null &&
                                       chapterError == null &&
                                       _loadingVolumes.contains(vid))
-                                    const Padding(
-                                      padding: EdgeInsets.only(bottom: 12),
-                                      child: MotionLinearProgressIndicator(
-                                        minHeight: 2,
-                                      ),
+                                    const LkLoadingIndicator(
+                                      minHeight: 36,
+                                      size: 18,
+                                      strokeWidth: 2,
                                     ),
                                   if (expanded &&
                                       chs == null &&
@@ -569,11 +581,10 @@ class _ReaderCatalogSheetState extends State<ReaderCatalogSheet> {
                                         label: const Text('加载失败，点击重试'),
                                       ),
                                     if (_loadingVolumes.contains(vid))
-                                      const Padding(
-                                        padding:
-                                            EdgeInsets.symmetric(vertical: 10),
-                                        child: MotionLinearProgressIndicator(
-                                            minHeight: 2),
+                                      const LkLoadingIndicator(
+                                        minHeight: 36,
+                                        size: 18,
+                                        strokeWidth: 2,
                                       ),
                                     if (!_loadingVolumes.contains(vid) &&
                                         _hasNextPage(vid))

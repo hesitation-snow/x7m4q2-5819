@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../api/epub_catalog.dart';
 import '../api/home_channels.dart';
 import '../api/lk_api.dart';
+import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
@@ -26,6 +27,11 @@ class SearchPage extends StatefulWidget {
 }
 
 class _SearchPageState extends State<SearchPage> {
+  static LKClient? _taxonomyClient;
+  static int _taxonomyCacheEpoch = -1;
+  static List<Map<String, String>> _cachedTags = const [];
+  static List<Map<String, String>> _cachedChannels = const [];
+
   final _controller = TextEditingController();
   final _focus = FocusNode();
   bool _hasFocus = false;
@@ -40,6 +46,7 @@ class _SearchPageState extends State<SearchPage> {
   String _sort = 'relevance';
   String? _error;
   bool _loading = false;
+  bool _refreshing = false;
   int _page = 0;
   bool _hasMore = false;
   int _requestSerial = 0;
@@ -60,6 +67,7 @@ class _SearchPageState extends State<SearchPage> {
       _page = 0;
       _hasMore = false;
       _loading = false;
+      _refreshing = false;
       _error = null;
     });
   }
@@ -70,6 +78,11 @@ class _SearchPageState extends State<SearchPage> {
     if (value.trim().isEmpty) _search(0, false);
   }
 
+  bool get _hasValidTaxonomyCache =>
+      identical(_taxonomyClient, LKApi.client) &&
+      _taxonomyCacheEpoch == LKStore.contentCacheEpoch &&
+      (_cachedTags.isNotEmpty || _cachedChannels.isNotEmpty);
+
   @override
   void initState() {
     super.initState();
@@ -77,9 +90,17 @@ class _SearchPageState extends State<SearchPage> {
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
     LKStore.braveBookRevision.addListener(_onHideBraveRev);
     _tag = widget.initialTag;
-    _loadTaxonomy();
+    if (_hasValidTaxonomyCache) {
+      _tags = _cachedTags;
+      _channels = _cachedChannels;
+    }
+    final taxonomyFuture = _loadTaxonomy();
     if (widget.initialTag != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _search(0, false));
+      _loading = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await taxonomyFuture;
+        if (mounted) unawaited(_search(0, false));
+      });
     }
   }
 
@@ -111,6 +132,8 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Future<void> _loadTaxonomy() async {
+    final client = LKApi.client;
+    final epoch = LKStore.contentCacheEpoch;
     try {
       final t = await LKApi.searchTaxonomy();
       // 第一个 tab 的第一个 section = 热门标签(含"最近更新")
@@ -143,6 +166,14 @@ class _SearchPageState extends State<SearchPage> {
           'label': (c['label'] as String?) ?? '',
         });
       }
+      if (!identical(client, LKApi.client) ||
+          epoch != LKStore.contentCacheEpoch) {
+        return;
+      }
+      _taxonomyClient = client;
+      _taxonomyCacheEpoch = epoch;
+      _cachedTags = tags;
+      _cachedChannels = channels;
       if (!mounted) return;
       setState(() {
         _tags = tags;
@@ -153,9 +184,10 @@ class _SearchPageState extends State<SearchPage> {
     }
   }
 
-  Future<void> _search(int page, bool append) async {
+  Future<void> _search(int page, bool append,
+      {bool preserveItems = false}) async {
     if (!mounted) return;
-    if (append && (_loading || !_hasMore)) return;
+    if (append && (_loading || _refreshing || !_hasMore)) return;
     var query = _controller.text.trim();
     if (!append && query.isEmpty && _tag == null && _channel == null) {
       _clearResults();
@@ -194,18 +226,23 @@ class _SearchPageState extends State<SearchPage> {
             workType: workType
           );
     final request = ++_requestSerial;
+    final keepingItems = !append && preserveItems && _items.isNotEmpty;
     setState(() {
       if (!append) {
         _submitted = criteria;
-        _items.clear();
-        _page = 0;
-        _hasMore = false;
+        if (!keepingItems) {
+          _items.clear();
+          _page = 0;
+          _hasMore = false;
+        }
       }
       _error = null;
-      _loading = true;
+      _loading = !keepingItems;
+      _refreshing = keepingItems;
     });
     if (criteria.channelCode == 'epub') {
-      await _searchEpub(page, append, criteria, request);
+      await _searchEpub(page, append, criteria, request,
+          preservingItems: keepingItems);
       return;
     }
     try {
@@ -233,11 +270,18 @@ class _SearchPageState extends State<SearchPage> {
       });
     } catch (e) {
       if (mounted && request == _requestSerial) {
-        setState(() => _error = e.toString());
+        if (keepingItems) {
+          showLkError(context, e);
+        } else {
+          setState(() => _error = e.toString());
+        }
       }
     } finally {
       if (mounted && request == _requestSerial) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
       }
     }
   }
@@ -253,8 +297,9 @@ class _SearchPageState extends State<SearchPage> {
       String channelCode,
       String workType
     }) criteria,
-    int request,
-  ) async {
+    int request, {
+    bool preservingItems = false,
+  }) async {
     try {
       final query = criteria.query.trim();
       final List<dynamic> items;
@@ -293,11 +338,18 @@ class _SearchPageState extends State<SearchPage> {
       });
     } catch (e) {
       if (mounted && request == _requestSerial) {
-        setState(() => _error = e.toString());
+        if (preservingItems && _items.isNotEmpty) {
+          showLkError(context, e);
+        } else {
+          setState(() => _error = e.toString());
+        }
       }
     } finally {
       if (mounted && request == _requestSerial) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
       }
     }
   }
@@ -318,7 +370,10 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Future<void> _refresh() async {
-    await Future.wait([_search(0, false), _loadTaxonomy()]);
+    await Future.wait([
+      _search(0, false, preserveItems: _items.isNotEmpty),
+      _loadTaxonomy(),
+    ]);
   }
 
   @override
@@ -343,9 +398,11 @@ class _SearchPageState extends State<SearchPage> {
       child: Scaffold(
         body: MotionRefreshIndicator(
           onRefresh: _refresh,
-          child: CustomScrollView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            physics: const AlwaysScrollableScrollPhysics(),
+          child: Stack(
+            children: [
+              CustomScrollView(
+                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               SliverAppBar(
                 floating: true,
@@ -489,6 +546,15 @@ class _SearchPageState extends State<SearchPage> {
                 ),
               ),
               ..._resultSlivers(context),
+            ],
+          ),
+              if (_refreshing)
+                const Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: MotionLinearProgressIndicator(minHeight: 2),
+                ),
             ],
           ),
         ),

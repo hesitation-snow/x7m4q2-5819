@@ -9,6 +9,7 @@ import '../api/lk_api.dart';
 import '../api/models.dart';
 import '../services/avatar_cache.dart';
 import '../widgets/common.dart';
+import '../widgets/scrollable_status.dart';
 import 'book_detail_page.dart';
 import 'dm_chat_page.dart';
 import 'reader_page.dart';
@@ -77,7 +78,9 @@ class _MessagesPageState extends State<_MessagesPageBody>
 
   List<LKConversation> _conversations = const [];
   bool _dmLoading = false;
+  bool _dmRefreshing = false;
   bool _dmLoadingMore = false;
+  bool _refreshingAll = false;
   int _dmPage = 1;
   bool _dmHasMore = true;
   Object? _dmLoadMoreError;
@@ -349,9 +352,13 @@ class _MessagesPageState extends State<_MessagesPageBody>
 
   Future<void> _loadDm({bool loadMore = false, bool force = false}) async {
     if (loadMore) {
-      if (_dmLoading || _dmLoadingMore || !_dmHasMore) return;
+      if (_dmLoading || _dmRefreshing || _dmLoadingMore || !_dmHasMore) return;
     } else {
-      if (_dmLoading && !force) return;
+      if ((_dmLoading || _dmRefreshing) && !force) return;
+      if (_dmLoadingMore) {
+        _dmRequestSerial++;
+        _dmLoadingMore = false;
+      }
     }
     final request = ++_dmRequestSerial;
     final targetPage = loadMore ? _dmPage + 1 : 1;
@@ -361,6 +368,7 @@ class _MessagesPageState extends State<_MessagesPageBody>
         _dmLoadMoreError = null;
       } else {
         _dmLoading = _conversations.isEmpty;
+        _dmRefreshing = _conversations.isNotEmpty;
         _dmError = null;
       }
     });
@@ -384,22 +392,25 @@ class _MessagesPageState extends State<_MessagesPageBody>
           _dmPage = 1;
           _dmHasMore = conversations.length >= 20;
         }
+        _dmError = null;
+        _dmLoadMoreError = null;
       });
     } catch (error) {
       if (!mounted || !_session.isCurrent || request != _dmRequestSerial) {
         return;
       }
-      setState(() {
-        if (loadMore) {
-          _dmLoadMoreError = error;
-        } else {
-          _dmError = error;
-        }
-      });
+      if (loadMore) {
+        setState(() => _dmLoadMoreError = error);
+      } else if (_conversations.isNotEmpty) {
+        showLkError(context, error);
+      } else {
+        setState(() => _dmError = error);
+      }
     } finally {
       if (mounted && _session.isCurrent && request == _dmRequestSerial) {
         setState(() {
           _dmLoading = false;
+          _dmRefreshing = false;
           _dmLoadingMore = false;
         });
       }
@@ -407,12 +418,26 @@ class _MessagesPageState extends State<_MessagesPageBody>
   }
 
   Future<void> _refreshAll() async {
-    await Future.wait<void>([
-      _loadSummary(),
-      _loadDm(force: true),
-      for (final cat in _messageCategories)
-        if (cat.type != 'dm') _loadNotification(cat.type),
-    ]);
+    if (_refreshingAll) return;
+    setState(() => _refreshingAll = true);
+    try {
+      final activeType = _messageCategories[_activeIndex].type;
+      await Future.wait<void>([
+        _loadSummary(),
+        if (activeType == 'dm' || _conversations.isNotEmpty || _dmError != null)
+          _loadDm(force: true),
+        for (final cat in _messageCategories)
+          if (cat.type != 'dm' &&
+              (cat.type == activeType ||
+                  (_feeds[cat.type]?.page ?? 0) > 0 ||
+                  _feeds[cat.type]?.error != null))
+            _loadNotification(cat.type),
+      ]);
+    } finally {
+      if (mounted && _session.isCurrent) {
+        setState(() => _refreshingAll = false);
+      }
+    }
   }
 
   Future<void> _refreshActive() async {
@@ -446,7 +471,7 @@ class _MessagesPageState extends State<_MessagesPageBody>
         actions: [
           IconButton(
             tooltip: '全部刷新',
-            onPressed: _refreshAll,
+            onPressed: _refreshingAll ? null : _refreshAll,
             icon: const Icon(Icons.refresh_rounded),
           ),
           IconButton(
@@ -515,7 +540,10 @@ class _MessagesPageState extends State<_MessagesPageBody>
   Widget _buildNotificationBody(String type) {
     final feed = _feeds[type]!;
     if (feed.loading && feed.items.isEmpty) {
-      return const Center(child: MotionProgressIndicator());
+      return MotionRefreshIndicator(
+        onRefresh: _refreshActive,
+        child: const ScrollableStatus(child: LkLoadingIndicator()),
+      );
     }
     if (feed.error != null && feed.items.isEmpty) {
       return _refreshableState(
@@ -541,6 +569,8 @@ class _MessagesPageState extends State<_MessagesPageBody>
       onNotification: (notification) {
         if (notification.metrics.extentAfter < 360 &&
             feed.hasMore &&
+            !feed.loading &&
+            !feed.refreshing &&
             !feed.loadingMore &&
             feed.loadMoreError == null) {
           unawaited(_loadNotification(type, loadMore: true));
@@ -549,22 +579,33 @@ class _MessagesPageState extends State<_MessagesPageBody>
       },
       child: MotionRefreshIndicator(
         onRefresh: _refreshActive,
-        child: ListView.builder(
-          key: PageStorageKey<String>('messages-$type'),
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(
-              16, 12, 16, MediaQuery.paddingOf(context).bottom + 16),
-          itemCount: feed.items.length + 1,
-          itemBuilder: (context, index) {
-            if (index == feed.items.length) {
-              return _messageFooter(type, feed);
-            }
-            final item = feed.items[index];
-            if (type == 'like' || item.type == 'like') {
-              return _likeMessageCard(item, feed.markedRead);
-            }
-            return _messageCard(item, feed.markedRead);
-          },
+        child: Stack(
+          children: [
+            ListView.builder(
+              key: PageStorageKey<String>('messages-$type'),
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.fromLTRB(
+                  16, 12, 16, MediaQuery.paddingOf(context).bottom + 16),
+              itemCount: feed.items.length + 1,
+              itemBuilder: (context, index) {
+                if (index == feed.items.length) {
+                  return _messageFooter(type, feed);
+                }
+                final item = feed.items[index];
+                if (type == 'like' || item.type == 'like') {
+                  return _likeMessageCard(item, feed.markedRead);
+                }
+                return _messageCard(item, feed.markedRead);
+              },
+            ),
+            if (feed.refreshing)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: MotionLinearProgressIndicator(minHeight: 2),
+              ),
+          ],
         ),
       ),
     );
@@ -1114,7 +1155,10 @@ class _MessagesPageState extends State<_MessagesPageBody>
 
   Widget _buildDmBody() {
     if (_dmLoading && _conversations.isEmpty) {
-      return const Center(child: MotionProgressIndicator());
+      return MotionRefreshIndicator(
+        onRefresh: _refreshActive,
+        child: const ScrollableStatus(child: LkLoadingIndicator()),
+      );
     }
     if (_dmError != null && _conversations.isEmpty) {
       return _refreshableState(
@@ -1136,8 +1180,9 @@ class _MessagesPageState extends State<_MessagesPageBody>
       onNotification: (notification) {
         if (notification.metrics.extentAfter < 360 &&
             _dmHasMore &&
-            !_dmLoadingMore &&
             !_dmLoading &&
+            !_dmRefreshing &&
+            !_dmLoadingMore &&
             _dmLoadMoreError == null) {
           unawaited(_loadDm(loadMore: true));
         }
@@ -1145,18 +1190,29 @@ class _MessagesPageState extends State<_MessagesPageBody>
       },
       child: MotionRefreshIndicator(
         onRefresh: _refreshActive,
-        child: ListView.builder(
-          key: const PageStorageKey<String>('messages-dm'),
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(
-              16, 12, 16, MediaQuery.paddingOf(context).bottom + 16),
-          itemCount: _conversations.length + (showFooter ? 1 : 0),
-          itemBuilder: (context, index) {
-            if (index == _conversations.length) {
-              return _dmFooter();
-            }
-            return _conversationCard(_conversations[index]);
-          },
+        child: Stack(
+          children: [
+            ListView.builder(
+              key: const PageStorageKey<String>('messages-dm'),
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.fromLTRB(
+                  16, 12, 16, MediaQuery.paddingOf(context).bottom + 16),
+              itemCount: _conversations.length + (showFooter ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (index == _conversations.length) {
+                  return _dmFooter();
+                }
+                return _conversationCard(_conversations[index]);
+              },
+            ),
+            if (_dmRefreshing)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: MotionLinearProgressIndicator(minHeight: 2),
+              ),
+          ],
         ),
       ),
     );

@@ -761,8 +761,9 @@ class LKStore {
         final accountPageCaches = p
             .getKeys()
             .where((key) =>
-                key.startsWith(_pageCachePrefix) &&
-                key.contains('_u${cacheUid}_'))
+                (key.startsWith(_pageCachePrefix) &&
+                    key.contains('_u${cacheUid}_')) ||
+                key.startsWith('medal_shop_cache_v1_${cacheUid}_'))
             .toList(growable: false);
         await Future.wait(accountPageCaches.map(p.remove));
       }
@@ -791,6 +792,7 @@ class LKStore {
             key.startsWith('my_profile_cache_') ||
             key.startsWith('my_medals_cache_') ||
             key.startsWith('welfare_home_cache_v1_') ||
+            key.startsWith('medal_shop_cache_v1_') ||
             key.startsWith(_pageCachePrefix))
         .toList(growable: false);
     final removed = await Future.wait(keys.map(prefs.remove));
@@ -807,6 +809,7 @@ class LKStore {
           key.startsWith('my_profile_cache_') ||
           key.startsWith('my_medals_cache_') ||
           key.startsWith('welfare_home_cache_v1_') ||
+          key.startsWith('medal_shop_cache_v1_') ||
           key.startsWith(_pageCachePrefix));
       var total = 0;
       for (final key in keys) {

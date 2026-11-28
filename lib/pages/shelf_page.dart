@@ -15,6 +15,7 @@ import '../api/models.dart';
 import '../api/pagination.dart';
 import '../api/store.dart';
 import '../widgets/common.dart';
+import '../widgets/scrollable_status.dart';
 import 'book_detail_page.dart';
 
 /// 服务器书架
@@ -46,9 +47,10 @@ class _ShelfPageState extends State<ShelfPage> {
   bool _hasMore = true;
   bool _loading = true;
   bool _refreshing = false;
-  bool _listMode = false;
+  bool _listMode = LKStore.feedListMode.value;
   bool _localMode = false;
   bool _reloadAfterCurrent = false;
+  bool _networkResolvedCurrentLoad = false;
   int _statusVerificationGeneration = 0;
   int _braveProbeGeneration = 0;
   static final _statusQueue = BackgroundWorkQueue(concurrency: 3);
@@ -72,6 +74,9 @@ class _ShelfPageState extends State<ShelfPage> {
   void initState() {
     super.initState();
     _localMode = !LKClient.shared.session.isLoggedIn;
+    if (widget.listMode != null) {
+      _listMode = widget.listMode!;
+    }
     LKClient.sessionRev.addListener(_onSessionRev);
     LKStore.localShelfRev.addListener(_onLocalShelfRev);
     LKStore.hideBraveBooks.addListener(_onHideBraveRev);
@@ -185,7 +190,8 @@ class _ShelfPageState extends State<ShelfPage> {
       _page = 0;
       _hasMore = true;
       _error = null;
-      _loading = false;
+      _errorFromAppend = false;
+      _loading = true;
       _refreshing = false;
     });
     unawaited(_startLoad());
@@ -202,14 +208,16 @@ class _ShelfPageState extends State<ShelfPage> {
       }
       return;
     }
+    final serial = _loadSerial;
     // 本地书架不需要重新走完整加载流程;即使首次加载尚未结束,也直接同步最新数据。
     LKStore.localShelf().then((items) {
-      if (!mounted || !_localMode) return;
+      if (!mounted || !_localMode || serial != _loadSerial) return;
       setState(() {
         _items = items;
         _page = 1;
         _hasMore = false;
         _error = null;
+        _loading = false;
       });
     });
   }
@@ -256,8 +264,12 @@ class _ShelfPageState extends State<ShelfPage> {
       );
 
   Future<void> _startLoad() async {
-    final request = _loadSerial;
+    final request = ++_loadSerial;
+    _networkResolvedCurrentLoad = false;
     if (_localMode || !LKClient.shared.session.isLoggedIn) {
+      if (mounted && _items.isEmpty) {
+        setState(() => _loading = true);
+      }
       final items = await LKStore.localShelf();
       if (!mounted || request != _loadSerial || !_localMode) return;
       setState(() {
@@ -275,24 +287,26 @@ class _ShelfPageState extends State<ShelfPage> {
     }
     final uid = LKClient.shared.session.uid;
     final cacheKey = _shelfCacheKey(uid);
+    final networkFuture = _load(silent: true);
     final cached = await LKStore.cachedBooksPage(cacheKey);
     if (!mounted ||
-        request != _loadSerial ||
+        _networkResolvedCurrentLoad ||
         _localMode ||
         LKClient.shared.session.uid != uid ||
         cacheKey != _shelfCacheKey(LKClient.shared.session.uid)) {
+      await networkFuture;
       return;
     }
-    if (cached != null && cached.isNotEmpty) {
+    if (cached != null && cached.isNotEmpty && _items.isEmpty) {
       setState(() {
         _items = [...cached];
-        _page = cached.isEmpty ? 0 : 1;
+        _page = 1;
         _hasMore = cached.length >= 50;
         _error = null;
         _loading = false;
       });
     }
-    await _load(silent: _items.isNotEmpty);
+    await networkFuture;
   }
 
   @override
@@ -362,6 +376,7 @@ class _ShelfPageState extends State<ShelfPage> {
           uid != LKClient.shared.session.uid) {
         return;
       }
+      _networkResolvedCurrentLoad = true;
       setState(() {
         _items = append
             ? mergePagedItems(_items, result.items,
@@ -588,6 +603,9 @@ class _ShelfPageState extends State<ShelfPage> {
       _page = 0;
       _hasMore = true;
       _error = null;
+      _errorFromAppend = false;
+      _loading = true;
+      _refreshing = false;
       _statusVerificationGeneration++;
     });
     unawaited(_startLoad());
@@ -1018,26 +1036,9 @@ class _ShelfPageState extends State<ShelfPage> {
     final body = MotionRefreshIndicator(
       onRefresh: () => _load(forceRefresh: true),
       child: _error != null && _items.isEmpty
-          ? ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              children: [
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                      minHeight: MediaQuery.sizeOf(context).height * 0.4),
-                  child: _shelfMessage(error: true),
-                ),
-              ],
-            )
+          ? ScrollableStatus(child: _shelfMessage(error: true))
           : _loading && _items.isEmpty
-              ? ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  children: [
-                    SizedBox(
-                      height: MediaQuery.sizeOf(context).height * 0.65,
-                      child: const Center(child: LkLoadingIndicator()),
-                    ),
-                  ],
-                )
+              ? const ScrollableStatus(child: LkLoadingIndicator())
               : visibleItems.isEmpty
                   ? ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
@@ -1051,53 +1052,77 @@ class _ShelfPageState extends State<ShelfPage> {
                         if (_hasMore) _shelfLoadMoreFooter(),
                       ],
                     )
-                  : _listMode
-                      ? ListView.builder(
-                          controller: _listScrollController,
-                          scrollCacheExtent:
-                              const ScrollCacheExtent.viewport(1.0),
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: EdgeInsets.fromLTRB(12, 8, 12,
-                              12 + MediaQuery.of(context).padding.bottom),
-                          itemCount: visibleItems.length + (_hasMore ? 1 : 0),
-                          itemBuilder: (_, i) {
-                            if (i >= visibleItems.length) {
-                              return _shelfLoadMoreFooter();
-                            }
-                            final b = visibleItems[i];
-                            return _withShelfActions(b, _shelfBookRow(b));
-                          },
-                        )
-                      : GridView.builder(
-                          controller: _gridScrollController,
-                          scrollCacheExtent:
-                              const ScrollCacheExtent.viewport(1.0),
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: EdgeInsets.fromLTRB(12, 8, 12,
-                              12 + MediaQuery.of(context).padding.bottom),
-                          gridDelegate:
-                              bookGridDelegate(context, isShelf: true),
-                          itemCount: visibleItems.length + (_hasMore ? 1 : 0),
-                          itemBuilder: (_, i) {
-                            if (i >= visibleItems.length) {
-                              return _shelfLoadMoreFooter();
-                            }
-                            final b = visibleItems[i];
-                            return _withShelfActions(
-                                b,
-                                BookGridCard(
-                                  key: ValueKey(b.bookId),
-                                  book: b,
-                                  isShelf: true,
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                        builder: (_) =>
-                                            BookDetailPage(bookId: b.bookId)),
-                                  ),
-                                ));
-                          },
-                        ),
+                  : Stack(
+                      children: [
+                        _listMode
+                            ? ListView.builder(
+                                controller: _listScrollController,
+                                scrollCacheExtent:
+                                    const ScrollCacheExtent.viewport(1.0),
+                                physics:
+                                    const AlwaysScrollableScrollPhysics(),
+                                padding: EdgeInsets.fromLTRB(
+                                    12,
+                                    8,
+                                    12,
+                                    12 +
+                                        MediaQuery.of(context).padding.bottom),
+                                itemCount:
+                                    visibleItems.length + (_hasMore ? 1 : 0),
+                                itemBuilder: (_, i) {
+                                  if (i >= visibleItems.length) {
+                                    return _shelfLoadMoreFooter();
+                                  }
+                                  final b = visibleItems[i];
+                                  return _withShelfActions(
+                                      b, _shelfBookRow(b));
+                                },
+                              )
+                            : GridView.builder(
+                                controller: _gridScrollController,
+                                scrollCacheExtent:
+                                    const ScrollCacheExtent.viewport(1.0),
+                                physics:
+                                    const AlwaysScrollableScrollPhysics(),
+                                padding: EdgeInsets.fromLTRB(
+                                    12,
+                                    8,
+                                    12,
+                                    12 +
+                                        MediaQuery.of(context).padding.bottom),
+                                gridDelegate:
+                                    bookGridDelegate(context, isShelf: true),
+                                itemCount:
+                                    visibleItems.length + (_hasMore ? 1 : 0),
+                                itemBuilder: (_, i) {
+                                  if (i >= visibleItems.length) {
+                                    return _shelfLoadMoreFooter();
+                                  }
+                                  final b = visibleItems[i];
+                                  return _withShelfActions(
+                                      b,
+                                      BookGridCard(
+                                        key: ValueKey(b.bookId),
+                                        book: b,
+                                        isShelf: true,
+                                        onTap: () => Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                              builder: (_) => BookDetailPage(
+                                                  bookId: b.bookId)),
+                                        ),
+                                      ));
+                                },
+                              ),
+                        if (_refreshing)
+                          const Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: MotionLinearProgressIndicator(minHeight: 2),
+                          ),
+                      ],
+                    ),
     );
     final toolbar = _shelfToolbar(visibleItems.length);
     if (!widget.embedded) {

@@ -279,8 +279,9 @@ void main() {
         .onRefresh();
     await tester.pump();
     expect(calls[1]['q'], 'first');
-    expect(find.text('old 0'), findsNothing);
+    expect(find.text('old 0'), findsOneWidget);
     await submit(tester, 'second');
+    expect(find.text('old 0'), findsNothing);
     pending[2].complete(response(books('new')));
     await tester.pumpAndSettle();
     pending[1].complete(response(books('refresh late')));

@@ -17,6 +17,7 @@ import '../widgets/content_state_view.dart';
 import '../widgets/emoji_text.dart';
 import '../widgets/m3_controls.dart';
 import '../widgets/m3_menu_sheet.dart';
+import '../widgets/scrollable_status.dart';
 import 'book_detail_page.dart';
 import 'dm_chat_page.dart';
 import 'media_viewer_page.dart';
@@ -44,11 +45,12 @@ class _UserProfilePageState extends State<UserProfilePage>
   late final TabController _tabs;
   LKPublicUserPage? _home;
   Map<int, List<LKMedal>> _globalMedals = const {};
-  Map<String, String> _emojiUrls = const {};
+  Map<String, String> _emojiUrls = YomiruEmojiCatalog.urls;
   LKPublicBookshelfPage? _bookshelf;
   final _dynamics = <LKDynamicItem>[];
   String _dynamicCursor = '';
   bool _dynamicLoading = false;
+  bool _refreshing = false;
   bool _publicationLoading = false;
   bool _bookshelfLoading = false;
   bool _dynamicHasMore = true;
@@ -99,11 +101,20 @@ class _UserProfilePageState extends State<UserProfilePage>
   void _onSessionChanged() {
     _dynamicLoadSerial++;
     _bookshelfLoadSerial++;
+    _likePending.clear();
+    _favoritePending.clear();
+    _likeOverrides.clear();
+    _favoriteOverrides.clear();
     setState(() {
       _followed = false;
       _followBusy = false;
       _home = null;
       _bookshelf = null;
+      _error = null;
+      _dynamicError = null;
+      _bookshelfError = null;
+      _publicationError = null;
+      _refreshing = false;
       _dynamicLoading = _bookshelfLoading = _publicationLoading = false;
       _dynamicCursor = '';
       _dynamicHasMore = true;
@@ -156,12 +167,15 @@ class _UserProfilePageState extends State<UserProfilePage>
   Future<void> _loadInitial({bool forceRefresh = false}) async {
     final request = ++_homeLoadSerial;
     final relationRevision = _relationRevision;
-    _publicationError = null;
+    final hasHome = _home != null;
     if (mounted) {
       setState(() {
         _error = null;
+        _publicationError = null;
+        if (hasHome) _refreshing = true;
       });
     }
+    final dynamicsFuture = _loadDynamics(forceRefresh: forceRefresh);
     try {
       final home = await LKApi.publicUserHome(widget.uid, 1,
           pageSize: 20, forceRefresh: forceRefresh);
@@ -190,16 +204,23 @@ class _UserProfilePageState extends State<UserProfilePage>
               home.profile.medals,
         }));
       }
-      final pending = <Future<void>>[_loadDynamics(forceRefresh: forceRefresh)];
+      final pending = <Future<void>>[dynamicsFuture];
       if (home.profile.publicBookshelf) {
         pending.add(_loadInitialBookshelf(forceRefresh: forceRefresh));
       }
       await Future.wait(pending);
-    } catch (_) {
+    } catch (e) {
+      await dynamicsFuture;
       if (mounted && request == _homeLoadSerial) {
-        setState(() {
-          _error = '用户主页加载失败，请点击重试';
-        });
+        if (_home == null) {
+          setState(() => _error = '用户主页加载失败，请点击重试');
+        } else {
+          showLkError(context, e);
+        }
+      }
+    } finally {
+      if (mounted && request == _homeLoadSerial) {
+        setState(() => _refreshing = false);
       }
     }
   }
@@ -254,15 +275,32 @@ class _UserProfilePageState extends State<UserProfilePage>
       YomiruAvatarCache.precache(
           context, result.items.map((item) => item.avatar));
       setState(() {
-        if (!append) _dynamics.clear();
-        _dynamics.addAll(result.items);
+        if (!append) {
+          _dynamics
+            ..clear()
+            ..addAll(result.items);
+        } else {
+          final seen = _dynamics
+              .where((item) => item.dynamicId > 0)
+              .map((item) => item.dynamicId)
+              .toSet();
+          for (final item in result.items) {
+            if (item.dynamicId <= 0 || seen.add(item.dynamicId)) {
+              _dynamics.add(item);
+            }
+          }
+        }
         _dynamicCursor = result.cursor;
         _dynamicHasMore = result.hasMore;
         _dynamicError = null;
       });
     } catch (_) {
       if (mounted && request == _dynamicLoadSerial) {
-        setState(() => _dynamicError = '动态无法加载，请点击重试');
+        if (!append && _dynamics.isNotEmpty) {
+          showLkError(context, '动态刷新失败，请重试');
+        } else {
+          setState(() => _dynamicError = '动态无法加载，请点击重试');
+        }
       }
     } finally {
       if (mounted && request == _dynamicLoadSerial) {
@@ -296,7 +334,9 @@ class _UserProfilePageState extends State<UserProfilePage>
         setState(() => _publicationError = '作品无法加载，请点击重试');
       }
     } finally {
-      if (mounted) setState(() => _publicationLoading = false);
+      if (mounted && request == _homeLoadSerial) {
+        setState(() => _publicationLoading = false);
+      }
     }
   }
 
@@ -322,15 +362,17 @@ class _UserProfilePageState extends State<UserProfilePage>
         _bookshelfError = null;
       });
     } catch (_) {
-      if (mounted) setState(() => _bookshelfError = '书架无法加载，请点击重试');
+      if (mounted && request == _bookshelfLoadSerial) {
+        setState(() => _bookshelfError = '书架无法加载，请点击重试');
+      }
     } finally {
-      if (mounted) setState(() => _bookshelfLoading = false);
+      if (mounted && request == _bookshelfLoadSerial) {
+        setState(() => _bookshelfLoading = false);
+      }
     }
   }
 
   Future<void> _refresh() async {
-    _dynamicCursor = '';
-    _dynamicHasMore = true;
     _bookshelfError = null;
     await _loadInitial(forceRefresh: true);
   }
@@ -420,37 +462,49 @@ class _UserProfilePageState extends State<UserProfilePage>
         title: const Text('个人主页'),
       ),
       body: MotionRefreshIndicator(
+        notificationPredicate: (n) => n.depth == 2 || n.depth == 0,
         onRefresh: _refresh,
-        child: NestedScrollView(
-          headerSliverBuilder: (context, _) => [
-            SliverToBoxAdapter(child: _buildProfileHeader(profile)),
-            SliverPersistentHeader(
-              pinned: true,
-              delegate: _ProfileTabsHeader(
-                backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-                tabBar: TabBar(
-                  controller: _tabs,
-                  dividerHeight: 0,
-                  tabs: const [
-                    Tab(text: '动态'),
-                    Tab(text: '公开发布'),
-                    Tab(text: '公开书架'),
-                  ],
+        child: Stack(
+          children: [
+            NestedScrollView(
+              headerSliverBuilder: (context, _) => [
+                SliverToBoxAdapter(child: _buildProfileHeader(profile)),
+                SliverPersistentHeader(
+                  pinned: true,
+                  delegate: _ProfileTabsHeader(
+                    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                    tabBar: TabBar(
+                      controller: _tabs,
+                      dividerHeight: 0,
+                      tabs: const [
+                        Tab(text: '动态'),
+                        Tab(text: '公开发布'),
+                        Tab(text: '公开书架'),
+                      ],
+                    ),
+                  ),
                 ),
+              ],
+              body: TabBarView(
+                physics: AppMotion.isDisabled(context)
+                    ? const NeverScrollableScrollPhysics()
+                    : null,
+                controller: _tabs,
+                children: [
+                  _buildDynamicTab(),
+                  _buildPublicationTab(),
+                  _buildBookshelfTab(),
+                ],
               ),
             ),
+            if (_refreshing)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: MotionLinearProgressIndicator(minHeight: 2),
+              ),
           ],
-          body: TabBarView(
-            physics: AppMotion.isDisabled(context)
-                ? const NeverScrollableScrollPhysics()
-                : null,
-            controller: _tabs,
-            children: [
-              _buildDynamicTab(),
-              _buildPublicationTab(),
-              _buildBookshelfTab(),
-            ],
-          ),
         ),
       ),
     );
@@ -636,7 +690,7 @@ class _UserProfilePageState extends State<UserProfilePage>
 
   Widget _buildDynamicTab() {
     if (_dynamicLoading && _dynamics.isEmpty) {
-      return const Center(child: MotionProgressIndicator());
+      return const ScrollableStatus(child: LkLoadingIndicator());
     }
     return ValueListenableBuilder<bool>(
       valueListenable: LKStore.hideBraveBooks,
@@ -919,15 +973,20 @@ class _UserProfilePageState extends State<UserProfilePage>
               onTap: () async {
                 Navigator.pop(sheetCtx);
                 if (!_likePending.add(d.dynamicId)) return;
+                final rev = LKClient.sessionRev.value;
                 try {
                   await LKApi.toggleDynamicLike(d.dynamicId, !liked);
-                  if (mounted) {
+                  if (mounted && rev == LKClient.sessionRev.value) {
                     setState(() => _likeOverrides[d.dynamicId] = !liked);
                   }
                 } catch (_) {
-                  if (mounted) showLkError(context, '点赞操作失败，请重试');
+                  if (mounted && rev == LKClient.sessionRev.value) {
+                    showLkError(context, '点赞操作失败，请重试');
+                  }
                 } finally {
-                  _likePending.remove(d.dynamicId);
+                  if (rev == LKClient.sessionRev.value) {
+                    _likePending.remove(d.dynamicId);
+                  }
                 }
               },
             ),
@@ -938,15 +997,20 @@ class _UserProfilePageState extends State<UserProfilePage>
               onTap: () async {
                 Navigator.pop(sheetCtx);
                 if (!_favoritePending.add(d.dynamicId)) return;
+                final rev = LKClient.sessionRev.value;
                 try {
                   await LKApi.toggleDynamicFavorite(d.dynamicId, !favorited);
-                  if (mounted) {
+                  if (mounted && rev == LKClient.sessionRev.value) {
                     setState(() => _favoriteOverrides[d.dynamicId] = !favorited);
                   }
                 } catch (_) {
-                  if (mounted) showLkError(context, '收藏操作失败，请重试');
+                  if (mounted && rev == LKClient.sessionRev.value) {
+                    showLkError(context, '收藏操作失败，请重试');
+                  }
                 } finally {
-                  _favoritePending.remove(d.dynamicId);
+                  if (rev == LKClient.sessionRev.value) {
+                    _favoritePending.remove(d.dynamicId);
+                  }
                 }
               },
             ),
@@ -1116,10 +1180,13 @@ class _UserProfilePageState extends State<UserProfilePage>
   Widget _buildBookshelfTab() {
     final shelf = _bookshelf;
     if (_bookshelfLoading && shelf == null) {
-      return const Center(child: MotionProgressIndicator());
+      return const ScrollableStatus(child: LkLoadingIndicator());
     }
     if (_bookshelfError != null && shelf == null) {
-      return _emptyList(_bookshelfError!, onRetry: _loadInitial);
+      return _emptyList(
+        _bookshelfError!,
+        onRetry: () => _loadInitialBookshelf(forceRefresh: true),
+      );
     }
     if (shelf == null || !shelf.visible) {
       return _emptyList('该用户未公开书架');
