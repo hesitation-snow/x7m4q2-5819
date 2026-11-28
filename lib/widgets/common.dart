@@ -83,6 +83,33 @@ Future<bool> confirmUnfollowUser(BuildContext context,
   return result ?? false;
 }
 
+/// 危险删除操作的二次确认对话框。返回 true 表示确认删除，false 表示取消。
+Future<bool> confirmLkDelete(
+  BuildContext context, {
+  required String title,
+  required String content,
+}) async {
+  final result = await showDialog<bool>(
+    animationStyle: AppMotion.style(context),
+    context: context,
+    builder: (dialogCtx) => AlertDialog(
+      title: Text(title),
+      content: Text(content),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogCtx, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogCtx, true),
+          child: const Text('确定'),
+        ),
+      ],
+    ),
+  );
+  return result ?? false;
+}
+
 /// 无封面书籍的默认封面(站点官方占位图)
 const String kDefaultCover =
     'https://www.lightnovel.fun/sample-assets/legacy/default_article_cover_v.jpg';

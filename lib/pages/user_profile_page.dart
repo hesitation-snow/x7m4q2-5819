@@ -66,6 +66,7 @@ class _UserProfilePageState extends State<UserProfilePage>
   int _bookshelfLoadSerial = 0;
   final Set<int> _likePending = {};
   final Set<int> _favoritePending = {};
+  final Set<int> _deletePending = {};
   final Map<int, bool> _likeOverrides = {};
   final Map<int, bool> _favoriteOverrides = {};
   String? _publicationError;
@@ -77,6 +78,9 @@ class _UserProfilePageState extends State<UserProfilePage>
     _tabs.addListener(_onTabChanged);
     LKClient.followChanged.addListener(_onFollowChanged);
     LKClient.sessionRev.addListener(_onSessionChanged);
+    LKClient.dynamicDeleted.addListener(_onDynamicDeleted);
+    LKClient.dynamicCommentCountChanged
+        .addListener(_onDynamicCommentCountChanged);
     LKStore.braveBookRevision.addListener(_onHideBraveRev);
     _loadGlobalMedals();
     _loadEmojis();
@@ -87,6 +91,9 @@ class _UserProfilePageState extends State<UserProfilePage>
   void dispose() {
     LKClient.followChanged.removeListener(_onFollowChanged);
     LKClient.sessionRev.removeListener(_onSessionChanged);
+    LKClient.dynamicDeleted.removeListener(_onDynamicDeleted);
+    LKClient.dynamicCommentCountChanged
+        .removeListener(_onDynamicCommentCountChanged);
     LKStore.braveBookRevision.removeListener(_onHideBraveRev);
     _tabs
       ..removeListener(_onTabChanged)
@@ -103,6 +110,7 @@ class _UserProfilePageState extends State<UserProfilePage>
     _bookshelfLoadSerial++;
     _likePending.clear();
     _favoritePending.clear();
+    _deletePending.clear();
     _likeOverrides.clear();
     _favoriteOverrides.clear();
     setState(() {
@@ -937,6 +945,78 @@ class _UserProfilePageState extends State<UserProfilePage>
     );
   }
 
+  void _onDynamicDeleted() {
+    final event = LKClient.dynamicDeleted.value;
+    if (event == null || !mounted) return;
+    if (!_dynamics.any((e) => e.dynamicId == event.dynamicId)) return;
+    setState(() {
+      _dynamics.removeWhere((e) => e.dynamicId == event.dynamicId);
+      _likeOverrides.remove(event.dynamicId);
+      _favoriteOverrides.remove(event.dynamicId);
+    });
+  }
+
+  void _onDynamicCommentCountChanged() {
+    final event = LKClient.dynamicCommentCountChanged.value;
+    if (event == null || !mounted) return;
+    final index = _dynamics.indexWhere((e) => e.dynamicId == event.dynamicId);
+    if (index < 0) return;
+    setState(() {
+      final item = _dynamics[index];
+      _dynamics[index] = item.copyWith(
+        commentCount: (item.commentCount + event.delta).clamp(0, 1 << 30),
+      );
+    });
+  }
+
+  bool _canDeleteDynamic(LKDynamicItem d) {
+    final uid = LKClient.shared.session.uid;
+    if (!LKClient.shared.session.isLoggedIn || uid <= 0 || d.dynamicId <= 0) {
+      return false;
+    }
+    final ownerUid = d.authorUid > 0 ? d.authorUid : widget.uid;
+    return ownerUid == uid;
+  }
+
+  Future<void> _confirmAndDeleteDynamic(LKDynamicItem d) async {
+    if (d.dynamicId <= 0 || _deletePending.contains(d.dynamicId)) return;
+    final ok = await confirmLkDelete(
+      context,
+      title: '删除动态',
+      content: '删除后无法恢复，确定删除这条动态？',
+    );
+    if (!ok || !mounted) return;
+    final rev = LKClient.sessionRev.value;
+    final uid = LKClient.shared.session.uid;
+    if (!_deletePending.add(d.dynamicId)) return;
+    try {
+      final deleted = await LKApi.deleteDynamic(d.dynamicId);
+      if (!mounted ||
+          rev != LKClient.sessionRev.value ||
+          uid != LKClient.shared.session.uid) {
+        return;
+      }
+      if (!deleted) {
+        showLkError(context, '删除失败，请稍后再试');
+        return;
+      }
+      setState(() {
+        _dynamics.removeWhere((e) => e.dynamicId == d.dynamicId);
+        _likeOverrides.remove(d.dynamicId);
+        _favoriteOverrides.remove(d.dynamicId);
+      });
+      showLkSnackBar(context, '已删除动态', tone: LkNoticeTone.success);
+    } catch (_) {
+      if (mounted && rev == LKClient.sessionRev.value) {
+        showLkError(context, '删除失败，请稍后再试');
+      }
+    } finally {
+      if (rev == LKClient.sessionRev.value) {
+        _deletePending.remove(d.dynamicId);
+      }
+    }
+  }
+
   void _showDynamicActions(LKDynamicItem d) {
     if (d.dynamicId <= 0) return;
     final loggedIn = LKClient.shared.session.isLoggedIn;
@@ -1014,6 +1094,16 @@ class _UserProfilePageState extends State<UserProfilePage>
                 }
               },
             ),
+            if (_canDeleteDynamic(d))
+              M3OptionTile(
+                title: '删除动态',
+                icon: Icons.delete_outline_rounded,
+                danger: true,
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  unawaited(_confirmAndDeleteDynamic(d));
+                },
+              ),
           ],
         ],
       ),

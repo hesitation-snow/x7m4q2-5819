@@ -890,6 +890,70 @@ class LKApi {
     return LKDynamicItem.fromJson(Map<String, dynamic>.from(raw));
   }
 
+  /// 删除自己的动态。服务端只允许作者删除。
+  static Future<bool> deleteDynamic(int dynamicId) async {
+    if (dynamicId <= 0) throw LKException(-1, '动态不存在');
+    final uid = client.session.uid;
+    final key = client.session.securityKey;
+    final d = await client.post(
+      '/api/dynamic/delete-dynamic-v1',
+      client.authed({'dynamic_id': dynamicId}),
+    );
+    final deleted = parseJsonFlag(d['deleted']);
+    if (deleted) {
+      await Future.wait([
+        _invalidateVisibleDynamicCaches(uid: uid),
+        _invalidateOwnPublicProfile(uid: uid),
+        LKStore.removeDynamicFromCachedPages(dynamicId),
+      ]);
+      if (client.session.uid == uid && client.session.securityKey == key) {
+        LKClient.dynamicDeleted.value = (
+          viewerUid: uid,
+          dynamicId: dynamicId,
+          rev: (LKClient.dynamicDeleted.value?.rev ?? 0) + 1,
+        );
+      }
+    }
+    return deleted;
+  }
+
+  /// 删除自己的动态评论。服务端只允许评论作者删除。
+  static Future<({bool deleted, int rootCommentId})> deleteDynamicComment(
+      int dynamicId, int commentId) async {
+    if (dynamicId <= 0 || commentId <= 0) {
+      throw LKException(-1, '评论不存在');
+    }
+    final uid = client.session.uid;
+    final key = client.session.securityKey;
+    final d = await client.post(
+      '/api/dynamic/delete-comment-v1',
+      client.authed({
+        'dynamic_id': dynamicId,
+        'comment_id': commentId,
+      }),
+    );
+    final deleted = parseJsonFlag(d['deleted']);
+    final rawRoot = d['root_comment_id'] ?? d['rootCommentId'];
+    final rootCommentId = rawRoot is num
+        ? rawRoot.toInt()
+        : int.tryParse('${rawRoot ?? ''}') ?? 0;
+    if (deleted) {
+      await Future.wait([
+        _invalidateVisibleDynamicCaches(uid: uid),
+        _invalidateOwnPublicProfile(uid: uid),
+      ]);
+      if (client.session.uid == uid && client.session.securityKey == key) {
+        LKClient.dynamicCommentCountChanged.value = (
+          viewerUid: uid,
+          dynamicId: dynamicId,
+          delta: -1,
+          rev: (LKClient.dynamicCommentCountChanged.value?.rev ?? 0) + 1,
+        );
+      }
+    }
+    return (deleted: deleted, rootCommentId: rootCommentId);
+  }
+
   static Future<Map<String, dynamic>> toggleDynamicCommentLike(
           int dynamicId, int commentId, bool like) =>
       client.post(

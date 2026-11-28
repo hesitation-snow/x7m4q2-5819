@@ -23,8 +23,10 @@ Map<String, dynamic>? _firstJsonMap(dynamic value) {
   return null;
 }
 
-bool _jsonFlag(dynamic value) =>
+bool parseJsonFlag(dynamic value) =>
     value == true || value == 1 || value == '1' || value == 'true';
+
+bool _jsonFlag(dynamic value) => parseJsonFlag(value);
 
 int _jsonInt(dynamic value) {
   if (value is num) return value.toInt();
@@ -2459,6 +2461,7 @@ class LKDynamicItem {
 
   LKDynamicItem copyWith({
     int? likeCount,
+    int? commentCount,
     bool? liked,
     bool? hasLikedState,
   }) =>
@@ -2473,7 +2476,7 @@ class LKDynamicItem {
         title: title,
         summary: summary,
         likeCount: likeCount ?? this.likeCount,
-        commentCount: commentCount,
+        commentCount: commentCount ?? this.commentCount,
         favoriteCount: favoriteCount,
         liked: liked ?? this.liked,
         hasLikedState: hasLikedState ?? this.hasLikedState,

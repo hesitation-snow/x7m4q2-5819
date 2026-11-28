@@ -94,6 +94,7 @@ class _DynamicPageState extends State<DynamicPage> {
   bool _showingCachedFeed = false;
   final Map<int, bool> _favoriteOverrides = {};
   final Set<int> _favoritePending = {};
+  final Set<int> _deletePending = {};
   Map<int, List<LKMedal>> _globalMedals = {};
   Map<String, String> _emojiUrls = YomiruEmojiCatalog.urls;
   int _unreadCount = 0;
@@ -159,6 +160,8 @@ class _DynamicPageState extends State<DynamicPage> {
   void initState() {
     super.initState();
     LKClient.sessionRev.addListener(_onSessionChanged);
+    LKClient.dynamicDeleted.addListener(_onDynamicDeleted);
+    LKClient.dynamicCommentCountChanged.addListener(_onDynamicCommentCountChanged);
     LKStore.dynamicFeedMode.addListener(_onFeedSourceChanged);
     LKStore.hideBraveBooks.addListener(_onBraveFilterChanged);
     LKStore.braveBookRevision.addListener(_onBraveFilterChanged);
@@ -189,6 +192,9 @@ class _DynamicPageState extends State<DynamicPage> {
   @override
   void dispose() {
     LKClient.sessionRev.removeListener(_onSessionChanged);
+    LKClient.dynamicDeleted.removeListener(_onDynamicDeleted);
+    LKClient.dynamicCommentCountChanged
+        .removeListener(_onDynamicCommentCountChanged);
     LKStore.dynamicFeedMode.removeListener(_onFeedSourceChanged);
     LKStore.hideBraveBooks.removeListener(_onBraveFilterChanged);
     LKStore.braveBookRevision.removeListener(_onBraveFilterChanged);
@@ -211,6 +217,7 @@ class _DynamicPageState extends State<DynamicPage> {
           loggedIn: LKClient.shared.session.isLoggedIn);
       _favoriteOverrides.clear();
       _favoritePending.clear();
+      _deletePending.clear();
       _likeFallback.clear();
       _likeActions.clear();
       _likePending.clear();
@@ -245,10 +252,12 @@ class _DynamicPageState extends State<DynamicPage> {
     final entry = _memoryCache[cacheKey];
     if (entry == null) return;
     final uid = entry.anonymous ? 0 : LKClient.shared.session.uid;
+    final deleteRev = LKClient.dynamicDeleted.value?.rev ?? 0;
     if (!identical(entry.client, LKApi.client) ||
         entry.uid != uid ||
         entry.sessionRev != LKClient.sessionRev.value ||
         entry.cacheEpoch != LKStore.contentCacheEpoch ||
+        entry.dynamicDeleteRev != deleteRev ||
         (_topicFilter?.effectiveId ?? 0) != 0) {
       _memoryCache.remove(cacheKey);
       return;
@@ -284,6 +293,7 @@ class _DynamicPageState extends State<DynamicPage> {
       uid: anonymous ? 0 : uid,
       sessionRev: sessionRev,
       cacheEpoch: cacheEpoch,
+      dynamicDeleteRev: LKClient.dynamicDeleted.value?.rev ?? 0,
       anonymous: anonymous,
       items: List<LKDynamicItem>.unmodifiable(items),
       cursor: cursor,
@@ -1435,6 +1445,131 @@ class _DynamicPageState extends State<DynamicPage> {
     _rebuildVisibleItems();
   }
 
+  void _onDynamicDeleted() {
+    final event = LKClient.dynamicDeleted.value;
+    if (event == null || !mounted) return;
+    _removeDynamicLocally(event.dynamicId, deleteRev: event.rev);
+  }
+
+  void _onDynamicCommentCountChanged() {
+    final event = LKClient.dynamicCommentCountChanged.value;
+    if (event == null || !mounted) return;
+    var cacheChanged = false;
+    final staleKeys = _memoryCache.keys.toList(growable: false);
+    for (final key in staleKeys) {
+      final entry = _memoryCache[key]!;
+      var entryChanged = false;
+      final next = entry.items.map((item) {
+        if (item.dynamicId != event.dynamicId) return item;
+        entryChanged = true;
+        return item.copyWith(
+          commentCount: (item.commentCount + event.delta).clamp(0, 1 << 30),
+        );
+      }).toList(growable: false);
+      if (entryChanged) {
+        cacheChanged = true;
+        _memoryCache[key] = _DynamicMemoryEntry(
+          client: entry.client,
+          uid: entry.uid,
+          sessionRev: entry.sessionRev,
+          cacheEpoch: entry.cacheEpoch,
+          dynamicDeleteRev: entry.dynamicDeleteRev,
+          anonymous: entry.anonymous,
+          items: List<LKDynamicItem>.unmodifiable(next),
+          cursor: entry.cursor,
+          page: entry.page,
+          hasMore: entry.hasMore,
+        );
+      }
+    }
+    final index = _items.indexWhere((e) => e.dynamicId == event.dynamicId);
+    if (index >= 0) {
+      setState(() {
+        final item = _items[index];
+        _items[index] = item.copyWith(
+          commentCount: (item.commentCount + event.delta).clamp(0, 1 << 30),
+        );
+        _rebuildVisibleItems();
+      });
+    } else if (cacheChanged) {
+      _rebuildVisibleItems();
+    }
+  }
+
+  void _removeDynamicLocally(int dynamicId, {int? deleteRev}) {
+    if (dynamicId <= 0) return;
+    final nextDeleteRev = deleteRev ?? (LKClient.dynamicDeleted.value?.rev ?? 0);
+    for (final key in _memoryCache.keys.toList(growable: false)) {
+      final entry = _memoryCache[key]!;
+      final filtered = entry.items
+          .where((item) => item.dynamicId != dynamicId)
+          .toList(growable: false);
+      if (filtered.isEmpty) {
+        _memoryCache.remove(key);
+      } else {
+        _memoryCache[key] = _DynamicMemoryEntry(
+          client: entry.client,
+          uid: entry.uid,
+          sessionRev: entry.sessionRev,
+          cacheEpoch: entry.cacheEpoch,
+          dynamicDeleteRev: nextDeleteRev,
+          anonymous: entry.anonymous,
+          items: List<LKDynamicItem>.unmodifiable(filtered),
+          cursor: entry.cursor,
+          page: entry.page,
+          hasMore: entry.hasMore,
+        );
+      }
+    }
+    if (!mounted) return;
+    if (!_items.any((e) => e.dynamicId == dynamicId)) return;
+    setState(() {
+      _items = _items.where((e) => e.dynamicId != dynamicId).toList();
+      _likeFallback.remove(dynamicId);
+      _likeActions.remove(dynamicId);
+      _favoriteOverrides.remove(dynamicId);
+      _rebuildVisibleItems();
+    });
+    if (_items.isEmpty && _hasMore && !_loading && !_refreshing) {
+      unawaited(_load(append: true));
+    }
+  }
+
+  Future<void> _confirmAndDeleteDynamic(LKDynamicItem d) async {
+    if (d.dynamicId <= 0 || _deletePending.contains(d.dynamicId)) return;
+    final ok = await confirmLkDelete(
+      context,
+      title: '删除动态',
+      content: '删除后无法恢复，确定删除这条动态？',
+    );
+    if (!ok || !mounted) return;
+    final rev = LKClient.sessionRev.value;
+    final uid = LKClient.shared.session.uid;
+    if (!_deletePending.add(d.dynamicId)) return;
+    try {
+      final deleted = await LKApi.deleteDynamic(d.dynamicId);
+      if (!mounted ||
+          rev != LKClient.sessionRev.value ||
+          uid != LKClient.shared.session.uid) {
+        return;
+      }
+      if (!deleted) {
+        showLkError(context, '删除失败，请稍后再试');
+        return;
+      }
+      _removeDynamicLocally(d.dynamicId);
+      showLkSnackBar(context, '已删除动态', tone: LkNoticeTone.success);
+    } catch (_) {
+      if (mounted && rev == LKClient.sessionRev.value) {
+        showLkError(context, '删除失败，请稍后再试');
+      }
+    } finally {
+      if (rev == LKClient.sessionRev.value) {
+        _deletePending.remove(d.dynamicId);
+      }
+    }
+  }
+
   void _actions(LKDynamicItem d) {
     if (d.dynamicId <= 0) return;
     final loggedIn = LKClient.shared.session.isLoggedIn;
@@ -1567,6 +1702,17 @@ class _DynamicPageState extends State<DynamicPage> {
                     }
                   },
                 ),
+                if (d.authorUid > 0 &&
+                    d.authorUid == LKClient.shared.session.uid)
+                  M3OptionTile(
+                    title: '删除动态',
+                    icon: Icons.delete_outline_rounded,
+                    danger: true,
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      unawaited(_confirmAndDeleteDynamic(d));
+                    },
+                  ),
               ],
             ],
           );
@@ -1582,6 +1728,7 @@ class _DynamicMemoryEntry {
     required this.uid,
     required this.sessionRev,
     required this.cacheEpoch,
+    required this.dynamicDeleteRev,
     required this.anonymous,
     required this.items,
     required this.cursor,
@@ -1593,6 +1740,7 @@ class _DynamicMemoryEntry {
   final int uid;
   final int sessionRev;
   final int cacheEpoch;
+  final int dynamicDeleteRev;
   final bool anonymous;
   final List<LKDynamicItem> items;
   final String cursor;

@@ -973,6 +973,37 @@ class LKStore {
     }
   }
 
+  static Future<void> removeDynamicFromCachedPages(int dynamicId) async {
+    if (dynamicId <= 0) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      const prefix = '${_pageCachePrefix}dynamic_feed_';
+      final keys =
+          prefs.getKeys().where((key) => key.startsWith(prefix)).toList();
+      for (final key in keys) {
+        final raw = prefs.getString(key);
+        if (raw == null || raw.isEmpty) continue;
+        final decoded = jsonDecode(raw);
+        if (decoded is! List) continue;
+        final filtered = decoded.where((item) {
+          if (item is! Map) return true;
+          final rawId = item['dynamic_id'];
+          final id =
+              rawId is num ? rawId.toInt() : int.tryParse('${rawId ?? ''}') ?? 0;
+          return id != dynamicId;
+        }).toList(growable: false);
+        if (filtered.length == decoded.length) continue;
+        if (filtered.isEmpty) {
+          await prefs.remove(key);
+        } else {
+          await prefs.setString(key, jsonEncode(filtered));
+        }
+      }
+    } catch (_) {
+      // 缓存清理失败不影响删除状态。
+    }
+  }
+
   static Map<String, dynamic> _dynamicCacheJson(LKDynamicItem item) => {
         'dynamic_id': item.dynamicId,
         'author_uid': item.authorUid,

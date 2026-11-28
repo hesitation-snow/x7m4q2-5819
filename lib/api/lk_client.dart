@@ -47,6 +47,15 @@ class LKClient {
   static final followChanged =
       ValueNotifier<({int viewerUid, int targetUid, bool followed})?>(null);
 
+  /// 已由服务器确认的动态删除事件，供动态流、个人主页与详情页实时同步。
+  static final dynamicDeleted =
+      ValueNotifier<({int viewerUid, int dynamicId, int rev})?>(null);
+
+  /// 已由服务器确认的动态评论数变动，供动态流与个人主页实时同步。
+  static final dynamicCommentCountChanged =
+      ValueNotifier<({int viewerUid, int dynamicId, int delta, int rev})?>(
+          null);
+
   /// 登录态版本号:登录/登出/会话变更时自增,UI 监听刷新(如"我的"页用户卡片)
   static final ValueNotifier<int> sessionRev = ValueNotifier<int>(0);
 

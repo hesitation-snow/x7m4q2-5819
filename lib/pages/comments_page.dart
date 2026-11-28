@@ -67,6 +67,8 @@ class _CommentsPageState extends State<CommentsPage> {
   bool _discardDialogOpen = false;
   bool _togglingDynamicLike = false;
   bool _togglingDynamicFav = false;
+  bool _deletingDynamic = false;
+  final Set<int> _deletingComments = <int>{};
 
   bool get _hasDraft =>
       _input.text.trim().isNotEmpty || _pendingMedia.isNotEmpty;
@@ -131,6 +133,8 @@ class _CommentsPageState extends State<CommentsPage> {
       _dynamicDetailError = null;
       _togglingDynamicLike = false;
       _togglingDynamicFav = false;
+      _deletingDynamic = false;
+      _deletingComments.clear();
       _selectedPollOptions.clear();
       _pollSubmitting = false;
       _publishing = false;
@@ -891,6 +895,196 @@ class _CommentsPageState extends State<CommentsPage> {
     }
   }
 
+  bool _canDeleteDynamicComment(LKComment c) =>
+      _isDynamic &&
+      LKClient.shared.session.isLoggedIn &&
+      c.commentId > 0 &&
+      c.userUid > 0 &&
+      c.userUid == LKClient.shared.session.uid;
+
+  void _showCommentActionsSheet(
+    LKComment c, {
+    required bool isReply,
+    required int parentCommentId,
+  }) {
+    showModalBottomSheet<void>(
+      sheetAnimationStyle: AppMotion.style(context),
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      showDragHandle: false,
+      builder: (sheetCtx) => M3MenuSheet(
+        title: '评论操作',
+        icon: Icons.more_horiz_rounded,
+        children: [
+          M3OptionTile(
+            title: '复制评论',
+            icon: Icons.copy_rounded,
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              unawaited(_copyComment(c));
+            },
+          ),
+          if (_canDeleteDynamicComment(c))
+            M3OptionTile(
+              title: '删除评论',
+              icon: Icons.delete_outline_rounded,
+              danger: true,
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                unawaited(_confirmAndDeleteComment(
+                  c,
+                  isReply: isReply,
+                  parentCommentId: parentCommentId,
+                ));
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmAndDeleteDynamic(LKDynamicItem item) async {
+    if (!_isDynamic || _deletingDynamic || item.dynamicId <= 0) return;
+    final ok = await confirmLkDelete(
+      context,
+      title: '删除动态',
+      content: '删除后无法恢复，确定删除这条动态？',
+    );
+    if (!ok || !mounted) return;
+    final session = SessionStamp();
+    setState(() => _deletingDynamic = true);
+    try {
+      final deleted = await LKApi.deleteDynamic(item.dynamicId);
+      if (!mounted || !session.isCurrent) return;
+      if (!deleted) {
+        showLkError(context, '删除失败，请稍后再试');
+        return;
+      }
+      showLkSnackBar(context, '已删除动态', tone: LkNoticeTone.success);
+      Navigator.of(context).pop(true);
+    } catch (_) {
+      if (mounted && session.isCurrent) {
+        showLkError(context, '删除失败，请稍后再试');
+      }
+    } finally {
+      if (mounted && session.isCurrent) {
+        setState(() => _deletingDynamic = false);
+      }
+    }
+  }
+
+  Future<void> _confirmAndDeleteComment(
+    LKComment c, {
+    required bool isReply,
+    required int parentCommentId,
+  }) async {
+    if (!_isDynamic ||
+        c.commentId <= 0 ||
+        _deletingComments.contains(c.commentId)) {
+      return;
+    }
+    final ok = await confirmLkDelete(
+      context,
+      title: '删除评论',
+      content: '删除后无法恢复，确定删除这条评论？',
+    );
+    if (!ok || !mounted) return;
+    final session = SessionStamp();
+    if (!_deletingComments.add(c.commentId)) return;
+    try {
+      final result =
+          await LKApi.deleteDynamicComment(widget.dynamicId, c.commentId);
+      if (!mounted || !session.isCurrent) return;
+      if (!result.deleted) {
+        showLkError(context, '删除失败，请稍后再试');
+        return;
+      }
+      final effectiveRootId = result.rootCommentId > 0
+          ? result.rootCommentId
+          : (isReply && parentCommentId > 0
+              ? parentCommentId
+              : (c.rootCommentId > 0 && c.rootCommentId != c.commentId
+                  ? c.rootCommentId
+                  : 0));
+      LKComment? parentToRefresh;
+      setState(() {
+        final currentDetail = _dynamicDetail ?? widget.dynamicPreview;
+        if (currentDetail != null) {
+          _dynamicDetail = currentDetail.copyWith(
+            commentCount: (currentDetail.commentCount - 1).clamp(0, 1 << 30),
+          );
+        }
+        if (_replyTarget?.commentId == c.commentId ||
+            (effectiveRootId == 0 && _replyParentCommentId == c.commentId)) {
+          _replyTarget = null;
+          _replyParentCommentId = 0;
+        }
+        if (effectiveRootId > 0) {
+          final existingReplies = _repliesByComment[effectiveRootId];
+          if (existingReplies != null) {
+            _repliesByComment[effectiveRootId] = existingReplies
+                .where((reply) => reply.commentId != c.commentId)
+                .toList(growable: false);
+          }
+          final parentIdx =
+              _comments.indexWhere((item) => item.commentId == effectiveRootId);
+          if (parentIdx >= 0) {
+            final parent = _comments[parentIdx];
+            final updatedParent = LKComment(
+              commentId: parent.commentId,
+              rootCommentId: parent.rootCommentId,
+              replyToCommentId: parent.replyToCommentId,
+              userUid: parent.userUid,
+              nickname: parent.nickname,
+              replyToNickname: parent.replyToNickname,
+              avatar: parent.avatar,
+              content: parent.content,
+              likeCount: parent.likeCount,
+              time: parent.time,
+              liked: parent.liked,
+              media: parent.media,
+              replyCount: (parent.replyCount - 1).clamp(0, 1 << 30),
+              replies: parent.replies
+                  .where((reply) => reply.commentId != c.commentId)
+                  .toList(growable: false),
+            );
+            final nextComments = List<LKComment>.of(_comments);
+            nextComments[parentIdx] = updatedParent;
+            _comments = nextComments;
+            parentToRefresh = updatedParent;
+          }
+        } else {
+          _comments = _comments
+              .where((item) => item.commentId != c.commentId)
+              .toList();
+          _repliesByComment.remove(c.commentId);
+          _expandedReplies.remove(c.commentId);
+          _loadingReplies.remove(c.commentId);
+          _replyErrors.remove(c.commentId);
+          _replyPages.remove(c.commentId);
+          _replyCursors.remove(c.commentId);
+          _replyHasMore.remove(c.commentId);
+        }
+      });
+      showLkSnackBar(context, '已删除评论', tone: LkNoticeTone.success);
+      if (effectiveRootId > 0 &&
+          parentToRefresh != null &&
+          _expandedReplies.contains(effectiveRootId)) {
+        await _loadReplies(parentToRefresh!, reset: true);
+      }
+    } catch (_) {
+      if (mounted && session.isCurrent) {
+        showLkError(context, '删除失败，请稍后再试');
+      }
+    } finally {
+      if (session.isCurrent) {
+        _deletingComments.remove(c.commentId);
+      }
+    }
+  }
+
   Widget _pollCard(LKDynamicPoll poll) {
     final scheme = Theme.of(context).colorScheme;
     return Card(
@@ -1175,10 +1369,17 @@ class _CommentsPageState extends State<CommentsPage> {
           ),
       ],
     );
+    final canDelete = c is LKComment && _canDeleteDynamicComment(c);
     return InkWell(
       hoverColor: touchPlatform ? Colors.transparent : null,
       focusColor: touchPlatform ? Colors.transparent : null,
-      onLongPress: () => _copyComment(c),
+      onLongPress: canDelete
+          ? () => _showCommentActionsSheet(
+                c,
+                isReply: isReply,
+                parentCommentId: parentCommentId,
+              )
+          : () => _copyComment(c),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
         child: Row(
@@ -1213,6 +1414,21 @@ class _CommentsPageState extends State<CommentsPage> {
                         ),
                       ),
                       _likeButton(c),
+                      if (canDelete)
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          tooltip: '评论操作',
+                          icon: Icon(
+                            Icons.more_horiz_rounded,
+                            size: 18,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          onPressed: () => _showCommentActionsSheet(
+                            c,
+                            isReply: isReply,
+                            parentCommentId: parentCommentId,
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 5),
@@ -1352,6 +1568,20 @@ class _CommentsPageState extends State<CommentsPage> {
               _copyDynamicContent(item);
             },
           ),
+          if (_isDynamic &&
+              loggedIn &&
+              item.dynamicId > 0 &&
+              item.authorUid > 0 &&
+              item.authorUid == LKClient.shared.session.uid)
+            M3OptionTile(
+              title: '删除动态',
+              icon: Icons.delete_outline_rounded,
+              danger: true,
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                unawaited(_confirmAndDeleteDynamic(item));
+              },
+            ),
         ],
       ),
     );
