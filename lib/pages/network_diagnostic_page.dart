@@ -30,12 +30,13 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
   bool _hasRun = false;
   bool _includeRayId = false;
   DiagnosticSummary? _summary;
-  String _appVersion = '1.6.0';
+  String _appVersion = '';
+  late final Future<void> _versionFuture;
 
   @override
   void initState() {
     super.initState();
-    _loadAppVersion();
+    _versionFuture = _loadAppVersion();
   }
 
   @override
@@ -79,27 +80,33 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
       }
     }
 
-    // Run all 5 diagnostic targets concurrently
-    await Future.wait([
-      runTask(DiagnosticTarget.dns, _service.testDns),
-      runTask(DiagnosticTarget.baidu, _service.testBaidu),
-      runTask(DiagnosticTarget.google, _service.testGoogle),
-      runTask(DiagnosticTarget.lkWeb, _service.testLkWeb),
-      runTask(DiagnosticTarget.lkApi, _service.testLkApi),
-    ]);
+    try {
+      // Run all 5 diagnostic targets and version load concurrently
+      await Future.wait([
+        _versionFuture,
+        runTask(DiagnosticTarget.dns, _service.testDns),
+        runTask(DiagnosticTarget.baidu, _service.testBaidu),
+        runTask(DiagnosticTarget.google, _service.testGoogle),
+        runTask(DiagnosticTarget.lkWeb, _service.testLkWeb),
+        runTask(DiagnosticTarget.lkApi, _service.testLkApi),
+      ]);
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    final summary = NetworkDiagnosticService.evaluateSummary(
-      results: _results,
-      appVersion: _appVersion,
-      platformDescription: defaultTargetPlatform.name,
-    );
+      final summary = NetworkDiagnosticService.evaluateSummary(
+        results: _results,
+        appVersion: _appVersion.isEmpty ? 'unknown' : _appVersion,
+        platformDescription: defaultTargetPlatform.name,
+      );
 
-    setState(() {
-      _testing = false;
-      _summary = summary;
-    });
+      setState(() {
+        _summary = summary;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _testing = false);
+      }
+    }
   }
 
   Future<void> _copyReport() async {

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api/lk_api.dart';
 import '../api/models.dart';
 import '../services/app_motion.dart';
+import 'common.dart';
 import 'm3_menu_sheet.dart';
 
 /// Shows the searchable official topic picker bottom sheet.
@@ -48,7 +49,9 @@ class _TopicPickerSheet extends StatefulWidget {
 class _TopicPickerSheetState extends State<_TopicPickerSheet> {
   final _searchController = TextEditingController();
   Timer? _debounce;
-  late List<LKTopicTag> _topics = widget.initialTopics;
+  late List<LKTopicTag> _topics = widget.initialTopics.isNotEmpty
+      ? List.of(widget.initialTopics)
+      : List.of(LKApi.cachedTopicTags);
   bool _loading = false;
   bool _failed = false;
   int _searchSeq = 0;
@@ -163,6 +166,10 @@ class _TopicPickerSheetState extends State<_TopicPickerSheet> {
                     key: const ValueKey('topic-search-input'),
                     controller: _searchController,
                     onChanged: _onQueryChanged,
+                    onSubmitted: (value) {
+                      _debounce?.cancel();
+                      _fetchTopics(value.trim());
+                    },
                     textInputAction: TextInputAction.search,
                     decoration: InputDecoration(
                       hintText: '搜索官方话题',
@@ -205,41 +212,43 @@ class _TopicPickerSheetState extends State<_TopicPickerSheet> {
                     ),
                   ),
                 ),
-                if (_loading && _topics.isNotEmpty)
-                  const MotionLinearProgressIndicator(minHeight: 2),
                 Flexible(
-                  child: _loading && _topics.isEmpty
-                      ? const SizedBox(
-                          height: 180,
-                          child: Center(
-                            child: MotionProgressIndicator(strokeWidth: 2.5),
-                          ),
-                        )
-                      : _topics.isEmpty
-                          ? Padding(
-                              padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _failed ? '暂时无法加载话题' : '没有找到匹配的话题',
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      color: scheme.onSurfaceVariant,
-                                    ),
+                  child: Stack(
+                    children: [
+                      _loading && _topics.isEmpty
+                          ? const LkLoadingIndicator(minHeight: 180)
+                          : _topics.isEmpty
+                              ? Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        _failed ? '暂时无法加载话题' : '没有找到匹配的话题',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                      if (_failed) ...[
+                                        const SizedBox(height: 10),
+                                        TextButton.icon(
+                                          onPressed: () {
+                                            _debounce?.cancel();
+                                            _fetchTopics(
+                                              _searchController.text.trim(),
+                                            );
+                                          },
+                                          icon: const Icon(
+                                              Icons.refresh_rounded),
+                                          label: const Text('重试'),
+                                        ),
+                                      ],
+                                    ],
                                   ),
-                                  if (_failed) ...[
-                                    const SizedBox(height: 10),
-                                    TextButton.icon(
-                                      onPressed: () =>
-                                          _fetchTopics(_searchController.text),
-                                      icon: const Icon(Icons.refresh_rounded),
-                                      label: const Text('重试'),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            )
-                          : ListView.builder(
+                                )
+                              : ListView.builder(
                               shrinkWrap: true,
                               padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
                               itemCount: _topics.length,
@@ -303,6 +312,15 @@ class _TopicPickerSheetState extends State<_TopicPickerSheet> {
                                 );
                               },
                             ),
+                      if (_loading && _topics.isNotEmpty)
+                        const Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: MotionLinearProgressIndicator(minHeight: 2),
+                        ),
+                    ],
+                  ),
                 ),
               ],
             ),

@@ -50,6 +50,7 @@ class _HomeBookActionsState extends State<_HomeBookActions> {
   bool _loading = true;
   bool _inShelf = false;
   Object? _error;
+  bool _addFailed = false;
   int _request = 0;
 
   @override
@@ -73,6 +74,7 @@ class _HomeBookActionsState extends State<_HomeBookActions> {
         _loading = true;
         _inShelf = false;
         _error = null;
+        _addFailed = false;
       });
     }
     try {
@@ -127,24 +129,27 @@ class _HomeBookActionsState extends State<_HomeBookActions> {
     setState(() {
       _loading = true;
       _error = null;
+      _addFailed = false;
     });
     try {
       if (loggedIn) await LKApi.toggleShelf(id, true);
+      if (revision != LKClient.sessionRev.value) return;
       await _saveLocal(widget.book);
       if (!mounted || revision != LKClient.sessionRev.value) return;
       setState(() {
         _inShelf = true;
         _loading = false;
+        _addFailed = false;
       });
       showFloatingPrompt(context, '已加入书架');
     } catch (e) {
       if (!mounted || revision != LKClient.sessionRev.value) return;
-      // A cloud mutation may have succeeded before a local write failed; reload
-      // the authoritative state on retry instead of issuing a second add.
       setState(() {
         _error = e;
+        _addFailed = true;
         _loading = false;
       });
+      showLkError(context, e);
     } finally {
       _addingBooks.remove(id);
       pending.complete();
@@ -156,7 +161,7 @@ class _HomeBookActionsState extends State<_HomeBookActions> {
     final label = _loading
         ? '加载中'
         : _error != null
-            ? '加载失败，点击重试'
+            ? (_addFailed ? '加入失败，点击重试' : '加载失败，点击重试')
             : _inShelf
                 ? '已加入书架'
                 : '加入书架';
@@ -172,7 +177,7 @@ class _HomeBookActionsState extends State<_HomeBookActions> {
           onTap: _loading || _inShelf
               ? null
               : _error != null
-                  ? _load
+                  ? (_addFailed ? _add : _load)
                   : _add,
           trailing: _loading
               ? const SizedBox(

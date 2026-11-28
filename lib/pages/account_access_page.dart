@@ -23,10 +23,14 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
   late final _api = widget.api ?? AccountAccessApi();
   Timer? _timer;
   int _cooldown = 0;
-  bool _busy = false;
+  bool _sendingCode = false;
+  bool _submitting = false;
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
-  String? _message;
+  String? _errorMessage;
+  String? _infoMessage;
+
+  bool get _busy => _sendingCode || _submitting;
 
   String? _emailError(String? value) =>
       RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value?.trim() ?? '')
@@ -47,12 +51,19 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
     if (send
         ? _emailError(_email.text) != null
         : !_form.currentState!.validate()) {
-      if (send) setState(() => _message = '请输入正确的邮箱');
+      if (send) {
+        setState(() {
+          _errorMessage = '请输入正确的邮箱';
+          _infoMessage = null;
+        });
+      }
       return;
     }
     setState(() {
-      _busy = true;
-      _message = null;
+      _sendingCode = send;
+      _submitting = !send;
+      _errorMessage = null;
+      _infoMessage = null;
     });
     try {
       if (send) {
@@ -60,8 +71,9 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
         if (!mounted) return;
         setState(() {
           _cooldown = 60;
-          _message = '验证码已发送，请检查邮箱及垃圾邮件';
+          _infoMessage = '验证码已发送，请检查邮箱及垃圾邮件';
         });
+        _timer?.cancel();
         _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
           if (!mounted) {
             timer.cancel();
@@ -83,27 +95,41 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _message = error is LKException
-            ? (error.message.isEmpty
-                ? '操作失败（${error.code}），请稍后重试'
-                : error.message)
-            : '请求失败，请检查网络后重试');
+        setState(() {
+          _infoMessage = null;
+          _errorMessage = error is LKException
+              ? (error.message.isEmpty
+                  ? '操作失败（${error.code}），请稍后重试'
+                  : error.message)
+              : '请求失败，请检查网络后重试';
+        });
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _sendingCode = false;
+          _submitting = false;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: Text(widget.register ? '注册账号' : '重置密码')),
-      body: SafeArea(
-        top: false,
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+    final bannerMessage = _infoMessage ?? _errorMessage;
+    final bannerIsInfo = _infoMessage != null;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Scaffold(
+        appBar: AppBar(title: Text(widget.register ? '注册账号' : '重置密码')),
+        body: SafeArea(
+          top: false,
+          child: Center(
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Card(
@@ -161,6 +187,7 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
                         controller: _email,
                         enabled: !_busy && _cooldown == 0,
                         keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
                         autofillHints: const [AutofillHints.email],
                         decoration: const InputDecoration(
                           labelText: '邮箱',
@@ -174,6 +201,7 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
                           controller: _code,
                           enabled: !_busy,
                           keyboardType: TextInputType.number,
+                          textInputAction: TextInputAction.next,
                           autofillHints: const [AutofillHints.oneTimeCode],
                           decoration: const InputDecoration(
                             labelText: '邮箱验证码',
@@ -192,8 +220,16 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
                             ),
                             padding: const EdgeInsets.symmetric(horizontal: 14),
                           ),
-                          child: Text(
-                              _cooldown > 0 ? '重新发送（$_cooldown 秒）' : '发送验证码'),
+                          child: _sendingCode
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      MotionProgressIndicator(strokeWidth: 2),
+                                )
+                              : Text(
+                                  _cooldown > 0 ? '重新发送（$_cooldown 秒）' : '发送验证码',
+                                ),
                         );
                         if (constraints.maxWidth <
                             280 * MediaQuery.textScalerOf(context).scale(1)) {
@@ -220,6 +256,7 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
                         TextFormField(
                           controller: _nickname,
                           enabled: !_busy,
+                          textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(
                             labelText: '昵称',
                             prefixIcon: Icon(Icons.badge_outlined),
@@ -233,6 +270,7 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
                         controller: _password,
                         enabled: !_busy,
                         obscureText: _obscurePassword,
+                        textInputAction: TextInputAction.next,
                         autofillHints: const [AutofillHints.newPassword],
                         decoration: InputDecoration(
                           labelText: widget.register ? '密码' : '新密码',
@@ -270,6 +308,8 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
                         controller: _confirm,
                         enabled: !_busy,
                         obscureText: _obscureConfirm,
+                        textInputAction: TextInputAction.done,
+                        onFieldSubmitted: (_) => _run(false),
                         decoration: InputDecoration(
                           labelText: '确认密码',
                           prefixIcon: const Icon(Icons.lock_reset_outlined),
@@ -288,26 +328,39 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
                                 : null,
                       ),
                       const SizedBox(height: 20),
-                      if (_message != null) ...[
+                      if (bannerMessage != null) ...[
                         Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 14, vertical: 10),
                           decoration: BoxDecoration(
-                            color: scheme.errorContainer.withValues(alpha: 0.7),
+                            color: (bannerIsInfo
+                                    ? scheme.secondaryContainer
+                                    : scheme.errorContainer)
+                                .withValues(alpha: 0.7),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Row(
                             children: [
-                              Icon(Icons.info_outline,
-                                  size: 20, color: scheme.onErrorContainer),
+                              Icon(
+                                bannerIsInfo
+                                    ? Icons.mark_email_read_outlined
+                                    : Icons.info_outline,
+                                size: 20,
+                                color: bannerIsInfo
+                                    ? scheme.onSecondaryContainer
+                                    : scheme.onErrorContainer,
+                              ),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  _message!,
-                                  semanticsLabel: _message,
+                                  bannerMessage,
+                                  semanticsLabel: bannerMessage,
                                   style: TextStyle(
-                                      fontSize: 13,
-                                      color: scheme.onErrorContainer),
+                                    fontSize: 13,
+                                    color: bannerIsInfo
+                                        ? scheme.onSecondaryContainer
+                                        : scheme.onErrorContainer,
+                                  ),
                                 ),
                               ),
                             ],
@@ -317,7 +370,7 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
                       ],
                       FilledButton(
                         onPressed: _busy ? null : () => _run(false),
-                        child: _busy
+                        child: _submitting
                             ? const SizedBox(
                                 width: 20,
                                 height: 20,
@@ -392,6 +445,7 @@ class _AccountAccessPageState extends State<AccountAccessPage> {
         ),
       ),
       ),
+    ),
     );
   }
 }

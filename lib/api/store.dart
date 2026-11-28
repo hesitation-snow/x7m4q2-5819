@@ -510,7 +510,9 @@ class LKStore {
       }
     }
     // Keychain/Keystore 不可用时不回退读取明文偏好，避免重新暴露凭据。
-    if (secureStorageReady) await p.remove('security_key');
+    if (secureStorageReady && p.containsKey('security_key')) {
+      await p.remove('security_key');
+    }
     if (generation == _sessionGeneration) {
       final hasCredentials = !invalidated && securityKey.isNotEmpty;
       LKClient.shared.session
@@ -586,7 +588,22 @@ class LKStore {
         }
       } catch (_) {}
     }
-    unawaited(LKClient.shared.trimResponseCache());
+  }
+
+  static Future<void> _removeAccountCaches(
+      SharedPreferences p, int cacheUid) async {
+    if (cacheUid <= 0) return;
+    await p.remove(_profileCacheKey(cacheUid));
+    await p.remove(_medalCacheKey(cacheUid));
+    await p.remove('welfare_home_cache_v1_$cacheUid');
+    final accountPageCaches = p
+        .getKeys()
+        .where((key) =>
+            (key.startsWith(_pageCachePrefix) &&
+                key.contains('_u${cacheUid}_')) ||
+            key.startsWith('medal_shop_cache_v1_${cacheUid}_'))
+        .toList(growable: false);
+    await Future.wait(accountPageCaches.map(p.remove));
   }
 
   static Future<void> save() {
@@ -598,6 +615,7 @@ class LKStore {
     _sessionGeneration++;
     return _queueSessionWrite(() async {
       final p = await SharedPreferences.getInstance();
+      final previousUid = p.getInt('uid') ?? 0;
       // Fail closed if a write is interrupted midway.
       if (!await p.setBool(_sessionInvalidatedKey, true)) {
         throw StateError('会话状态保存失败');
@@ -608,7 +626,17 @@ class LKStore {
         await _secure.write(key: 'security_key', value: key);
       }
       ++contentCacheEpoch;
-      await p.remove('security_key');
+      if (key.isNotEmpty) {
+        LKReadingSession.shared.reset();
+        await LKClient.shared.clearResponseCache();
+        await ReaderContentCache.clear();
+        if (previousUid > 0 && previousUid != uid) {
+          await _removeAccountCaches(p, previousUid);
+        }
+      }
+      if (p.containsKey('security_key')) {
+        await p.remove('security_key');
+      }
       await p.setInt('uid', uid);
       await p.setString('nickname', nickname);
       await p.setString('avatar', avatar);
@@ -754,27 +782,25 @@ class LKStore {
       await p.remove('uid');
       await p.remove('nickname');
       await p.remove('avatar');
-      if (cacheUid > 0) {
-        await p.remove(_profileCacheKey(cacheUid));
-        await p.remove(_medalCacheKey(cacheUid));
-        await p.remove('welfare_home_cache_v1_$cacheUid');
-        final accountPageCaches = p
-            .getKeys()
-            .where((key) =>
-                (key.startsWith(_pageCachePrefix) &&
-                    key.contains('_u${cacheUid}_')) ||
-                key.startsWith('medal_shop_cache_v1_${cacheUid}_'))
-            .toList(growable: false);
-        await Future.wait(accountPageCaches.map(p.remove));
-      }
+      await _removeAccountCaches(p, cacheUid);
       await responseCacheClear;
       await readerCacheClear;
     });
   }
 
+  static int _globalMedalsEpoch = 0;
+  static Future<void> _globalMedalsWriteQueue = Future<void>.value();
+
+  static Future<void> _queueGlobalMedalsWrite(Future<void> Function() action) {
+    final next = _globalMedalsWriteQueue.then((_) => action());
+    _globalMedalsWriteQueue = next.catchError((Object _) {});
+    return next;
+  }
+
   /// 清除可重新从网络取得的资料缓存，保留账号、主题、书架与阅读进度。
   static Future<void> clearContentCaches() async {
     ++contentCacheEpoch;
+    ++_globalMedalsEpoch;
     _globalMedalsWriteTimer?.cancel();
     _globalMedalsWriteTimer = null;
     _globalMedalsMemory = null;
@@ -865,12 +891,17 @@ class LKStore {
   }
 
   static Future<void> cacheBooksPage(String key, List<LKBook> books) async {
+    final epoch = contentCacheEpoch;
+    final generation = _sessionGeneration;
     try {
       // 限制单个偏好值的体积,保留足够内容恢复上次浏览画面。
       final data =
           books.take(100).map((book) => book.toJson()).toList(growable: false);
-      await (await SharedPreferences.getInstance())
-          .setString(key, jsonEncode(data));
+      final prefs = await SharedPreferences.getInstance();
+      if (epoch != contentCacheEpoch || generation != _sessionGeneration) {
+        return;
+      }
+      await prefs.setString(key, jsonEncode(data));
     } catch (_) {
       // 缓存失败不影响在线内容。
     }
@@ -927,11 +958,16 @@ class LKStore {
 
   static Future<void> cacheDynamicPage(
       String key, List<LKDynamicItem> items) async {
+    final epoch = contentCacheEpoch;
+    final generation = _sessionGeneration;
     try {
       final data =
           items.take(100).map(_dynamicCacheJson).toList(growable: false);
-      await (await SharedPreferences.getInstance())
-          .setString(key, jsonEncode(data));
+      final prefs = await SharedPreferences.getInstance();
+      if (epoch != contentCacheEpoch || generation != _sessionGeneration) {
+        return;
+      }
+      await prefs.setString(key, jsonEncode(data));
     } catch (_) {
       // 缓存失败不影响在线内容。
     }
@@ -1185,8 +1221,10 @@ class LKStore {
   }
 
   static Future<Map<int, List<LKMedal>>> _loadGlobalMedals() async {
+    final epoch = _globalMedalsEpoch;
     final raw =
         (await SharedPreferences.getInstance()).getString(_globalMedalsKey);
+    if (epoch != _globalMedalsEpoch) return {};
     if (raw == null || raw.isEmpty) {
       _globalMedalsMemory = <int, List<LKMedal>>{};
       return {};
@@ -1210,10 +1248,13 @@ class LKStore {
             .toList();
         if (medals.isNotEmpty) result[uid] = medals;
       }
+      if (epoch != _globalMedalsEpoch) return {};
       _globalMedalsMemory = result;
       return Map<int, List<LKMedal>>.from(result);
     } catch (_) {
-      _globalMedalsMemory = <int, List<LKMedal>>{};
+      if (epoch == _globalMedalsEpoch) {
+        _globalMedalsMemory = <int, List<LKMedal>>{};
+      }
       return {};
     }
   }
@@ -1224,33 +1265,41 @@ class LKStore {
         .where((entry) => entry.key > 0 && entry.value.isNotEmpty)
         .toList();
     if (updates.isEmpty) return;
-    try {
-      final merged = Map<int, List<LKMedal>>.from(
-          _globalMedalsMemory ?? await cachedGlobalMedals());
-      for (final entry in updates) {
-        // 已更新用户移动到 Map 末尾，使容量限制保留最近出现的用户。
-        merged.remove(entry.key);
-        merged[entry.key] = entry.value.take(5).toList();
-      }
-      // 控制缓存体积，只保留最近出现的最多 500 个用户。
-      final keys = merged.keys.toList();
-      if (keys.length > 500) {
-        for (final key in keys.take(keys.length - 500)) {
-          merged.remove(key);
+    final epoch = _globalMedalsEpoch;
+    await _queueGlobalMedalsWrite(() async {
+      if (epoch != _globalMedalsEpoch) return;
+      try {
+        final base = _globalMedalsMemory ?? await cachedGlobalMedals();
+        if (epoch != _globalMedalsEpoch) return;
+        final merged = Map<int, List<LKMedal>>.from(base);
+        for (final entry in updates) {
+          // 已更新用户移动到 Map 末尾，使容量限制保留最近出现的用户。
+          merged.remove(entry.key);
+          merged[entry.key] = entry.value.take(5).toList();
         }
+        // 控制缓存体积，只保留最近出现的最多 500 个用户。
+        final keys = merged.keys.toList();
+        if (keys.length > 500) {
+          for (final key in keys.take(keys.length - 500)) {
+            merged.remove(key);
+          }
+        }
+        if (epoch != _globalMedalsEpoch) return;
+        _globalMedalsMemory = merged;
+        _globalMedalsWriteTimer?.cancel();
+        _globalMedalsWriteTimer = Timer(
+          const Duration(milliseconds: 600),
+          () => unawaited(_persistGlobalMedals(epoch: epoch)),
+        );
+      } catch (_) {
+        // 缓存失败不影响动态内容显示。
       }
-      _globalMedalsMemory = merged;
-      _globalMedalsWriteTimer?.cancel();
-      _globalMedalsWriteTimer = Timer(
-        const Duration(milliseconds: 600),
-        () => unawaited(_persistGlobalMedals()),
-      );
-    } catch (_) {
-      // 缓存失败不影响动态内容显示。
-    }
+    });
   }
 
-  static Future<void> _persistGlobalMedals() async {
+  static Future<void> _persistGlobalMedals({int? epoch}) async {
+    final expectedEpoch = epoch ?? _globalMedalsEpoch;
+    if (expectedEpoch != _globalMedalsEpoch) return;
     final memory = _globalMedalsMemory;
     if (memory == null) return;
     final encoded = <String, dynamic>{
@@ -1266,8 +1315,9 @@ class LKStore {
             .toList(),
     };
     try {
-      await (await SharedPreferences.getInstance())
-          .setString(_globalMedalsKey, jsonEncode(encoded));
+      final prefs = await SharedPreferences.getInstance();
+      if (expectedEpoch != _globalMedalsEpoch) return;
+      await prefs.setString(_globalMedalsKey, jsonEncode(encoded));
     } catch (_) {
       // 后台持久化失败不影响当前进程内缓存。
     }

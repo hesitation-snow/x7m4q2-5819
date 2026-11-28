@@ -17,8 +17,8 @@ class YomiruAppCache {
     try {
       EpubCatalog.reset();
       await clearGroups({
-        '小说正文': ReaderContentCache.clear,
-        '网络响应': LKClient.shared.clearResponseCache,
+        '小说正文': () => ReaderContentCache.clear(throwOnError: true),
+        '网络响应': () => LKClient.shared.clearResponseCache(throwOnError: true),
         '页面数据': LKStore.clearContentCaches,
         '图片': DefaultCacheManager().emptyCache,
         '头像与勋章': SmallImagePreloads.clear,

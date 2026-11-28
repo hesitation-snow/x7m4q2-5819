@@ -344,7 +344,12 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
           widget.metadataStorageKey, encodeCustomTtsMetadata(config));
       if (!saved) throw StateError('Metadata was not saved.');
       if (!mounted) return;
-      _credential.clear();
+      _suppressVoiceCatalogInvalidation = true;
+      try {
+        _credential.clear();
+      } finally {
+        _suppressVoiceCatalogInvalidation = false;
+      }
       setState(() {
         _baselineConfig = config;
         _baselineEndpointMode = _endpointMode;
@@ -861,9 +866,6 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final matchedVoice = _azureVoices
-        .where((voice) => voice.id == _voice.text)
-        .firstOrNull;
     return ListenableBuilder(
       listenable: Listenable.merge([
         _endpoint,
@@ -877,6 +879,9 @@ class _CustomTtsSettingsPageState extends State<CustomTtsSettingsPage> {
         _credential,
       ]),
       builder: (context, _) {
+        final matchedVoice = _azureVoices
+            .where((voice) => voice.id == _voice.text)
+            .firstOrNull;
         final dirty = _isDirty;
         return PopScope(
           canPop: !dirty && !_saving,

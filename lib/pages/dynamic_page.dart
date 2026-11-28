@@ -1029,7 +1029,7 @@ class _DynamicPageState extends State<DynamicPage> {
                                         ? '当前页暂无作品发布动态'
                                         : '已按设置隐藏勇者相关动态',
                                     hasMore: _hasMore,
-                                    loading: _loading,
+                                    loading: _loading || _refreshing,
                                     error: _errorFromAppend ? _error : null,
                                     pageKey: _page,
                                     onLoadMore: () => _load(append: true),

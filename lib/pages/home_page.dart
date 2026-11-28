@@ -1268,7 +1268,7 @@ class _FeedTabState extends State<FeedTab>
                 FilteredListContinuation(
                   message: '当前列表作品已根据“隐藏勇者书籍”设置过滤',
                   hasMore: _hasMore,
-                  loading: _loading,
+                  loading: _loading || _refreshing,
                   error: _loadMoreError,
                   pageKey: _page,
                   onLoadMore: () => _load(_page + 1, true),
@@ -2975,7 +2975,7 @@ class _LiquidGlassListeningDockOverlay extends StatelessWidget {
       ]),
       builder: (context, _) {
         final now = ListeningNow.instance;
-        if (!now.active || now.session == null) {
+        if ((!now.active || now.session == null) && !now.hasErrorBanner) {
           return const SizedBox.shrink();
         }
         final optics =
@@ -3025,7 +3025,7 @@ class _DockedListeningDockOverlay extends StatelessWidget {
       ]),
       builder: (context, _) {
         final now = ListeningNow.instance;
-        if (!now.active || now.session == null) {
+        if ((!now.active || now.session == null) && !now.hasErrorBanner) {
           return const SizedBox.shrink();
         }
         final fraction = barFrac.value.clamp(0.0, 1.0).toDouble();

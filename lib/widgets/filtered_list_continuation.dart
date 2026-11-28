@@ -19,13 +19,35 @@ class ListContinuation extends StatefulWidget {
 
 class _ListContinuationState extends State<ListContinuation> {
   Object? _requestedPage;
+  int _consecutiveAutoLoads = 0;
+
+  bool _isResetPage(Object pageKey) =>
+      pageKey == 0 || pageKey == 1 || pageKey == '';
+
+  @override
+  void didUpdateWidget(covariant ListContinuation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final clearedError = oldWidget.error != null && widget.error == null;
+    final pageReset =
+        oldWidget.pageKey != widget.pageKey && _isResetPage(widget.pageKey);
+    final refreshSettled = oldWidget.loading &&
+        !widget.loading &&
+        widget.error == null &&
+        _isResetPage(widget.pageKey);
+    if (clearedError || pageReset || refreshSettled) {
+      _requestedPage = null;
+      _consecutiveAutoLoads = 0;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     if (!widget.loading &&
         widget.error == null &&
+        _consecutiveAutoLoads < 3 &&
         _requestedPage != widget.pageKey) {
       _requestedPage = widget.pageKey;
+      _consecutiveAutoLoads++;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !widget.loading && widget.error == null) {
           widget.onLoadMore();
@@ -36,7 +58,12 @@ class _ListContinuationState extends State<ListContinuation> {
         child: Padding(
       padding: const EdgeInsets.all(12),
       child: TextButton(
-          onPressed: widget.loading ? null : widget.onLoadMore,
+          onPressed: widget.loading
+              ? null
+              : () {
+                  _consecutiveAutoLoads = 0;
+                  widget.onLoadMore();
+                },
           child: Text(widget.loading
               ? '正在加载…'
               : widget.error != null
@@ -74,6 +101,25 @@ class FilteredListContinuation extends StatefulWidget {
 class _FilteredListContinuationState extends State<FilteredListContinuation> {
   int _automaticRequests = 0;
   Object? _requestedPage;
+
+  bool _isResetPage(Object pageKey) =>
+      pageKey == 0 || pageKey == 1 || pageKey == '';
+
+  @override
+  void didUpdateWidget(covariant FilteredListContinuation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final clearedError = oldWidget.error != null && widget.error == null;
+    final pageReset =
+        oldWidget.pageKey != widget.pageKey && _isResetPage(widget.pageKey);
+    final refreshSettled = oldWidget.loading &&
+        !widget.loading &&
+        widget.error == null &&
+        _isResetPage(widget.pageKey);
+    if (clearedError || pageReset || refreshSettled) {
+      _requestedPage = null;
+      _automaticRequests = 0;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

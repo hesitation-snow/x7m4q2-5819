@@ -17,11 +17,25 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _user = TextEditingController();
   final _pwd = TextEditingController();
-  bool _busy = false;
+  bool _loggingIn = false;
+  bool _loggingOut = false;
   bool _obscurePwd = true;
+
+  bool get _busy => _loggingIn || _loggingOut;
+
+  @override
+  void initState() {
+    super.initState();
+    LKClient.sessionRev.addListener(_onSessionChanged);
+  }
+
+  void _onSessionChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void dispose() {
+    LKClient.sessionRev.removeListener(_onSessionChanged);
     _user.dispose();
     _pwd.dispose();
     super.dispose();
@@ -39,16 +53,24 @@ class _LoginPageState extends State<LoginPage> {
       showFloatingPrompt(context, '请输入密码');
       return;
     }
-    setState(() => _busy = true);
+    setState(() => _loggingIn = true);
+    var authenticated = false;
     try {
       await LKApi.login(u, p);
+      authenticated = true;
       await LKStore.save();
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
-      if (mounted) showLkError(context, _loginError(e));
+      if (mounted) {
+        if (authenticated) {
+          showLkError(context, '登录成功但本地保存失败，请检查设备存储后重试');
+        } else {
+          showLkError(context, _loginError(e));
+        }
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _loggingIn = false);
     }
   }
 
@@ -57,15 +79,15 @@ class _LoginPageState extends State<LoginPage> {
     final session = LKClient.shared.session;
     final uid = session.uid;
     final key = session.securityKey;
-    setState(() => _busy = true);
+    final allDevices = await showLogoutScopeDialog(context);
+    if (!mounted ||
+        allDevices == null ||
+        session.uid != uid ||
+        session.securityKey != key) {
+      return;
+    }
+    setState(() => _loggingOut = true);
     try {
-      final allDevices = await showLogoutScopeDialog(context);
-      if (!mounted ||
-          allDevices == null ||
-          session.uid != uid ||
-          session.securityKey != key) {
-        return;
-      }
       await LKApi.logout(allDevices: allDevices);
       if (!mounted || session.isLoggedIn) return;
       showLkSnackBar(context, allDevices ? '已退出所有设备' : '已退出本机',
@@ -73,7 +95,7 @@ class _LoginPageState extends State<LoginPage> {
     } catch (_) {
       if (mounted) showLkError(context, '退出失败，请重试或选择“仅退出本机”');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _loggingOut = false);
     }
   }
 
@@ -135,6 +157,7 @@ class _LoginPageState extends State<LoginPage> {
                             children: [
                               TextField(
                                 controller: _user,
+                                enabled: !_busy,
                                 keyboardType: TextInputType.emailAddress,
                                 textInputAction: TextInputAction.next,
                                 autofillHints: const [
@@ -148,6 +171,7 @@ class _LoginPageState extends State<LoginPage> {
                               const SizedBox(height: 16),
                               TextField(
                                 controller: _pwd,
+                                enabled: !_busy,
                                 obscureText: _obscurePwd,
                                 textInputAction: TextInputAction.done,
                                 autofillHints: const [AutofillHints.password],
@@ -171,7 +195,7 @@ class _LoginPageState extends State<LoginPage> {
                         const SizedBox(height: 24),
                       FilledButton(
                         onPressed: _busy ? null : _login,
-                        child: _busy
+                        child: _loggingIn
                             ? const SizedBox(
                                 width: 20,
                                 height: 20,
@@ -207,7 +231,13 @@ class _LoginPageState extends State<LoginPage> {
                           onPressed: _busy ? null : _logout,
                           style: OutlinedButton.styleFrom(
                               foregroundColor: scheme.error),
-                          child: Text('退出登录(当前: ${s.nickname})'),
+                          child: _loggingOut
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child:
+                                      MotionProgressIndicator(strokeWidth: 2))
+                              : Text('退出登录(当前: ${s.nickname})'),
                         ),
                       ],
                     ],

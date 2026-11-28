@@ -592,7 +592,7 @@ class _SearchPageState extends State<SearchPage> {
             child: FilteredListContinuation(
           message: '当前搜索结果已根据“隐藏勇者书籍”设置过滤',
           hasMore: _hasMore,
-          loading: _loading,
+          loading: _loading || _refreshing,
           error: _error,
           pageKey: _page,
           onLoadMore: () => _search(_page + 1, true),
@@ -610,7 +610,7 @@ class _SearchPageState extends State<SearchPage> {
               if (i >= visibleItems.length) {
                 return ListContinuation(
                     pageKey: _page,
-                    loading: _loading,
+                    loading: _loading || _refreshing,
                     error: _error,
                     onLoadMore: () => _search(_page + 1, true));
               }

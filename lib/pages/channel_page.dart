@@ -183,7 +183,7 @@ class _ChannelPageState extends State<ChannelPage> {
                           FilteredListContinuation(
                             message: '当前列表作品已根据“隐藏勇者书籍”设置过滤',
                             hasMore: _hasMore,
-                            loading: _loading,
+                            loading: _loading || _refreshing,
                             error: _loadMoreError,
                             pageKey: _page,
                             onLoadMore: () => _load(_page + 1, true),
@@ -210,7 +210,7 @@ class _ChannelPageState extends State<ChannelPage> {
                                     if (i >= visibleItems.length) {
                                       return ListContinuation(
                                           pageKey: _page,
-                                          loading: _loading,
+                                          loading: _loading || _refreshing,
                                           error: _loadMoreError,
                                           onLoadMore: () =>
                                               _load(_page + 1, true));
@@ -246,7 +246,7 @@ class _ChannelPageState extends State<ChannelPage> {
                                     if (i >= visibleItems.length) {
                                       return ListContinuation(
                                           pageKey: _page,
-                                          loading: _loading,
+                                          loading: _loading || _refreshing,
                                           error: _loadMoreError,
                                           onLoadMore: () =>
                                               _load(_page + 1, true));

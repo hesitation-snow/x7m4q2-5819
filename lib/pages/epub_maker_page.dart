@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../api/lk_client.dart';
 import '../api/models.dart';
 import '../api/store.dart';
 import '../services/app_motion.dart';
@@ -12,6 +14,7 @@ import '../services/epub/epub_download_service.dart';
 import '../services/epub/epub_models.dart';
 import '../widgets/common.dart';
 import '../widgets/m3_controls.dart';
+import '../widgets/scrollable_status.dart';
 
 class EpubMakerPage extends StatefulWidget {
   final LKBook book;
@@ -34,11 +37,15 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
   bool _exportAsTxt = false;
   bool _warnedDataSaver = false;
   bool _failedExpanded = true;
+  bool _exiting = false;
+  bool _starting = false;
+  bool _cancelDialogOpen = false;
   final GlobalKey _shareButtonKey = GlobalKey();
+  final Map<String, bool> _localFileExists = {};
 
   TextEditingController? _titleController;
   String? _selectedCoverPath;
-  int? _lastEditingBookId;
+  String? _lastEditingKey;
 
   @override
   void initState() {
@@ -53,14 +60,32 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
     super.dispose();
   }
 
+  bool _hasLocalFile(String? path) {
+    if (path == null || path.isEmpty) return false;
+    final cached = _localFileExists[path];
+    if (cached != null) return cached;
+    _localFileExists[path] = false;
+    unawaited(File(path).exists().then((exists) {
+      if (mounted && _localFileExists[path] != exists) {
+        setState(() => _localFileExists[path] = exists);
+      }
+    }).catchError((_) {}));
+    return false;
+  }
+
   void _initEditingStateIfNeeded(EpubDownloadTask task) {
-    if (_lastEditingBookId != task.bookId || _titleController == null) {
-      _lastEditingBookId = task.bookId;
-      _titleController?.dispose();
+    final editingKey =
+        '${task.bookId}:${task.selectedVolumes.map((v) => v.volumeId).join(',')}:${task.options.exportIncomplete}:${task.completedCount}';
+    if (_lastEditingKey != editingKey || _titleController == null) {
+      _lastEditingKey = editingKey;
       final presetTitle = task.customTitle?.trim().isNotEmpty == true
           ? task.customTitle!
           : computeDefaultEpubTitle(task.bookTitle, task.selectedVolumes);
-      _titleController = TextEditingController(text: presetTitle);
+      if (_titleController == null) {
+        _titleController = TextEditingController(text: presetTitle);
+      } else {
+        _titleController!.text = presetTitle;
+      }
       _selectedCoverPath = task.customCoverPath;
     }
   }
@@ -118,13 +143,15 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
           ],
         ),
       );
-      if (confirmed != true) return;
+      if (!mounted || confirmed != true) return;
       _warnedDataSaver = true;
     }
+    if (!mounted) return;
     setState(() => _includeIllustrations = value);
   }
 
   Future<void> _startMaking() async {
+    if (_starting) return;
     if (_selectedVolumeIds.isEmpty) {
       showFloatingPrompt(context, '请至少选择一卷');
       return;
@@ -133,6 +160,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
         .where((v) => _selectedVolumeIds.contains(v.volumeId))
         .toList();
 
+    _starting = true;
     try {
       await _service.startTask(
         book: widget.book,
@@ -144,34 +172,42 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
       );
     } catch (e) {
       if (mounted) showLkError(context, e);
+    } finally {
+      _starting = false;
     }
   }
 
   Future<void> _confirmCancel() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      animationStyle: AppMotion.style(context),
-      builder: (ctx) => AlertDialog(
-        title: const Text('取消制作'),
-        content: const Text('确定要取消本次书籍制作吗？已下载的临时章节与图片将被清理。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('继续制作'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(ctx).colorScheme.error,
-              foregroundColor: Theme.of(ctx).colorScheme.onError,
+    if (_cancelDialogOpen) return;
+    _cancelDialogOpen = true;
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        animationStyle: AppMotion.style(context),
+        builder: (ctx) => AlertDialog(
+          title: const Text('取消制作'),
+          content: const Text('确定要取消本次书籍制作吗？已下载的临时章节与图片将被清理。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('继续制作'),
             ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('取消制作'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await _service.cancelTask();
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error,
+                foregroundColor: Theme.of(ctx).colorScheme.onError,
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('取消制作'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true) {
+        await _service.cancelTask();
+      }
+    } finally {
+      _cancelDialogOpen = false;
     }
   }
 
@@ -192,6 +228,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
       final photo = await picker.pickImage(source: ImageSource.gallery);
       if (photo != null && mounted) {
         setState(() {
+          _localFileExists[photo.path] = true;
           _selectedCoverPath = photo.path;
         });
       }
@@ -229,6 +266,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
         }
         return;
       }
+    } else if (mounted) {
+      showFloatingPrompt(context, '文件已导出到：$filePath');
     }
   }
 
@@ -248,6 +287,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
         }
         return;
       }
+      if (!mounted) return;
       final origin = _calculateShareOrigin();
       await Share.shareXFiles(
         [
@@ -274,8 +314,11 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
       body: ValueListenableBuilder<EpubDownloadTask?>(
         valueListenable: _service.currentTask,
         builder: (context, task, _) {
+          final viewerUid = LKClient.shared.session.uid;
+          final belongsToViewer = task != null &&
+              (viewerUid == 0 || task.ownerUid == 0 || task.ownerUid == viewerUid);
           // 如果当前有本小说的任务或正在进行
-          if (task != null &&
+          if (belongsToViewer &&
               task.bookId == widget.book.bookId &&
               !task.isTerminal) {
             if (task.phase == EpubTaskPhase.editingMetadata) {
@@ -283,13 +326,70 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
             }
             return _buildProgressView(context, task);
           }
-          if (task != null &&
+          if (belongsToViewer &&
               task.bookId == widget.book.bookId &&
               task.phase == EpubTaskPhase.completed) {
             return _buildCompletedView(context, task);
           }
+          if (belongsToViewer &&
+              task.bookId == widget.book.bookId &&
+              task.phase == EpubTaskPhase.failed) {
+            return _buildFailedView(context, task);
+          }
           return _buildConfigView(context);
         },
+      ),
+    );
+  }
+
+  Widget _buildFailedView(BuildContext context, EpubDownloadTask task) {
+    final scheme = Theme.of(context).colorScheme;
+    final message = task.statusMessage.trim().isNotEmpty
+        ? task.statusMessage.trim()
+        : '制作失败，请稍后重试';
+    return ScrollableStatus(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline_rounded, size: 52, color: scheme.error),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                OutlinedButton(
+                  onPressed: () => _service.currentTask.value = null,
+                  child: const Text('返回配置'),
+                ),
+                if (task.selectedVolumes.isNotEmpty)
+                  FilledButton(
+                    onPressed: () async {
+                      final volumes = task.selectedVolumes;
+                      final options = task.options;
+                      _service.currentTask.value = null;
+                      await _service.startTask(
+                        book: widget.book,
+                        selectedVolumes: volumes,
+                        options: options,
+                      );
+                    },
+                    child: const Text('重试'),
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -615,7 +715,8 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                 if (task.isPaused)
                   Icon(Icons.pause_circle_outline_rounded,
                       size: 48, color: scheme.primary)
-                else if (task.phase == EpubTaskPhase.packaging)
+                else if (task.phase == EpubTaskPhase.packaging ||
+                    task.phase == EpubTaskPhase.fetchingCatalog)
                   const SizedBox.square(
                     dimension: 48,
                     child: MotionProgressIndicator(strokeWidth: 3),
@@ -811,7 +912,9 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                 borderRadius: BorderRadius.circular(14),
                               ),
                             ),
-                            onPressed: () => _service.retryFailedChapters(),
+                            onPressed: task.phase == EpubTaskPhase.paused
+                                ? () => _service.retryFailedChapters()
+                                : null,
                             icon: const Icon(Icons.refresh_rounded, size: 18),
                             label: const Text('重试失败章节'),
                           ),
@@ -824,7 +927,10 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                 borderRadius: BorderRadius.circular(14),
                               ),
                             ),
-                            onPressed: () => _service.exportCompletedContent(),
+                            onPressed: task.phase == EpubTaskPhase.paused &&
+                                    task.completedCount > 0
+                                ? () => _service.exportCompletedContent()
+                                : null,
                             child: const Text('导出已完成内容'),
                           ),
                         ),
@@ -1144,7 +1250,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
                                         !task.availableIllustrationPaths
                                             .contains(_selectedCoverPath);
                                 final hasLocalFile = isCustomLocalSelected &&
-                                    File(_selectedCoverPath!).existsSync();
+                                    _hasLocalFile(_selectedCoverPath);
                                 return _buildCoverChoiceTile(
                                   label: hasLocalFile ? '本机图片' : '自选本机',
                                   isSelected: isCustomLocalSelected,
@@ -1274,15 +1380,14 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
   Widget _buildCoverPreview(EpubDownloadTask task) {
     final path = _selectedCoverPath;
     Widget imageWidget;
-    if (path != null && path.isNotEmpty && File(path).existsSync()) {
+    if (_hasLocalFile(path)) {
       imageWidget = Image.file(
-        File(path),
+        File(path!),
         cacheWidth: imageCacheDimension(context, 120),
         fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => _buildPlaceholderCover(),
       );
-    } else if (task.customCoverPath != null &&
-        File(task.customCoverPath!).existsSync()) {
+    } else if (_hasLocalFile(task.customCoverPath)) {
       imageWidget = Image.file(
         File(task.customCoverPath!),
         cacheWidth: imageCacheDimension(context, 120),
@@ -1350,8 +1455,7 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
   }
 
   Widget _buildDefaultCoverThumbnail(EpubDownloadTask task) {
-    if (task.customCoverPath != null &&
-        File(task.customCoverPath!).existsSync()) {
+    if (_hasLocalFile(task.customCoverPath)) {
       return Image.file(
         File(task.customCoverPath!),
         cacheWidth: imageCacheDimension(context, 64),
@@ -1467,99 +1571,115 @@ class _EpubMakerPageState extends State<EpubMakerPage> {
         ? (task.options.exportIncomplete ? 'TXT 制作完成（不完整版）' : 'TXT 制作完成')
         : (task.options.exportIncomplete ? 'EPUB 制作完成（不完整版）' : 'EPUB 制作完成');
 
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              color: scheme.primary.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Icon(Icons.check_circle_rounded,
-                size: 48, color: scheme.primary),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            completedTitle,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            fileName,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '文件大小：${_formatSize(task.outputSizeBytes)}',
-            style: TextStyle(
-                fontSize: 13,
-                color: scheme.onSurfaceVariant.withValues(alpha: 0.8)),
-          ),
-          const SizedBox(height: 36),
+    return SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Icon(Icons.check_circle_rounded,
+                    size: 48, color: scheme.primary),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                completedTitle,
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                fileName,
+                textAlign: TextAlign.center,
+                style:
+                    TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '文件大小：${_formatSize(task.outputSizeBytes)}',
+                style: TextStyle(
+                    fontSize: 13,
+                    color: scheme.onSurfaceVariant.withValues(alpha: 0.8)),
+              ),
+              const SizedBox(height: 36),
 
-          // 另存为文件按钮
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: FilledButton.icon(
-              onPressed: () {
-                if (task.outputPath != null) {
-                  _saveAsDocument(
-                    task.outputPath!,
-                    fileName,
-                    mimeType: isTxt ? 'text/plain' : 'application/epub+zip',
-                  );
-                }
-              },
-              icon: const Icon(Icons.save_alt_rounded),
-              label: const Text('保存'),
-            ),
-          ),
-          const SizedBox(height: 12),
+              // 另存为文件按钮
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: FilledButton.icon(
+                  onPressed: () {
+                    if (task.outputPath != null) {
+                      _saveAsDocument(
+                        task.outputPath!,
+                        fileName,
+                        mimeType:
+                            isTxt ? 'text/plain' : 'application/epub+zip',
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.save_alt_rounded),
+                  label: const Text('保存'),
+                ),
+              ),
+              const SizedBox(height: 12),
 
-          // 独立分享按钮
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: FilledButton.icon(
-              key: _shareButtonKey,
-              onPressed: () {
-                if (task.outputPath != null) {
-                  _shareBookFile(
-                    task.outputPath!,
-                    fileName,
-                    mimeType: isTxt ? 'text/plain' : 'application/epub+zip',
-                  );
-                }
-              },
-              icon: const Icon(Icons.share_rounded),
-              label: const Text('分享'),
-            ),
+              // 独立分享按钮
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: FilledButton.icon(
+                  key: _shareButtonKey,
+                  onPressed: () {
+                    if (task.outputPath != null) {
+                      _shareBookFile(
+                        task.outputPath!,
+                        fileName,
+                        mimeType:
+                            isTxt ? 'text/plain' : 'application/epub+zip',
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.share_rounded),
+                  label: const Text('分享'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: _exiting
+                      ? null
+                      : () async {
+                          setState(() => _exiting = true);
+                          try {
+                            await EpubDownloadService.clearAllTempFiles(
+                                includeActiveTask: true);
+                            _service.currentTask.value = null;
+                            if (context.mounted) {
+                              showFloatingPrompt(context, '临时文件已清理');
+                              Navigator.pop(context);
+                            }
+                          } finally {
+                            if (mounted) setState(() => _exiting = false);
+                          }
+                        },
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  label: const Text('清理临时文件并退出'),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: OutlinedButton.icon(
-              onPressed: () async {
-                await EpubDownloadService.clearAllTempFiles();
-                _service.currentTask.value = null;
-                if (context.mounted) {
-                  showFloatingPrompt(context, '临时文件已清理');
-                  Navigator.pop(context);
-                }
-              },
-              icon: const Icon(Icons.delete_outline_rounded),
-              label: const Text('清理临时文件并退出'),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

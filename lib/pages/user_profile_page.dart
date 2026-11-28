@@ -708,7 +708,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                     ? '已按设置隐藏勇者相关动态'
                     : (_dynamicError ?? '暂无公开动态'),
                 hasMore: _dynamicHasMore,
-                loading: _dynamicLoading,
+                loading: _dynamicLoading || _refreshing,
                 pageKey: _dynamicCursor,
                 error: _dynamicError,
                 onLoadMore: () => _loadDynamics(append: true))
@@ -722,7 +722,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                   if (index == visibleDynamics.length) {
                     return ListContinuation(
                         pageKey: _dynamicCursor,
-                        loading: _dynamicLoading,
+                        loading: _dynamicLoading || _refreshing,
                         error: _dynamicError,
                         onLoadMore: () => _loadDynamics(append: true));
                   }
@@ -1166,7 +1166,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                   if (index == publications.length) {
                     return ListContinuation(
                         pageKey: _home!.page,
-                        loading: _publicationLoading,
+                        loading: _publicationLoading || _refreshing,
                         error: _publicationError,
                         onLoadMore: _loadMorePublications);
                   }
@@ -1218,7 +1218,7 @@ class _UserProfilePageState extends State<UserProfilePage>
                   if (index == books.length) {
                     return ListContinuation(
                         pageKey: shelf.page,
-                        loading: _bookshelfLoading,
+                        loading: _bookshelfLoading || _refreshing,
                         error: _bookshelfError,
                         onLoadMore: _loadMoreBookshelf);
                   }

@@ -28,7 +28,7 @@ Future<ReaderAudioHandler> ensureReaderAudioHandler() async {
       androidNotificationOngoing: false,
       androidStopForegroundOnPause: false,
     ),
-  );
+  ).timeout(const Duration(seconds: 15));
   _initialization = initialization;
   try {
     final handler = await initialization;

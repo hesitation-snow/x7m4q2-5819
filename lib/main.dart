@@ -46,6 +46,7 @@ void main() async {
       debugPrint('Yomiru: media service unavailable; audio can be retried.');
     }));
     unawaited(LKClient.shared.warmErrorCodeHints());
+    unawaited(LKClient.shared.trimResponseCache());
   });
 }
 

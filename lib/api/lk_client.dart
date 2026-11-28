@@ -62,7 +62,6 @@ class LKClient {
   // 仅供公开、只读接口使用的响应缓存。缓存键不包含 security_key、cookie
   // 或其他会话凭据；私信、消息、福利和个人资料等敏感接口不会传入 cacheKey。
   static const _responseCachePrefix = 'lk_response_cache_v1_';
-  Future<SharedPreferences>? _cachePrefs;
   final Map<String, _CachedResponse> _memoryCache = {};
   final Map<String, Future<Map<String, dynamic>>> _inFlight = {};
   final Map<String, int> _cacheVersions = {};
@@ -80,8 +79,7 @@ class LKClient {
   static Map<int, String> _remoteErrorHints = const {};
   Future<void>? _errorCodeWarmup;
 
-  Future<SharedPreferences> _responsePrefs() =>
-      _cachePrefs ??= SharedPreferences.getInstance();
+  Future<SharedPreferences> _responsePrefs() => SharedPreferences.getInstance();
 
   static final Map<String, String> _headers = {
     'Content-Type': 'application/json',
@@ -125,8 +123,9 @@ class LKClient {
     final shouldReadDiskCache = cacheKey != null &&
         !forceRefresh &&
         (_validatedCacheKeys.contains(cacheKey) || allowCachedFallback);
-    final cachedCandidate =
-        shouldReadDiskCache ? await _readCached(cacheKey) : null;
+    final cachedCandidate = shouldReadDiskCache
+        ? await _readCached(cacheKey, expectedVersion: cacheVersion)
+        : null;
     final cached =
         cacheKey == null || (_cacheVersions[cacheKey] ?? 0) == cacheVersion
             ? cachedCandidate
@@ -138,6 +137,17 @@ class LKClient {
     }
     final requestSecurityKey = (body['security_key'] ?? '').toString();
 
+    Map<String, dynamic>? validCachedFallback() {
+      if (cached == null ||
+          forceRefresh ||
+          !allowCachedFallback ||
+          cacheKey == null ||
+          (_cacheVersions[cacheKey] ?? 0) != cacheVersion) {
+        return null;
+      }
+      return cached.data;
+    }
+
     Future<Map<String, dynamic>> fetch() async {
       late final http.Response resp;
       try {
@@ -146,24 +156,26 @@ class LKClient {
                 headers: _headers, body: jsonEncode(body))
             .timeout(requestTimeout);
       } on TimeoutException {
-        if (cached != null && !forceRefresh && allowCachedFallback) {
-          return cached.data;
+        final fallback = validCachedFallback();
+        if (fallback != null) {
+          return fallback;
         }
         throw LKException(-1, '连接超时，请检查网络后重试');
       } catch (_) {
-        if (cached != null && !forceRefresh && allowCachedFallback) {
-          return cached.data;
+        final fallback = validCachedFallback();
+        if (fallback != null) {
+          return fallback;
         }
         throw LKException(-1, '连接失败，请检查网络后重试');
       }
       if (resp.statusCode >= 400) {
         // 不记录响应正文:错误响应可能包含账号信息或服务端回显内容。
         debugPrint('LKHTTP status=${resp.statusCode} path=$path');
-        if (cached != null &&
-            !forceRefresh &&
-            allowCachedFallback &&
-            resp.statusCode >= 500) {
-          return cached.data;
+        if (resp.statusCode >= 500) {
+          final fallback = validCachedFallback();
+          if (fallback != null) {
+            return fallback;
+          }
         }
         if (resp.statusCode == 401) {
           await expireSessionIfCurrent(requestSecurityKey);
@@ -298,7 +310,12 @@ class LKClient {
     }
   }
 
-  Future<_CachedResponse?> _readCached(String key) async {
+  Future<_CachedResponse?> _readCached(String key,
+      {int? expectedVersion}) async {
+    if (expectedVersion != null &&
+        (_cacheVersions[key] ?? 0) != expectedVersion) {
+      return null;
+    }
     final memory = _memoryCache.remove(key);
     if (memory != null) {
       _memoryCache[key] = memory;
@@ -307,6 +324,10 @@ class LKClient {
     try {
       final raw =
           (await _responsePrefs()).getString('$_responseCachePrefix$key');
+      if (expectedVersion != null &&
+          (_cacheVersions[key] ?? 0) != expectedVersion) {
+        return null;
+      }
       if (raw == null || raw.isEmpty) return null;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
@@ -339,6 +360,26 @@ class LKClient {
     _memoryCache[key] = cached;
   }
 
+  /// 精准失效单个只读缓存键，避免误伤相同前缀的其他条目。
+  Future<void> invalidateCacheKey(String key) async {
+    _cacheVersions[key] = (_cacheVersions[key] ?? 0) + 1;
+    _memoryCache.remove(key);
+    _inFlight.remove(key);
+    _validatedCacheKeys.remove(key);
+    try {
+      await _queueCacheWrite(() async {
+        final prefs = await _responsePrefs();
+        final storedKey = '$_responseCachePrefix$key';
+        if (prefs.containsKey(storedKey)) {
+          await prefs.remove(storedKey);
+        }
+        _diskCacheIndex?.remove(storedKey);
+      });
+    } catch (_) {
+      // Cache invalidation failure must not undo the completed mutation.
+    }
+  }
+
   /// 写操作后清理相关只读缓存，避免页面在缓存有效期内回显旧状态。
   Future<void> invalidateCachePrefix(String keyPrefix) async {
     final affectedKeys = <String>{
@@ -369,7 +410,7 @@ class LKClient {
   }
 
   /// 清除全部公开接口响应缓存，不影响登录会话或安全存储中的凭据。
-  Future<void> clearResponseCache() async {
+  Future<void> clearResponseCache({bool throwOnError = false}) async {
     final affectedKeys = <String>{
       ..._memoryCache.keys,
       ..._inFlight.keys,
@@ -386,12 +427,16 @@ class LKClient {
         final prefs = await _responsePrefs();
         final keys = prefs
             .getKeys()
-            .where((key) => key.startsWith(_responseCachePrefix));
-        await Future.wait(keys.map(prefs.remove));
+            .where((key) => key.startsWith(_responseCachePrefix))
+            .toList(growable: false);
+        final removed = await Future.wait(keys.map(prefs.remove));
         _diskCacheIndex = {};
+        if (removed.any((ok) => !ok)) {
+          throw StateError('部分网络响应缓存未清除');
+        }
       });
     } catch (_) {
-      // 缓存清理失败由统一清理入口继续处理其他缓存。
+      if (throwOnError) rethrow;
     }
   }
 
@@ -573,14 +618,26 @@ class LKClient {
     req.fields['scene'] = 'user_avatar';
     req.fields['md5'] = md5Hex;
     req.files.add(await http.MultipartFile.fromPath('file', filePath));
-    final resp = await _http.send(req).timeout(const Duration(seconds: 40));
-    final bytes =
-        await resp.stream.toBytes().timeout(const Duration(seconds: 40));
+    late final http.StreamedResponse resp;
+    late final List<int> bytes;
+    try {
+      resp = await _http.send(req).timeout(const Duration(seconds: 40));
+      bytes = await resp.stream.toBytes().timeout(const Duration(seconds: 40));
+    } on TimeoutException {
+      throw LKException(-1, '上传超时，请检查网络后重试');
+    } catch (_) {
+      throw LKException(-1, '上传失败，请检查网络后重试');
+    }
     if (resp.statusCode >= 400) {
       if (resp.statusCode == 401) await expireSessionIfCurrent(key);
       throw LKException(resp.statusCode, '网络异常(HTTP ${resp.statusCode})');
     }
-    final decoded = jsonDecode(utf8.decode(bytes));
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(bytes));
+    } catch (_) {
+      throw LKException(-1, '响应解析失败');
+    }
     if (decoded is! Map<String, dynamic>) throw LKException(-1, '响应格式错误');
     final code = (decoded['code'] as num?)?.toInt() ?? -1;
     if (code != 0) {
@@ -611,14 +668,26 @@ class LKClient {
     req.fields['security_key'] = key;
     req.fields.addAll(fields);
     req.files.add(await http.MultipartFile.fromPath('file', filePath));
-    final resp = await _http.send(req).timeout(const Duration(seconds: 40));
-    final bytes =
-        await resp.stream.toBytes().timeout(const Duration(seconds: 40));
+    late final http.StreamedResponse resp;
+    late final List<int> bytes;
+    try {
+      resp = await _http.send(req).timeout(const Duration(seconds: 40));
+      bytes = await resp.stream.toBytes().timeout(const Duration(seconds: 40));
+    } on TimeoutException {
+      throw LKException(-1, '上传超时，请检查网络后重试');
+    } catch (_) {
+      throw LKException(-1, '上传失败，请检查网络后重试');
+    }
     if (resp.statusCode >= 400) {
       if (resp.statusCode == 401) await expireSessionIfCurrent(key);
       throw LKException(resp.statusCode, '网络异常(HTTP ${resp.statusCode})');
     }
-    final obj = jsonDecode(utf8.decode(bytes));
+    final Object? obj;
+    try {
+      obj = jsonDecode(utf8.decode(bytes));
+    } catch (_) {
+      throw LKException(-1, '响应解析失败');
+    }
     if (obj is! Map<String, dynamic>) throw LKException(-1, '响应格式错误');
     final code = (obj['code'] as num?)?.toInt() ?? -1;
     if (code != 0) {

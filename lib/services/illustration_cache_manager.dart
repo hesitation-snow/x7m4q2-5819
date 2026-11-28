@@ -71,6 +71,11 @@ class IllustrationCacheManager extends CacheManager {
       bool force = false,
       bool Function()? isCurrent}) async {
     key = illustrationCacheKey(key ?? url);
+    while (_clearing != null) {
+      try {
+        await _clearing;
+      } catch (_) {}
+    }
     final generation = _generation;
     bool wanted() =>
         generation == _generation &&
@@ -85,6 +90,10 @@ class IllustrationCacheManager extends CacheManager {
     }
     final requestKey = (key, force);
     var request = _requests[requestKey];
+    if (request != null && (request.completed || !request.isWanted)) {
+      _requests.remove(requestKey);
+      request = null;
+    }
     if (request == null) {
       request = _ImageRequest()..listeners.add(wanted);
       _requests[requestKey] = request;
@@ -102,7 +111,12 @@ class IllustrationCacheManager extends CacheManager {
         if (generation != _generation) return null;
         _knownCached.add(key!);
         return file;
-      }, isCurrent: () => job.isWanted);
+      }, isCurrent: () => job.isWanted).whenComplete(() {
+        job.completed = true;
+        if (identical(_requests[requestKey], job)) {
+          _requests.remove(requestKey);
+        }
+      });
     } else {
       request.listeners.add(wanted);
     }
@@ -184,11 +198,14 @@ class IllustrationCacheManager extends CacheManager {
 
   Future<void> _finishAndClear() async {
     final pending = _requests.values.map((request) => request.future).toList();
-    await Future.wait(pending.map((future) async {
-      try {
-        await future;
-      } catch (_) {/* 失败的下载同样需要清理。 */}
-    }));
+    await Future.any<void>([
+      Future.wait(pending.map((future) async {
+        try {
+          await future;
+        } catch (_) {/* 失败的下载同样需要清理。 */}
+      })),
+      Future<void>.delayed(const Duration(seconds: 5)),
+    ]);
     await super.emptyCache();
   }
 }
@@ -196,5 +213,6 @@ class IllustrationCacheManager extends CacheManager {
 class _ImageRequest {
   final listeners = <bool Function()>{};
   late final Future<FileInfo?> future;
-  bool get isWanted => listeners.any((listener) => listener());
+  bool completed = false;
+  bool get isWanted => !completed && listeners.any((listener) => listener());
 }

@@ -149,7 +149,10 @@ class _ListeningDockState extends State<ListeningDock> {
       builder: (context, _) {
         final now = ListeningNow.instance;
         final session = now.session;
-        if (!now.active || session == null) return const SizedBox.shrink();
+        final errorBanner = now.hasErrorBanner;
+        if ((!now.active || session == null) && !errorBanner) {
+          return const SizedBox.shrink();
+        }
 
         final theme = Theme.of(context);
         final scheme = theme.colorScheme;
@@ -160,22 +163,28 @@ class _ListeningDockState extends State<ListeningDock> {
         final subtitleLine = scaler.scale(11.5) * 1.25;
         final dockHeight = math.max(54.0, titleLine + subtitleLine + 20.0);
 
-        final error = session.error;
+        final error = errorBanner ? now.lastError : session?.error;
         final hasError = error != null && error.isNotEmpty;
-        final sentence = session.currentSegment?.text ?? '';
+        final sentence = session?.currentSegment?.text ?? '';
         final subtitleText = hasError
             ? '朗读失败，点击查看'
             : sentence.isNotEmpty
                 ? sentence
                 : '正在准备语音…';
-        final double? progress = session.isBuffering
-            ? (reduceMotion ? 0.25 : null)
-            : session.segmentCount > 0
-                ? ((session.position + 1) / session.segmentCount)
-                    .clamp(0.0, 1.0)
-                : 0.0;
+        final double? progress = session == null
+            ? 0.0
+            : session.isBuffering
+                ? (reduceMotion ? 0.25 : null)
+                : session.segmentCount > 0
+                    ? ((session.position + 1) / session.segmentCount)
+                        .clamp(0.0, 1.0)
+                    : 0.0;
         final badgeAccent = hasError ? scheme.error : scheme.primary;
-        final toggleLabel = session.isPaused ? '继续' : '暂停';
+        final toggleLabel = errorBanner
+            ? '关闭'
+            : (session?.isPaused ?? true)
+                ? '继续'
+                : '暂停';
 
         final content = InkWell(
           key: const ValueKey('listening-dock'),
@@ -246,15 +255,21 @@ class _ListeningDockState extends State<ListeningDock> {
                         child: InkWell(
                           onTap: () {
                             HapticFeedback.selectionClick();
-                            unawaited(now.toggle());
+                            if (errorBanner) {
+                              now.clearError();
+                            } else {
+                              unawaited(now.toggle());
+                            }
                           },
                           child: SizedBox(
                             width: 38,
                             height: 38,
                             child: Icon(
-                              session.isPaused
-                                  ? Icons.play_arrow_rounded
-                                  : Icons.pause_rounded,
+                              errorBanner
+                                  ? Icons.close_rounded
+                                  : (session?.isPaused ?? true)
+                                      ? Icons.play_arrow_rounded
+                                      : Icons.pause_rounded,
                               size: 21,
                               color: scheme.onPrimaryContainer,
                             ),
@@ -377,7 +392,8 @@ class ListeningMenu extends StatelessWidget {
                   builder: (context, _) {
                     final now = ListeningNow.instance;
                     final session = now.session;
-                    if (!now.active || session == null) {
+                    final errorBanner = now.hasErrorBanner;
+                    if ((!now.active || session == null) && !errorBanner) {
                       return Padding(
                         padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
                         child: Column(
@@ -408,15 +424,17 @@ class ListeningMenu extends StatelessWidget {
                         ),
                       );
                     }
-                    final sentence = session.currentSegment?.text ?? '正在准备下一段';
-                    final error = session.error;
+                    final sentence = errorBanner
+                        ? '后台朗读已停止，可返回阅读页继续。'
+                        : (session?.currentSegment?.text ?? '正在准备下一段');
+                    final error = errorBanner ? now.lastError : session?.error;
                     final hasError = error != null && error.isNotEmpty;
                     final title = now.chapterTitle.isNotEmpty
                         ? '${now.bookTitle} · ${now.chapterTitle}'
                         : (now.bookTitle.isEmpty ? '正在听书' : now.bookTitle);
                     final statusText = hasError
                         ? '朗读失败：$error'
-                        : session.isBuffering
+                        : session!.isBuffering
                             ? '正在准备语音…'
                             : session.isPaused
                                 ? '已暂停 · 第 ${session.position + 1}/${session.segmentCount} 段'
@@ -430,46 +448,48 @@ class ListeningMenu extends StatelessWidget {
                           ListeningPlaybackCard(
                             title: title,
                             status: statusText,
-                            position: session.position,
-                            segmentCount: session.segmentCount,
+                            position: session?.position ?? 0,
+                            segmentCount: session?.segmentCount ?? 0,
                             text: sentence,
-                            loading: session.isBuffering,
+                            loading: session?.isBuffering ?? false,
                             hasError: hasError,
                           ),
-                          const SizedBox(height: 16),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              IconButton.filledTonal(
-                                tooltip: '上一段',
-                                onPressed: session.position > 0
-                                    ? () => unawaited(now.previous())
-                                    : null,
-                                icon: const Icon(Icons.skip_previous_rounded),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton.filled(
-                                tooltip: session.isPaused ? '继续' : '暂停',
-                                iconSize: 32,
-                                style: IconButton.styleFrom(
-                                  minimumSize: const Size(64, 56),
+                          if (!errorBanner && session != null) ...[
+                            const SizedBox(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                IconButton.filledTonal(
+                                  tooltip: '上一段',
+                                  onPressed: session.position > 0
+                                      ? () => unawaited(now.previous())
+                                      : null,
+                                  icon: const Icon(Icons.skip_previous_rounded),
                                 ),
-                                onPressed: () => unawaited(now.toggle()),
-                                icon: Icon(session.isPaused
-                                    ? Icons.play_arrow_rounded
-                                    : Icons.pause_rounded),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton.filledTonal(
-                                tooltip: '下一段',
-                                onPressed:
-                                    session.position + 1 < session.segmentCount
-                                        ? () => unawaited(now.next())
-                                        : null,
-                                icon: const Icon(Icons.skip_next_rounded),
-                              ),
-                            ],
-                          ),
+                                const SizedBox(width: 8),
+                                IconButton.filled(
+                                  tooltip: session.isPaused ? '继续' : '暂停',
+                                  iconSize: 32,
+                                  style: IconButton.styleFrom(
+                                    minimumSize: const Size(64, 56),
+                                  ),
+                                  onPressed: () => unawaited(now.toggle()),
+                                  icon: Icon(session.isPaused
+                                      ? Icons.play_arrow_rounded
+                                      : Icons.pause_rounded),
+                                ),
+                                const SizedBox(width: 8),
+                                IconButton.filledTonal(
+                                  tooltip: '下一段',
+                                  onPressed:
+                                      session.position + 1 < session.segmentCount
+                                          ? () => unawaited(now.next())
+                                          : null,
+                                  icon: const Icon(Icons.skip_next_rounded),
+                                ),
+                              ],
+                            ),
+                          ],
                           const SizedBox(height: 16),
                           Row(
                             children: [
@@ -484,17 +504,26 @@ class ListeningMenu extends StatelessWidget {
                                   onPressed: now.bookId <= 0
                                       ? null
                                       : () {
+                                          final targetBookId = now.bookId;
+                                          final targetBookTitle = now.bookTitle;
+                                          final targetCoverUrl = now.coverUrl;
+                                          final targetChapterId = now.chapterId;
+                                          final targetChapterTitle =
+                                              now.chapterTitle;
+                                          final targetVolumeId = now.volumeId;
+                                          if (errorBanner) now.clearError();
                                           Navigator.pop(context);
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
                                               builder: (_) => ReaderPage(
-                                                bookId: now.bookId,
-                                                bookTitle: now.bookTitle,
-                                                bookCoverUrl: now.coverUrl,
-                                                chapterId: now.chapterId,
-                                                chapterTitle: now.chapterTitle,
-                                                volumeId: now.volumeId,
+                                                bookId: targetBookId,
+                                                bookTitle: targetBookTitle,
+                                                bookCoverUrl: targetCoverUrl,
+                                                chapterId: targetChapterId,
+                                                chapterTitle:
+                                                    targetChapterTitle,
+                                                volumeId: targetVolumeId,
                                               ),
                                             ),
                                           );
@@ -514,10 +543,16 @@ class ListeningMenu extends StatelessWidget {
                                   ),
                                   onPressed: () {
                                     Navigator.pop(context);
-                                    unawaited(now.stop());
+                                    if (errorBanner) {
+                                      now.clearError();
+                                    } else {
+                                      unawaited(now.stop());
+                                    }
                                   },
-                                  icon: const Icon(Icons.stop_rounded),
-                                  label: const Text('停止'),
+                                  icon: Icon(errorBanner
+                                      ? Icons.close_rounded
+                                      : Icons.stop_rounded),
+                                  label: Text(errorBanner ? '关闭' : '停止'),
                                 ),
                               ),
                             ],

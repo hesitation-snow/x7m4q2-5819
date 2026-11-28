@@ -241,6 +241,9 @@ class _HomeChannelPickerState extends State<HomeChannelPicker> {
                                             if (index < homePrimaryChannelCount)
                                               Text(
                                                 '首页 ${index + 1}',
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
                                                 style: theme
                                                     .textTheme.labelSmall
                                                     ?.copyWith(

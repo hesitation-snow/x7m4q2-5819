@@ -49,7 +49,11 @@ class ReadingProgressReporter {
     // 在等待网络前固定章节与时长，退出后进入其他章节也不会串报。
     while (_inFlight != null) {
       final existing = _inFlight!;
-      await existing;
+      try {
+        await existing;
+      } catch (_) {
+        if (!force) rethrow;
+      }
       if (!force) return;
     }
     final request = _flush(snapshot, cursor, force: force);

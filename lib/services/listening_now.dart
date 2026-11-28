@@ -39,8 +39,15 @@ class ListeningSessionTransfer {
 class ListeningNow extends ChangeNotifier {
   ListeningNow._() {
     ReaderTtsPreferences.revision.addListener(_onPreferencesChanged);
+    LKClient.sessionRev.addListener(_onSessionRevChanged);
   }
   static final ListeningNow instance = ListeningNow._();
+
+  void _onSessionRevChanged() {
+    if (_session != null || hasErrorBanner) {
+      unawaited(stop());
+    }
+  }
 
   ReaderSpeechSession? _session;
   Future<void> Function()? _releaseResources;
@@ -78,6 +85,28 @@ class ListeningNow extends ChangeNotifier {
   ReaderSpeechSession? get session => _session;
   bool get active => _session != null && !_session!.isStopped;
   bool get isPlayingOrLoading => active && !(_session?.isPaused ?? true);
+  bool get hasErrorBanner =>
+      !active && lastError != null && lastError!.isNotEmpty && bookId > 0;
+
+  void clearError() {
+    if (lastError == null &&
+        bookId == 0 &&
+        chapterId == 0 &&
+        volumeId == 0 &&
+        bookTitle.isEmpty &&
+        chapterTitle.isEmpty &&
+        coverUrl.isEmpty) {
+      return;
+    }
+    lastError = null;
+    bookId = 0;
+    chapterId = 0;
+    volumeId = 0;
+    bookTitle = '';
+    chapterTitle = '';
+    coverUrl = '';
+    notifyListeners();
+  }
 
   void adopt({
     required ReaderSpeechSession session,
@@ -441,12 +470,20 @@ class ListeningNow extends ChangeNotifier {
       if (sessionError != null && sessionError.isNotEmpty) {
         lastError = sessionError;
       }
+      final hasKnownError = lastError != null && lastError!.isNotEmpty;
+      if (!hasKnownError) {
+        bookId = 0;
+        chapterId = 0;
+        volumeId = 0;
+        bookTitle = '';
+        chapterTitle = '';
+        coverUrl = '';
+      }
       final release = _releaseResources;
       _session = null;
       _releaseResources = null;
       _lastSavedResumeKey = null;
       config = null;
-      coverUrl = '';
       accountId = '';
       nextChapterId = null;
       nextChapterTitle = '';
@@ -498,6 +535,11 @@ class ListeningNow extends ChangeNotifier {
     _lastSavedResumeKey = null;
     config = null;
     lastError = null;
+    bookId = 0;
+    chapterId = 0;
+    volumeId = 0;
+    bookTitle = '';
+    chapterTitle = '';
     coverUrl = '';
     accountId = '';
     nextChapterId = null;

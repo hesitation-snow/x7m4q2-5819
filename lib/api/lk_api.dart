@@ -7,6 +7,7 @@ import 'lk_client.dart';
 import 'models.dart';
 import 'medal_catalog.dart';
 import 'pagination.dart';
+import 'reading_session.dart';
 import 'store.dart';
 
 /// 全接口分组封装(静态方法,统一走 LKClient.shared)
@@ -22,16 +23,16 @@ class LKApi {
     _cachedTopicTags = const [];
   }
 
-  static Future<void> _invalidateOwnPublicProfile() async {
-    final uid = client.session.uid;
-    if (uid <= 0) return;
-    await client.invalidateCachePrefix('public_user_$uid-$uid-');
+  static Future<void> _invalidateOwnPublicProfile({int? uid}) async {
+    final targetUid = uid ?? client.session.uid;
+    if (targetUid <= 0) return;
+    await client.invalidateCachePrefix('public_user_$targetUid-$targetUid-');
   }
 
-  static Future<void> _invalidateVisibleDynamicCaches() async {
-    final uid = client.session.uid;
-    if (uid <= 0) return;
-    await client.invalidateCachePrefix('public_dynamic_$uid-');
+  static Future<void> _invalidateVisibleDynamicCaches({int? uid}) async {
+    final targetUid = uid ?? client.session.uid;
+    if (targetUid <= 0) return;
+    await client.invalidateCachePrefix('public_dynamic_$targetUid-');
   }
 
   // ==================== 鉴权 ====================
@@ -44,6 +45,10 @@ class LKApi {
     final auth = (d['auth'] as Map<String, dynamic>?) ?? const {};
     final key = (auth['security_key'] as String?) ?? '';
     if (key.isEmpty) throw LKException(-1, '登录响应缺少 auth');
+    _chapterDetailInFlight.clear();
+    if (identical(client, LKClient.shared)) {
+      LKReadingSession.shared.reset();
+    }
     client.session
       ..securityKey = key
       ..uid = (auth['uid'] as num?)?.toInt() ?? 0;
@@ -70,6 +75,7 @@ class LKApi {
       await client.post('/api/bff/logout-v1', client.authed());
     }
     if (client.session.uid != uid || client.session.securityKey != key) return;
+    _chapterDetailInFlight.clear();
     if (identical(client, LKClient.shared)) {
       // clear synchronously captures the old session before its first await.
       await LKStore.clear(expectedSecurityKey: key, expectedUid: uid);
@@ -208,8 +214,9 @@ class LKApi {
     final book = LKBook.fromJson(await client.post(
         '/api/new-content-read/get-book-detail',
         client.authed({'book_id': bookId, 'with_volumes': 0}),
-        cacheKey:
-            '${forAccessVerification ? 'access_book_detail' : 'book_detail'}_${client.session.uid}-$bookId',
+        cacheKey: forAccessVerification
+            ? null
+            : 'book_detail_${client.session.uid}-$bookId',
         forceRefresh: forceRefresh,
         requestTimeout: requestTimeout));
     if (!forAccessVerification && book.isBrave) {
@@ -252,10 +259,7 @@ class LKApi {
     final size = LKClient.clampPageSize(pageSize);
     final data = await client.post('/api/new-content-read/get-book-volumes',
         {'book_id': bookId, 'page': page, 'pageSize': size},
-        cacheKey:
-            'access_book_volumes_${client.session.uid}-$bookId-$page-$size',
-        forceRefresh: true,
-        requestTimeout: requestTimeout);
+        forceRefresh: true, requestTimeout: requestTimeout);
     return LKVolumePage.fromJson(data,
         fallbackPage: page, fallbackPageSize: size);
   }
@@ -275,7 +279,7 @@ class LKApi {
           'pageSize': size,
         },
         cacheKey: requireList
-            ? 'access_volume_chapters_${client.session.uid}-$bookId-$volumeId-$page-$size'
+            ? null
             : 'volume_chapters_$bookId-$volumeId-$page-$size',
         forceRefresh: forceRefresh,
         requestTimeout: requestTimeout);
@@ -314,7 +318,8 @@ class LKApi {
       );
 
   static Future<LKChapterDetail> chapterDetail(int bookId, int chapterId) {
-    final key = '${client.session.uid}:$bookId:$chapterId';
+    final key =
+        '${client.session.uid}:${LKClient.sessionRev.value}:$bookId:$chapterId';
     final existing = _chapterDetailInFlight[key];
     if (existing != null) return existing;
     final request = _fetchChapterDetail(bookId, chapterId);
@@ -549,6 +554,7 @@ class LKApi {
   }
 
   static Future<void> toggleShelf(int bookId, bool add) async {
+    final uid = client.session.uid;
     await client.post(
         '/api/new-content-read/toggle-book-shelf',
         client.authed({
@@ -556,11 +562,10 @@ class LKApi {
           'action': add ? 'add' : 'remove',
           'source': 'android',
         }));
-    final uid = client.session.uid;
     await Future.wait([
-      client.invalidateCachePrefix('book_detail_$uid-$bookId'),
+      client.invalidateCacheKey('book_detail_$uid-$bookId'),
       if (uid > 0) client.invalidateCachePrefix('public_bookshelf_$uid-'),
-      _invalidateOwnPublicProfile(),
+      _invalidateOwnPublicProfile(uid: uid),
     ]);
   }
 
@@ -691,9 +696,11 @@ class LKApi {
     return LKBraveQuizResult.fromJson(data);
   }
 
-  static Future<void> unlockChapter(int chapterId) => client.post(
-      '/api/new-content-read/unlock-chapter',
-      client.authed({'chapter_id': chapterId}));
+  static Future<void> unlockChapter(int chapterId) async {
+    await client.post('/api/new-content-read/unlock-chapter',
+        client.authed({'chapter_id': chapterId}));
+    _chapterDetailInFlight.removeWhere((key, _) => key.endsWith(':$chapterId'));
+  }
 
   /// 读取阅读奖励状态，不触发领取。
   static Future<Map<String, dynamic>> welfareEarnCoinDetail() =>
@@ -806,6 +813,7 @@ class LKApi {
 
   static Future<LKComment> publishDynamicComment(int dynamicId, String content,
       {int replyCommentId = 0, List<LKDynamicMedia> media = const []}) async {
+    final uid = client.session.uid;
     final d = await client.post(
         '/api/dynamic/publish-comment-v1',
         client.authed({
@@ -816,7 +824,7 @@ class LKApi {
         }));
     final raw = d['comment'] ?? d['reply'] ?? d;
     if (raw is! Map) throw LKException(-1, '评论响应格式错误');
-    await _invalidateVisibleDynamicCaches();
+    await _invalidateVisibleDynamicCaches(uid: uid);
     return LKComment.fromJson(Map<String, dynamic>.from(raw));
   }
 
@@ -845,9 +853,10 @@ class LKApi {
       if (_cachedTopicTags.isNotEmpty) {
         if (query.isEmpty) return _cachedTopicTags;
         final lower = query.toLowerCase();
-        return _cachedTopicTags
+        final matched = _cachedTopicTags
             .where((tag) => tag.name.toLowerCase().contains(lower))
             .toList(growable: false);
+        if (matched.isNotEmpty) return matched;
       }
       rethrow;
     }
@@ -857,6 +866,7 @@ class LKApi {
       {List<LKDynamicMedia> media = const [],
       LKTopicTag? topic,
       String title = ''}) async {
+    final uid = client.session.uid;
     final payload = <String, dynamic>{
       'title': title.trim(),
       'summary': content,
@@ -874,8 +884,8 @@ class LKApi {
     final raw = d['dynamic'] ?? d;
     if (raw is! Map) throw LKException(-1, '发布动态响应格式错误');
     await Future.wait([
-      _invalidateVisibleDynamicCaches(),
-      _invalidateOwnPublicProfile(),
+      _invalidateVisibleDynamicCaches(uid: uid),
+      _invalidateOwnPublicProfile(uid: uid),
     ]);
     return LKDynamicItem.fromJson(Map<String, dynamic>.from(raw));
   }
@@ -892,6 +902,7 @@ class LKApi {
 
   static Future<Map<String, dynamic>> submitDynamicPollVote(
       int dynamicId, List<String> optionIds) async {
+    final uid = client.session.uid;
     final result = await client.post(
         '/api/dynamic/submit-poll-vote-v1',
         client.authed({
@@ -900,24 +911,26 @@ class LKApi {
           'request_id':
               'poll-vote-$dynamicId-${DateTime.now().millisecondsSinceEpoch}',
         }));
-    await _invalidateVisibleDynamicCaches();
+    await _invalidateVisibleDynamicCaches(uid: uid);
     return result;
   }
 
   static Future<void> toggleDynamicLike(int dynamicId, bool like) async {
+    final uid = client.session.uid;
     await client.post(
         '/api/dynamic/toggle-like-v1',
         client.authed(
             {'dynamic_id': dynamicId, 'act': like ? 'like' : 'unlike'}));
-    await _invalidateVisibleDynamicCaches();
+    await _invalidateVisibleDynamicCaches(uid: uid);
   }
 
   static Future<void> toggleDynamicFavorite(int dynamicId, bool fav) async {
+    final uid = client.session.uid;
     await client.post(
         '/api/dynamic/toggle-favorite-v1',
         client.authed(
             {'dynamic_id': dynamicId, 'act': fav ? 'favorite' : 'unfavorite'}));
-    await _invalidateVisibleDynamicCaches();
+    await _invalidateVisibleDynamicCaches(uid: uid);
   }
 
   // ==================== 消息 / 私信 ====================
@@ -1166,11 +1179,12 @@ class LKApi {
   static Future<void> toggleFollow(int uid, bool follow) async {
     final viewerUid = client.session.uid;
     final key = client.session.securityKey;
+    final uid = client.session.uid;
     await client.post('/api/bff/toggle-user-follow-v1',
         client.authed({'uid': uid, 'act': follow ? 'follow' : 'unfollow'}));
     await Future.wait([
       client.invalidateCachePrefix('public_user_$viewerUid-$uid-'),
-      _invalidateOwnPublicProfile(),
+      _invalidateOwnPublicProfile(uid: viewerUid),
     ]);
     if (client.session.uid == viewerUid && client.session.securityKey == key) {
       LKClient.followChanged.value =
@@ -1213,15 +1227,17 @@ class LKApi {
     if (exchangeGoodsId <= 0) {
       throw LKException(-1, '勋章兑换参数无效');
     }
+    final uid = client.session.uid;
     await client.post('/api/bff/exchange-my-medal-v1',
         client.authed({'goods_id': exchangeGoodsId}));
-    await _invalidateOwnPublicProfile();
+    await _invalidateOwnPublicProfile(uid: uid);
   }
 
   static Future<void> claimMedal(int taskId) async {
+    final uid = client.session.uid;
     await client.post('/api/bff/claim-my-medal-v1',
         client.authed({'task_id': taskId, 'medal_id': taskId}));
-    await _invalidateOwnPublicProfile();
+    await _invalidateOwnPublicProfile(uid: uid);
   }
 
   // 福利中心接口统一沿用当前客户端的正式站点地址，不读取或复用其他 APK 的服务器配置。
@@ -1289,11 +1305,12 @@ class LKApi {
   }
 
   static Future<void> toggleMedal(int medalId, bool equip) async {
+    final uid = client.session.uid;
     await client.post(
         '/api/bff/toggle-my-medal-v1',
         client
             .authed({'medal_id': medalId, 'act': equip ? 'equip' : 'unequip'}));
-    await _invalidateOwnPublicProfile();
+    await _invalidateOwnPublicProfile(uid: uid);
   }
 
   static Future<Map<String, dynamic>> about() async =>

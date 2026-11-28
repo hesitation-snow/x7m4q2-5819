@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/app_motion.dart';
 import '../services/app_theme.dart';
 import '../services/slider_haptics.dart';
 import 'm3_controls.dart';
@@ -267,7 +268,9 @@ class ListeningPlaybackCard extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title,
-            style: theme.textTheme.titleSmall,
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: hasError ? colors.onErrorContainer : colors.onSurface,
+            ),
             maxLines: 2,
             overflow: TextOverflow.ellipsis),
         const SizedBox(height: 8),
@@ -293,8 +296,10 @@ class ListeningPlaybackCard extends StatelessWidget {
         Text(text ?? '从当前阅读位置开始朗读',
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodyLarge
-                ?.copyWith(color: colors.onSurface, height: 1.45)),
+            style: theme.textTheme.bodyLarge?.copyWith(
+              color: hasError ? colors.onErrorContainer : colors.onSurface,
+              height: 1.45,
+            )),
         if (!loading && status.startsWith('已暂停')) ...[
           const SizedBox(height: 8),
           Text('暂停后从当前语段开头恢复',
@@ -307,7 +312,7 @@ class ListeningPlaybackCard extends StatelessWidget {
           child: LinearProgressIndicator(
             minHeight: 4,
             value: loading
-                ? null
+                ? (AppMotion.isDisabled(context) ? 0.25 : null)
                 : segmentCount == 0
                     ? 0
                     : ((position + 1) / segmentCount).clamp(0, 1),

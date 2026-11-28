@@ -178,9 +178,12 @@ class EpubDownloadService {
   bool _isCanceledFlag = false;
   http.Client? _downloadHttpClient;
   final Map<String, String> _imageMap = {};
+  final Map<String, String> _claimedFileNames = {};
   String? _imageMapPath;
   Future<void> _imageMapWriteTail = Future<void>.value();
   final Map<String, Future<bool>> _inFlightImageDownloads = {};
+  int _activeIllustrationChapters = 0;
+  String? _activePackagingOutputPath;
 
   http.Client _acquireDownloadClient() => _downloadHttpClient ??= http.Client();
 
@@ -192,8 +195,28 @@ class EpubDownloadService {
 
   void _resetImageTaskState() {
     _imageMap.clear();
+    _claimedFileNames.clear();
     _imageMapPath = null;
     _inFlightImageDownloads.clear();
+    _activeIllustrationChapters = 0;
+  }
+
+  String _uniqueIllustrationFileName(String cleanUrl) {
+    final cacheKey = illustrationCacheKey(cleanUrl);
+    final baseName = getIllustrationFileName(cleanUrl);
+    final owner = _claimedFileNames[baseName];
+    if (owner == null || owner == cacheKey) {
+      _claimedFileNames[baseName] = cacheKey;
+      return baseName;
+    }
+    final dotIdx = baseName.lastIndexOf('.');
+    final stem = dotIdx > 0 ? baseName.substring(0, dotIdx) : baseName;
+    final ext = dotIdx > 0 ? baseName.substring(dotIdx) : '.jpg';
+    final hash =
+        (cacheKey.hashCode & 0x7FFFFFFF).toRadixString(16).padLeft(8, '0');
+    final unique = '${stem}_$hash$ext';
+    _claimedFileNames[unique] = cacheKey;
+    return unique;
   }
 
   Future<void> _ensureImageMapLoaded(File mapFile) async {
@@ -229,12 +252,34 @@ class EpubDownloadService {
 
   void _onSessionRevChanged() {
     final task = currentTask.value;
-    if (task == null || task.isTerminal) return;
+    if (task == null) return;
+    if (task.phase == EpubTaskPhase.canceled ||
+        task.phase == EpubTaskPhase.failed) {
+      return;
+    }
 
     final currentUid = LKClient.shared.session.uid;
-    if (_boundUid > 0 && currentUid != _boundUid) {
+    final effectiveOwner = _boundUid > 0 ? _boundUid : task.ownerUid;
+    if (effectiveOwner <= 0) return;
+
+    final accountSwitched = currentUid != effectiveOwner;
+    final loggedOut = !LKClient.shared.session.isLoggedIn;
+    if (!accountSwitched && !loggedOut) return;
+
+    if (task.phase == EpubTaskPhase.completed) {
+      final outPath = task.outputPath;
+      currentTask.value = null;
+      _resetImageTaskState();
+      if (outPath != null && outPath.isNotEmpty) {
+        unawaited(File(outPath).delete().catchError((_) => File(outPath)));
+      }
+      unawaited(_deleteTaskDirectory(task.bookId, ownerUid: task.ownerUid));
+      return;
+    }
+
+    if (accountSwitched) {
       _handleAccountChanged('登录账号已切换，制作任务已停止');
-    } else if (_boundUid > 0 && !LKClient.shared.session.isLoggedIn) {
+    } else if (loggedOut) {
       _handleAccountChanged('已退出登录，制作任务已停止');
     }
   }
@@ -420,12 +465,19 @@ class EpubDownloadService {
     );
 
     try {
+      final packagingOutput = _activePackagingOutputPath;
       await _pauseCheckpoint;
       await _metadataPreparation;
       await _activeRun;
       await _imageMapWriteTail;
       await _checkpointTail;
       await _deleteTaskDirectory(task.bookId, ownerUid: task.ownerUid);
+      if (packagingOutput != null && packagingOutput.isNotEmpty) {
+        final outFile = File(packagingOutput);
+        if (await outFile.exists()) {
+          await outFile.delete().catchError((_) => outFile);
+        }
+      }
     } finally {
       _canceling = false;
     }
@@ -434,7 +486,12 @@ class EpubDownloadService {
   /// 重试失败章节
   Future<void> retryFailedChapters() async {
     final task = currentTask.value;
-    if (task == null || task.failedChapters.isEmpty || _resuming) return;
+    if (task == null ||
+        task.phase != EpubTaskPhase.paused ||
+        task.failedChapters.isEmpty ||
+        _resuming) {
+      return;
+    }
     _resuming = true;
     try {
       await _activeRun;
@@ -460,7 +517,14 @@ class EpubDownloadService {
 
   /// 显式选择导出已完成内容（部分章节缺失的不完整版），先进入封面与标题确认
   Future<void> exportCompletedContent() async {
-    if (_metadataPreparation != null || _resuming) return;
+    final task = currentTask.value;
+    if (task == null ||
+        task.phase != EpubTaskPhase.paused ||
+        task.completedCount == 0 ||
+        _metadataPreparation != null ||
+        _resuming) {
+      return;
+    }
     final preparation = _prepareCompletedContentExport();
     _metadataPreparation = preparation;
     try {
@@ -474,7 +538,11 @@ class EpubDownloadService {
 
   Future<void> _prepareCompletedContentExport() async {
     final task = currentTask.value;
-    if (task == null || task.completedCount == 0) return;
+    if (task == null ||
+        task.phase != EpubTaskPhase.paused ||
+        task.completedCount == 0) {
+      return;
+    }
     final generation = _taskGeneration;
     _resuming = true;
     try {
@@ -692,48 +760,54 @@ class EpubDownloadService {
         '${destFile.path}.part.${DateTime.now().microsecondsSinceEpoch}');
     IOSink? sink;
     try {
-      final request = http.Request('GET', Uri.parse(url));
-      request.headers['User-Agent'] =
-          'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 LKFlutter';
-      final response = await _networkSemaphore.run(
-        () => client.send(request).timeout(const Duration(seconds: 25)),
-      );
-      if (response.statusCode != 200) return false;
-
-      final activeSink = tempFile.openWrite();
-      sink = activeSink;
-      var wroteBytes = 0;
-      await for (final chunk
-          in response.stream.timeout(const Duration(seconds: 25))) {
-        if (_isCanceledFlag || _isPausedFlag) {
-          await activeSink.close();
-          sink = null;
-          if (await tempFile.exists()) await tempFile.delete();
+      final downloaded = await _networkSemaphore.run<bool>(() async {
+        final request = http.Request('GET', Uri.parse(url));
+        request.headers['User-Agent'] =
+            'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 LKFlutter';
+        final response =
+            await client.send(request).timeout(const Duration(seconds: 25));
+        if (response.statusCode != 200) {
+          await response.stream.drain<void>().catchError((_) {});
           return false;
         }
-        activeSink.add(chunk);
-        wroteBytes += chunk.length;
-        onBytes?.call(chunk.length);
-      }
-      await activeSink.flush();
-      await activeSink.close();
-      sink = null;
 
-      if (wroteBytes > 0) {
-        if (await destFile.exists()) {
-          await destFile.delete();
+        final activeSink = tempFile.openWrite();
+        sink = activeSink;
+        var wroteBytes = 0;
+        await for (final chunk
+            in response.stream.timeout(const Duration(seconds: 25))) {
+          if (_isCanceledFlag || _isPausedFlag) {
+            await activeSink.close();
+            sink = null;
+            if (await tempFile.exists()) await tempFile.delete();
+            return false;
+          }
+          activeSink.add(chunk);
+          wroteBytes += chunk.length;
+          onBytes?.call(chunk.length);
         }
-        await tempFile.rename(destFile.path);
-        try {
-          final fileBytes = await destFile.readAsBytes();
-          await YomiruIllustrationCache.manager.putFile(
-            url,
-            fileBytes,
-            key: YomiruIllustrationCache.keyFor(url),
-          );
-        } catch (_) {}
-        return true;
-      }
+        await activeSink.flush();
+        await activeSink.close();
+        sink = null;
+
+        if (wroteBytes > 0) {
+          if (await destFile.exists()) {
+            await destFile.delete();
+          }
+          await tempFile.rename(destFile.path);
+          try {
+            final fileBytes = await destFile.readAsBytes();
+            await YomiruIllustrationCache.manager.putFile(
+              url,
+              fileBytes,
+              key: YomiruIllustrationCache.keyFor(url),
+            );
+          } catch (_) {}
+          return true;
+        }
+        return false;
+      });
+      if (downloaded) return true;
       if (await tempFile.exists()) {
         try {
           await tempFile.delete();
@@ -878,16 +952,7 @@ class EpubDownloadService {
         );
       } catch (e) {
         if (_isCanceledFlag || _isPausedFlag) return;
-        final errorMsg = _friendlyErrorMessage(e);
-        failed[ch.chapterId] = errorMsg;
-
-        currentTask.value = currentTask.value?.copyWith(
-          failedChapters: Map<int, String>.of(failed),
-          illustrationDownloadedCount: _downloadedIllustrationsCount,
-          speedText: _speedTracker.speedText,
-        );
-
-        // 如果是 429 频率限制，主动暂停
+        // 如果是 429 频率限制，主动暂停且不将该章计入失败，以便恢复后继续重试。
         if (_isRateLimitError(e)) {
           _pausedFrom = EpubTaskPhase.downloadingContent;
           _isPausedFlag = true;
@@ -902,6 +967,14 @@ class EpubDownloadService {
           await _saveTaskCheckpoint(currentTask.value!);
           return;
         }
+        final errorMsg = _friendlyErrorMessage(e);
+        failed[ch.chapterId] = errorMsg;
+
+        currentTask.value = currentTask.value?.copyWith(
+          failedChapters: Map<int, String>.of(failed),
+          illustrationDownloadedCount: _downloadedIllustrationsCount,
+          speedText: _speedTracker.speedText,
+        );
       }
     }
 
@@ -1060,7 +1133,7 @@ class EpubDownloadService {
         final rawUrl = urlList[i];
         final cleanUrl = rawUrl.replaceAll('&amp;', '&').trim();
         if (cleanUrl.isEmpty) continue;
-        final fileName = getIllustrationFileName(cleanUrl);
+        final fileName = _uniqueIllustrationFileName(cleanUrl);
         final destFile = File('${imagesDir.path}/$fileName');
 
         final curSpeed = _speedTracker.speedText;
@@ -1116,21 +1189,30 @@ class EpubDownloadService {
 
     const maxImgConcurrency = 3;
     final imgWorkers = maxImgConcurrency.clamp(1, totalInChapter);
-    await Future.wait([
-      for (int w = 0; w < imgWorkers; w++) illustrationWorker(),
-    ]);
+    _activeIllustrationChapters++;
+    try {
+      await Future.wait([
+        for (int w = 0; w < imgWorkers; w++) illustrationWorker(),
+      ]);
 
-    if (_isCanceledFlag || _isPausedFlag) return;
-    await _persistImageMap(mapFile, generation);
-    if (_isCanceledFlag || _isPausedFlag) return;
-
-    // 本章插画处理完毕，重置当前章节插画状态
-    currentTask.value = currentTask.value?.copyWith(
-      currentIllustrationIndex: 0,
-      currentIllustrationTotal: 0,
-      illustrationDownloadedCount: _downloadedIllustrationsCount,
-      speedText: _speedTracker.speedText,
-    );
+      if (_isCanceledFlag || _isPausedFlag) return;
+      await _persistImageMap(mapFile, generation);
+      if (_isCanceledFlag || _isPausedFlag) return;
+    } finally {
+      _activeIllustrationChapters =
+          (_activeIllustrationChapters - 1).clamp(0, 1 << 20);
+      if (_activeIllustrationChapters == 0 &&
+          !_isCanceledFlag &&
+          !_isPausedFlag) {
+        // 仅当全部并发插画章节均完成时，重置当前插画进度指示。
+        currentTask.value = currentTask.value?.copyWith(
+          currentIllustrationIndex: 0,
+          currentIllustrationTotal: 0,
+          illustrationDownloadedCount: _downloadedIllustrationsCount,
+          speedText: _speedTracker.speedText,
+        );
+      }
+    }
   }
 
   /// 阶段 3: 准备封面与标题自选数据，进入编辑阶段
@@ -1217,6 +1299,7 @@ class EpubDownloadService {
       final ext = isTxt ? 'txt' : 'epub';
       final fileName = '$safeTitle$incompleteSuffix.$ext';
       final outputPath = '${exportsDir.path}/$fileName';
+      _activePackagingOutputPath = outputPath;
 
       if (isTxt) {
         currentTask.value = currentTask.value?.copyWith(
@@ -1290,6 +1373,8 @@ class EpubDownloadService {
         phase: EpubTaskPhase.failed,
         statusMessage: '打包失败: $e',
       );
+    } finally {
+      _activePackagingOutputPath = null;
     }
   }
 
@@ -1419,13 +1504,55 @@ class EpubDownloadService {
     return next;
   }
 
-  /// 清除所有 EPUB 制作产生的临时任务和导出文件
-  static Future<void> clearAllTempFiles() async {
+  /// 清除 EPUB 制作产生的临时任务和导出文件。
+  /// 当 [includeActiveTask] 为 false（例如设置页全量清缓存）时，保留正在运行、暂停、
+  /// 编辑元数据或刚刚完成的活跃任务文件，避免误删。
+  static Future<void> clearAllTempFiles({bool includeActiveTask = false}) async {
     try {
       final temp = await getTemporaryDirectory();
       final makerDir = Directory('${temp.path}/epub_maker');
-      if (await makerDir.exists()) {
+      if (!await makerDir.exists()) return;
+      final activeTask = includeActiveTask ? null : shared.currentTask.value;
+      final preserveActiveDir = activeTask != null && !activeTask.isTerminal;
+      final preserveExportPath = activeTask != null &&
+              (activeTask.phase == EpubTaskPhase.completed ||
+                  activeTask.phase == EpubTaskPhase.packaging)
+          ? (activeTask.outputPath ?? shared._activePackagingOutputPath)
+          : null;
+      if (activeTask == null ||
+          (!preserveActiveDir &&
+              (preserveExportPath == null || preserveExportPath.isEmpty))) {
         await makerDir.delete(recursive: true);
+        return;
+      }
+
+      final activeTaskFolderName =
+          '${activeTask.ownerUid}_${activeTask.bookId}';
+      final tasksDir = Directory('${makerDir.path}/tasks');
+      if (await tasksDir.exists()) {
+        await for (final entity in tasksDir.list(followLinks: false)) {
+          final name = entity.uri.pathSegments
+              .where((s) => s.isNotEmpty)
+              .lastOrNull;
+          if (preserveActiveDir && name == activeTaskFolderName) continue;
+          await entity.delete(recursive: true).catchError((_) => entity);
+        }
+      }
+      final exportsDir = Directory('${makerDir.path}/exports');
+      if (await exportsDir.exists()) {
+        await for (final entity in exportsDir.list(followLinks: false)) {
+          if (preserveExportPath != null &&
+              entity.path == preserveExportPath) {
+            continue;
+          }
+          await entity.delete(recursive: true).catchError((_) => entity);
+        }
+      }
+      await for (final entity in makerDir.list(followLinks: false)) {
+        final name =
+            entity.uri.pathSegments.where((s) => s.isNotEmpty).lastOrNull;
+        if (name == 'tasks' || name == 'exports') continue;
+        await entity.delete(recursive: true).catchError((_) => entity);
       }
     } catch (_) {}
   }

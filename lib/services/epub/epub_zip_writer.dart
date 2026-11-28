@@ -266,50 +266,53 @@ class EpubZipWriter {
     if (_closed) return;
     _closed = true;
 
-    final centralDirectoryOffset = _currentOffset;
-    var centralDirectorySize = 0;
+    try {
+      final centralDirectoryOffset = _currentOffset;
+      var centralDirectorySize = 0;
 
-    for (final entry in _entries) {
-      final nameBytes = utf8.encode(entry.name);
-      final cdHeader = ByteData(46);
-      cdHeader.setUint32(0, 0x02014b50, Endian.little); // CD Signature
-      cdHeader.setUint16(4, 20, Endian.little); // Version made by
-      cdHeader.setUint16(6, 20, Endian.little); // Version needed
-      cdHeader.setUint16(8, entry.isUtf8 ? (1 << 11) : 0, Endian.little);
-      cdHeader.setUint16(10, entry.method, Endian.little);
-      cdHeader.setUint16(12, entry.modTime, Endian.little);
-      cdHeader.setUint16(14, entry.modDate, Endian.little);
-      cdHeader.setUint32(16, entry.crc32, Endian.little);
-      cdHeader.setUint32(20, entry.compressedSize, Endian.little);
-      cdHeader.setUint32(24, entry.uncompressedSize, Endian.little);
-      cdHeader.setUint16(28, nameBytes.length, Endian.little);
-      cdHeader.setUint16(30, 0, Endian.little); // Extra field len
-      cdHeader.setUint16(32, 0, Endian.little); // Comment len
-      cdHeader.setUint16(34, 0, Endian.little); // Disk number start
-      cdHeader.setUint16(36, 0, Endian.little); // Internal attrs
-      cdHeader.setUint32(38, 0, Endian.little); // External attrs
-      cdHeader.setUint32(42, entry.localHeaderOffset, Endian.little);
+      for (final entry in _entries) {
+        final nameBytes = utf8.encode(entry.name);
+        final cdHeader = ByteData(46);
+        cdHeader.setUint32(0, 0x02014b50, Endian.little); // CD Signature
+        cdHeader.setUint16(4, 20, Endian.little); // Version made by
+        cdHeader.setUint16(6, 20, Endian.little); // Version needed
+        cdHeader.setUint16(8, entry.isUtf8 ? (1 << 11) : 0, Endian.little);
+        cdHeader.setUint16(10, entry.method, Endian.little);
+        cdHeader.setUint16(12, entry.modTime, Endian.little);
+        cdHeader.setUint16(14, entry.modDate, Endian.little);
+        cdHeader.setUint32(16, entry.crc32, Endian.little);
+        cdHeader.setUint32(20, entry.compressedSize, Endian.little);
+        cdHeader.setUint32(24, entry.uncompressedSize, Endian.little);
+        cdHeader.setUint16(28, nameBytes.length, Endian.little);
+        cdHeader.setUint16(30, 0, Endian.little); // Extra field len
+        cdHeader.setUint16(32, 0, Endian.little); // Comment len
+        cdHeader.setUint16(34, 0, Endian.little); // Disk number start
+        cdHeader.setUint16(36, 0, Endian.little); // Internal attrs
+        cdHeader.setUint32(38, 0, Endian.little); // External attrs
+        cdHeader.setUint32(42, entry.localHeaderOffset, Endian.little);
 
-      await _raf.writeFrom(cdHeader.buffer.asUint8List());
-      await _raf.writeFrom(nameBytes);
+        await _raf.writeFrom(cdHeader.buffer.asUint8List());
+        await _raf.writeFrom(nameBytes);
 
-      centralDirectorySize += 46 + nameBytes.length;
+        centralDirectorySize += 46 + nameBytes.length;
+      }
+
+      // End of Central Directory Record (EOCD)
+      final eocd = ByteData(22);
+      eocd.setUint32(0, 0x06054b50, Endian.little); // EOCD Signature
+      eocd.setUint16(4, 0, Endian.little); // Disk number
+      eocd.setUint16(6, 0, Endian.little); // Start disk
+      eocd.setUint16(8, _entries.length, Endian.little); // Entries on disk
+      eocd.setUint16(10, _entries.length, Endian.little); // Total entries
+      eocd.setUint32(12, centralDirectorySize, Endian.little);
+      eocd.setUint32(16, centralDirectoryOffset, Endian.little);
+      eocd.setUint16(20, 0, Endian.little); // Comment length
+
+      await _raf.writeFrom(eocd.buffer.asUint8List());
+      await _raf.flush();
+    } finally {
+      await _raf.close();
     }
-
-    // End of Central Directory Record (EOCD)
-    final eocd = ByteData(22);
-    eocd.setUint32(0, 0x06054b50, Endian.little); // EOCD Signature
-    eocd.setUint16(4, 0, Endian.little); // Disk number
-    eocd.setUint16(6, 0, Endian.little); // Start disk
-    eocd.setUint16(8, _entries.length, Endian.little); // Entries on disk
-    eocd.setUint16(10, _entries.length, Endian.little); // Total entries
-    eocd.setUint32(12, centralDirectorySize, Endian.little);
-    eocd.setUint32(16, centralDirectoryOffset, Endian.little);
-    eocd.setUint16(20, 0, Endian.little); // Comment length
-
-    await _raf.writeFrom(eocd.buffer.asUint8List());
-    await _raf.flush();
-    await _raf.close();
   }
 
   void _checkOpen() {

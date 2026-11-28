@@ -143,7 +143,7 @@ class SpeechChapterLoader {
 
       var chapterIndex =
           page.items.indexWhere((item) => item.chapterId == chapterId);
-      if (chapterIndex < 0 && sourcePage != 1) {
+      if (chapterIndex < 0) {
         // 回退顺扫当前卷，应对服务端 chapterNo 缺失或不连续的情况。
         var scanPage = 1;
         while (true) {
@@ -273,12 +273,17 @@ class SpeechChapterLoader {
           final prefetchId = following.id!;
           unawaited(() async {
             try {
+              if (!isCurrent()) return;
               if (await ReaderContentCache.contains(bookId, prefetchId,
                   ownerUid: cacheOwnerUid)) {
                 return;
               }
+              if (!isCurrent()) return;
               final prefetched = await loadDetail(bookId, prefetchId);
-              if (ReaderContentCache.generation != cacheGeneration) return;
+              if (!isCurrent() ||
+                  ReaderContentCache.generation != cacheGeneration) {
+                return;
+              }
               await ReaderContentCache.write(
                 bookId,
                 prefetched,

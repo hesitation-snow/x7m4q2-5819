@@ -38,6 +38,7 @@ String mimeTypeForFile(String pathOrUrl) {
   if (clean.endsWith('.png')) return 'image/png';
   if (clean.endsWith('.gif')) return 'image/gif';
   if (clean.endsWith('.webp')) return 'image/webp';
+  if (clean.endsWith('.avif')) return 'image/avif';
   if (clean.endsWith('.svg')) return 'image/svg+xml';
   return 'image/jpeg';
 }
@@ -81,6 +82,7 @@ String mimeTypeForFile(String pathOrUrl) {
     'image/png' => '.png',
     'image/gif' => '.gif',
     'image/webp' => '.webp',
+    'image/avif' => '.avif',
     'image/svg+xml' => '.svg',
     _ => '.jpg',
   };
@@ -525,12 +527,26 @@ nav#toc li {
 
       // 处理插画
       if (ctx.includeIllustrations && await imagesDir.exists()) {
-        final imageEntries = imagesDir.listSync().whereType<File>();
+        final imageEntries = imagesDir
+            .listSync()
+            .whereType<File>()
+            .where((file) => !file.path.contains('.part.'));
         var imgIndex = 1;
         for (final imgFile in imageEntries) {
           final fileName = imgFile.uri.pathSegments.last;
           final entryPath = 'EPUB/images/$fileName';
-          final mime = mimeTypeForFile(fileName);
+          String mime = mimeTypeForFile(fileName);
+          if (mime != 'image/svg+xml' && mime != 'image/avif') {
+            try {
+              final raf = imgFile.openSync();
+              try {
+                final header = raf.readSync(16);
+                mime = detectImageFormat(header, fileName).mime;
+              } finally {
+                raf.closeSync();
+              }
+            } catch (_) {}
+          }
           await writer.addFile(entryPath, imgFile, compress: false);
           final imgId = 'img_$imgIndex';
           imagesManifest.add((
@@ -641,7 +657,12 @@ nav#toc li {
       await writer.close();
       return await outputFile.length();
     } catch (e) {
-      await writer.close();
+      try {
+        await writer.close();
+      } catch (_) {}
+      if (await outputFile.exists()) {
+        await outputFile.delete().catchError((_) => outputFile);
+      }
       rethrow;
     }
   }

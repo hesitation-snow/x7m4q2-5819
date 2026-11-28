@@ -16,8 +16,15 @@ class ReaderContentCache {
   static const _maxEntries = 50;
   static const _maxMemoryEntries = 12;
   static Future<Directory>? _directoryFuture;
+  static Future<void> _ioQueue = Future<void>.value();
   static int _writesSincePrune = 0;
   static int _generation = 0;
+
+  static Future<T> _queueIo<T>(Future<T> Function() action) {
+    final next = _ioQueue.then((_) => action());
+    _ioQueue = next.then<void>((_) {}, onError: (Object _) {});
+    return next;
+  }
   static final LinkedHashMap<String, LKChapterDetail> _memory =
       LinkedHashMap<String, LKChapterDetail>();
 
@@ -40,7 +47,10 @@ class ReaderContentCache {
   }
 
   static Future<Directory> _directory() =>
-      _directoryFuture ??= _createDirectory();
+      _directoryFuture ??= _createDirectory().catchError((Object error) {
+        _directoryFuture = null;
+        throw error;
+      });
 
   static Future<Directory> _createDirectory() async {
     final root = await getApplicationSupportDirectory();
@@ -113,9 +123,12 @@ class ReaderContentCache {
     try {
       if (detail.locked && !detail.unlocked) {
         _memory.remove(_memoryKey(ownerUid, bookId, detail.chapterId));
-        final file = _file(await _directory(), ownerUid, detail.chapterId);
-        if (generation != _generation) return;
-        if (await file.exists()) await file.delete();
+        await _queueIo(() async {
+          if (generation != _generation) return;
+          final file = _file(await _directory(), ownerUid, detail.chapterId);
+          if (generation != _generation) return;
+          if (await file.exists()) await file.delete();
+        });
         return;
       }
       // 空响应可能只是服务端暂时没有返回正文,不覆盖已有有效缓存。
@@ -125,22 +138,39 @@ class ReaderContentCache {
       }
       if (generation != _generation) return;
       _remember(ownerUid, bookId, detail.chapterId, detail);
-      final file = _file(await _directory(), ownerUid, detail.chapterId);
-      if (generation != _generation) return;
-      await file.writeAsString(
-        jsonEncode({
-          'version': 2,
-          'owner_uid': ownerUid,
-          'book_id': bookId,
-          'saved_at': DateTime.now().toUtc().toIso8601String(),
-          'detail': detail.toCacheJson(),
-        }),
-      );
-      _writesSincePrune++;
-      if (_writesSincePrune >= 5) {
-        _writesSincePrune = 0;
-        unawaited(_pruneSafely(file.parent));
-      }
+      final encoded = jsonEncode({
+        'version': 2,
+        'owner_uid': ownerUid,
+        'book_id': bookId,
+        'saved_at': DateTime.now().toUtc().toIso8601String(),
+        'detail': detail.toCacheJson(),
+      });
+      await _queueIo(() async {
+        if (generation != _generation) return;
+        final dir = await _directory();
+        if (generation != _generation) return;
+        if (!await dir.exists()) await dir.create(recursive: true);
+        final file = _file(dir, ownerUid, detail.chapterId);
+        final tempFile = File('${file.path}.tmp.$generation');
+        try {
+          await tempFile.writeAsString(encoded);
+          if (generation != _generation) {
+            if (await tempFile.exists()) await tempFile.delete();
+            return;
+          }
+          await tempFile.rename(file.path);
+        } catch (_) {
+          if (await tempFile.exists()) {
+            await tempFile.delete().catchError((_) => tempFile);
+          }
+          rethrow;
+        }
+        _writesSincePrune++;
+        if (_writesSincePrune >= 5) {
+          _writesSincePrune = 0;
+          await _pruneSafely(dir);
+        }
+      });
     } catch (_) {
       // 缓存失败不应影响正常在线阅读。
     }
@@ -172,16 +202,23 @@ class ReaderContentCache {
     }
   }
 
-  static Future<void> clear() async {
+  static Future<void> clear({bool throwOnError = false}) async {
     _memory.clear();
     _generation++;
-    try {
+    final queued = _queueIo(() async {
       _directoryFuture = null;
       _writesSincePrune = 0;
       final root = await getApplicationSupportDirectory();
       final dir =
           Directory('${root.path}${Platform.pathSeparator}$_directoryName');
       if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    if (throwOnError) {
+      await queued;
+      return;
+    }
+    try {
+      await queued;
     } catch (_) {
       // 清理失败不影响其他设置和阅读功能。
     }
