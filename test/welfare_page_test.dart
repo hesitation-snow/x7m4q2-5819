@@ -11,6 +11,7 @@ import 'package:yomiru/api/store.dart';
 import 'package:yomiru/pages/welfare_page.dart';
 import 'package:yomiru/api/reading_session.dart';
 import 'package:yomiru/services/reading_progress_reporter.dart';
+import 'package:yomiru/widgets/common.dart';
 
 http.Response _jsonResponse(Map<String, dynamic> data, [int status = 200]) {
   return http.Response.bytes(
@@ -1038,6 +1039,281 @@ void main() {
       }
       expect(adReported, isTrue);
       expect(claimCalled, isTrue);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    });
+
+    testWidgets(
+        'Dispatches first-wave endpoints in parallel and commits one atomic paint',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final homeCompleter = Completer<http.Response>();
+      final signCompleter = Completer<http.Response>();
+      final sleepCompleter = Completer<http.Response>();
+      var signDispatchedBeforeHomeCompleted = false;
+      var sleepDispatchedBeforeHomeCompleted = false;
+
+      LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+        final path = request.url.path;
+        if (path.contains('welfare-home')) {
+          return homeCompleter.future;
+        }
+        if (path.contains('welfare-sign-detail')) {
+          if (!homeCompleter.isCompleted) {
+            signDispatchedBeforeHomeCompleted = true;
+          }
+          return signCompleter.future;
+        }
+        if (path.contains('welfare-sleep-detail')) {
+          if (!homeCompleter.isCompleted) {
+            sleepDispatchedBeforeHomeCompleted = true;
+          }
+          return sleepCompleter.future;
+        }
+        return _jsonResponse({'code': 0, 'data': {}});
+      }));
+
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: WelfarePage())));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+
+      expect(signDispatchedBeforeHomeCompleted, isTrue);
+      expect(sleepDispatchedBeforeHomeCompleted, isTrue);
+      expect(find.byType(LkLoadingIndicator), findsOneWidget);
+
+      homeCompleter.complete(_jsonResponse({
+        'code': 0,
+        'data': {
+          'coin': 500,
+          'tasks': [
+            {
+              'task_id': 201,
+              'title': '浏览一个作品',
+              'status': 1,
+              'reward_coin': 5,
+            },
+            {
+              'task_id': 202,
+              'title': '收藏一个作品',
+              'status': 0,
+              'reward_coin': 10,
+            },
+          ],
+        },
+      }));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+
+      // Home finished, but detail calls are still pending: should NOT pop in half-loaded cards.
+      expect(find.text('当前轻币'), findsNothing);
+      expect(find.byType(LkLoadingIndicator), findsOneWidget);
+
+      signCompleter.complete(_jsonResponse({
+        'code': 0,
+        'data': {
+          'days': [
+            {'day': 1, 'reward_coin': 15, 'claimed': false},
+          ],
+        },
+      }));
+      sleepCompleter.complete(_jsonResponse({
+        'code': 0,
+        'data': {
+          'status': 'idle',
+          'sub_title': '睡觉前点击开始即可计时',
+          'button_text': '开始睡觉',
+        },
+      }));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LkLoadingIndicator), findsNothing);
+      expect(find.text('500'), findsOneWidget);
+      expect(find.text('第1天'), findsOneWidget);
+      expect(find.text('睡觉赚轻币'), findsOneWidget);
+      expect(find.text('睡觉前点击开始即可计时'), findsOneWidget);
+      expect(find.text('浏览一个作品'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    });
+
+    testWidgets(
+        'Restores full v2 snapshot from memory and disk even when refresh fails fast',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final client = LKClient.forTesting(httpClient: MockClient((request) async {
+        final path = request.url.path;
+        if (path.contains('welfare-home')) {
+          return _jsonResponse({
+            'code': 0,
+            'data': {
+              'coin': 777,
+              'tasks': [
+                {
+                  'task_id': 201,
+                  'title': '浏览一个作品',
+                  'status': 1,
+                  'reward_coin': 5,
+                },
+                {
+                  'task_id': 202,
+                  'title': '收藏一个作品',
+                  'status': 0,
+                  'reward_coin': 10,
+                },
+              ],
+            },
+          });
+        }
+        if (path.contains('welfare-sign-detail')) {
+          return _jsonResponse({
+            'code': 0,
+            'data': {
+              'days': [
+                {'day': 1, 'reward_coin': 20, 'claimed': true},
+              ],
+            },
+          });
+        }
+        if (path.contains('welfare-sleep-detail')) {
+          return _jsonResponse({
+            'code': 0,
+            'data': {
+              'status': 'idle',
+              'sub_title': '内存快照睡眠说明',
+              'button_text': '开始睡觉',
+            },
+          });
+        }
+        return _jsonResponse({'code': 0, 'data': {}});
+      }));
+      LKApi.client = client;
+
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: WelfarePage())));
+      await tester.pumpAndSettle();
+
+      expect(find.text('777'), findsOneWidget);
+      expect(find.text('内存快照睡眠说明'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+
+      // Remount with the same session & client while home refresh stays pending:
+      // frame 0 immediately renders full cached snapshot without loading flash.
+      final pendingHome = Completer<http.Response>();
+      final clientWithPendingRefresh = LKClient.forTesting(
+        httpClient: MockClient((request) => pendingHome.future),
+      );
+      // Re-using same client instance should hit memory cache on frame 0;
+      // first verify same-client frame-0 hit, then test v2 disk restore on error.
+      LKApi.client = client;
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: WelfarePage())));
+      expect(find.text('777'), findsOneWidget);
+      expect(find.text('第1天'), findsOneWidget);
+      expect(find.text('内存快照睡眠说明'), findsOneWidget);
+      expect(find.text('浏览一个作品'), findsOneWidget);
+      expect(find.byType(LkLoadingIndicator), findsNothing);
+      await tester.pumpAndSettle();
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+
+      // Now clear memory cache and keep v2 disk snapshot in SharedPreferences while network 500s.
+      WelfarePage.clearClaimedTestingState();
+      final prefs = await SharedPreferences.getInstance();
+      final diskRaw = prefs.getString('welfare_home_cache_v1_12345');
+      expect(diskRaw, isNotNull);
+      expect(jsonDecode(diskRaw!)['snapshot_v'], 2);
+
+      pendingHome.complete(_jsonResponse({'code': 500, 'message': 'Offline'}, 500));
+      LKApi.client = clientWithPendingRefresh;
+
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: WelfarePage())));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('刷新失败，当前展示本地缓存'), findsOneWidget);
+      expect(find.text('777'), findsOneWidget);
+      expect(find.text('第1天'), findsOneWidget);
+      expect(find.text('内存快照睡眠说明'), findsOneWidget);
+      expect(find.text('浏览一个作品'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    });
+
+    testWidgets(
+        'Preserves previously loaded detail cards if secondary endpoint fails on refresh',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      var refreshPhase = false;
+      LKApi.client = LKClient.forTesting(httpClient: MockClient((request) async {
+        final path = request.url.path;
+        if (path.contains('welfare-home')) {
+          return _jsonResponse({
+            'code': 0,
+            'data': {
+              'coin': refreshPhase ? 120 : 100,
+              'tasks': [
+                {
+                  'task_id': 201,
+                  'title': '浏览一个作品',
+                  'status': 0,
+                },
+                {
+                  'task_id': 202,
+                  'title': '收藏一个作品',
+                  'status': 0,
+                },
+              ],
+            },
+          });
+        }
+        if (path.contains('welfare-sleep-detail')) {
+          if (refreshPhase) {
+            return _jsonResponse({'code': 500, 'message': 'Sleep timeout'}, 500);
+          }
+          return _jsonResponse({
+            'code': 0,
+            'data': {
+              'status': 'idle',
+              'sub_title': '睡眠详情已加载',
+              'button_text': '开始睡觉',
+            },
+          });
+        }
+        return _jsonResponse({'code': 0, 'data': {}});
+      }));
+
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: WelfarePage())));
+      await tester.pumpAndSettle();
+
+      expect(find.text('100'), findsOneWidget);
+      expect(find.text('睡觉赚轻币'), findsOneWidget);
+      expect(find.text('睡眠详情已加载'), findsOneWidget);
+
+      refreshPhase = true;
+      final refresh =
+          tester.widget<RefreshIndicator>(find.byType(RefreshIndicator));
+      await refresh.onRefresh();
+      await tester.pumpAndSettle();
+
+      expect(find.text('120'), findsOneWidget);
+      expect(find.text('睡觉赚轻币'), findsOneWidget);
+      expect(find.text('睡眠详情已加载'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump();

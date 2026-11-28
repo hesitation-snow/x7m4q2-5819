@@ -130,6 +130,9 @@ class GlassConfiguration {
 
 /// 会话与主题持久化
 class LKStore {
+  /// 每次清理会话或内容缓存时递增，用于使内存快照失效。
+  static int contentCacheEpoch = 0;
+
   /// 主题模式(ValueNotifier 让 MaterialApp 即时切换)
   static final ValueNotifier<ThemeMode> themeMode =
       ValueNotifier(ThemeMode.system);
@@ -604,6 +607,7 @@ class LKStore {
       } else {
         await _secure.write(key: 'security_key', value: key);
       }
+      ++contentCacheEpoch;
       await p.remove('security_key');
       await p.setInt('uid', uid);
       await p.setString('nickname', nickname);
@@ -745,6 +749,7 @@ class LKStore {
       } catch (_) {
         // The durable invalidation marker still prevents restoring this key.
       }
+      ++contentCacheEpoch;
       await p.remove('security_key');
       await p.remove('uid');
       await p.remove('nickname');
@@ -768,6 +773,7 @@ class LKStore {
 
   /// 清除可重新从网络取得的资料缓存，保留账号、主题、书架与阅读进度。
   static Future<void> clearContentCaches() async {
+    ++contentCacheEpoch;
     _globalMedalsWriteTimer?.cancel();
     _globalMedalsWriteTimer = null;
     _globalMedalsMemory = null;

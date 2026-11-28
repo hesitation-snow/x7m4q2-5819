@@ -85,13 +85,14 @@ class WelfarePage extends StatefulWidget {
   @visibleForTesting
   static void clearClaimedTestingState() {
     _WelfarePageState._testingClaimedKeys.clear();
+    _WelfarePageState._memoryCache.clear();
   }
 }
 
-class _WelfarePageState extends State<WelfarePage>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+class _WelfarePageState extends State<WelfarePage> with WidgetsBindingObserver {
   static const _cacheKeyPrefix = 'welfare_home_cache_v1_';
   static final Set<String> _testingClaimedKeys = {};
+  static final Map<int, _WelfareMemoryEntry> _memoryCache = {};
   final _dailyClaims = DailyTaskClaims(uid: () => LKClient.shared.session.uid);
   int _loadSerial = 0;
 
@@ -103,14 +104,13 @@ class _WelfarePageState extends State<WelfarePage>
   int _selectedTreasureBoxIndex = 0;
   List<Map<String, dynamic>> _tasks = const [];
   bool _loading = true;
+  bool _refreshing = false;
   bool _networkLoaded = false;
-  bool _motionDisabled = false;
   String? _error;
   String _action = '';
   final _sleepClock = DeadlineCountdown();
   int get _sleepRemainingSeconds => _sleepClock.value;
   bool _sleepCountdownExpired = false;
-  late final AnimationController _animController;
 
   String get _cacheKey {
     final uid = LKClient.shared.session.uid;
@@ -158,10 +158,6 @@ class _WelfarePageState extends State<WelfarePage>
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1100),
-    );
     WidgetsBinding.instance.addObserver(this);
     LKClient.sessionRev.addListener(_onSessionChanged);
     _sleepClock.onElapsed = () {
@@ -169,31 +165,19 @@ class _WelfarePageState extends State<WelfarePage>
       _sleepCountdownExpired = true;
       unawaited(_load());
     };
-    _restoreCache();
-    _load();
-  }
-
-  void _syncSkeletonAnimation() {
-    if (!mounted) return;
-    final animateSkeleton = _loading &&
-        _home == null &&
-        _error == null &&
-        LKClient.shared.session.isLoggedIn &&
-        !_motionDisabled;
-    if (animateSkeleton) {
-      if (!_animController.isAnimating) {
-        _animController.repeat(reverse: true);
+    if (LKClient.shared.session.isLoggedIn) {
+      final memory = _readMemorySnapshot();
+      if (memory != null) {
+        _applySnapshotState(memory);
+        _loading = false;
+        _syncSleepClockFrom(_sleep);
+      } else {
+        unawaited(_restoreCache());
       }
-    } else if (_animController.isAnimating) {
-      _animController.stop();
+      unawaited(_load());
+    } else {
+      _loading = false;
     }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _motionDisabled = AppMotion.isDisabled(context);
-    _syncSkeletonAnimation();
   }
 
   @override
@@ -201,7 +185,6 @@ class _WelfarePageState extends State<WelfarePage>
     LKClient.sessionRev.removeListener(_onSessionChanged);
     WidgetsBinding.instance.removeObserver(this);
     _sleepClock.dispose();
-    _animController.dispose();
     super.dispose();
   }
 
@@ -213,8 +196,10 @@ class _WelfarePageState extends State<WelfarePage>
   void _onSessionChanged() {
     _loadSerial++;
     _networkLoaded = false;
+    _memoryCache.clear();
     _sleepClock.stop();
     _sleepClock.value = 0;
+    final loggedIn = LKClient.shared.session.isLoggedIn;
     setState(() {
       _home = null;
       _signDetail = _earnCoin = _sleep = _treasure = const {};
@@ -222,57 +207,113 @@ class _WelfarePageState extends State<WelfarePage>
       _tasks = const [];
       _action = '';
       _error = null;
-      _loading = LKClient.shared.session.isLoggedIn;
+      _refreshing = false;
+      _loading = loggedIn;
     });
-    _syncSkeletonAnimation();
-    if (_loading) {
+    if (loggedIn) {
       unawaited(_restoreCache());
       unawaited(_load());
     }
   }
 
+  _WelfareSnapshot? _readMemorySnapshot() {
+    final uid = LKClient.shared.session.uid;
+    if (uid <= 0) return null;
+    final entry = _memoryCache[uid];
+    if (entry == null) return null;
+    if (!identical(entry.client, LKApi.client) ||
+        entry.sessionRev != LKClient.sessionRev.value ||
+        entry.securityKey != LKClient.shared.session.securityKey ||
+        entry.cacheEpoch != LKStore.contentCacheEpoch) {
+      _memoryCache.remove(uid);
+      return null;
+    }
+    return entry.snapshot;
+  }
+
+  void _writeMemorySnapshot(
+    _WelfareSnapshot snapshot, {
+    required int uid,
+    required LKClient client,
+    required int revision,
+    required String securityKey,
+    required int cacheEpoch,
+  }) {
+    if (uid <= 0) return;
+    _memoryCache[uid] = _WelfareMemoryEntry(
+      client: client,
+      sessionRev: revision,
+      securityKey: securityKey,
+      cacheEpoch: cacheEpoch,
+      snapshot: snapshot,
+    );
+  }
+
+  void _applySnapshotState(_WelfareSnapshot snapshot) {
+    _home = snapshot.home;
+    _signDetail = snapshot.signDetail;
+    _earnCoin = snapshot.earnCoin;
+    _sleep = snapshot.sleep;
+    _treasure = snapshot.treasure;
+    _tasks = _orderTasks(_visibleTasks(snapshot.tasks));
+  }
+
+  void _syncSleepClockFrom(Map<String, dynamic> sleep) {
+    final seconds = _sleepRemainingSecondsFrom(sleep);
+    _sleepCountdownExpired = false;
+    _sleepClock.start(_sleepClaimed || _sleepClaimable ? 0 : seconds);
+  }
+
   Future<void> _restoreCache() async {
+    final uid = LKClient.shared.session.uid;
     final key = _cacheKey;
     final revision = LKClient.sessionRev.value;
+    final client = LKApi.client;
+    final securityKey = LKClient.shared.session.securityKey;
+    final cacheEpoch = LKStore.contentCacheEpoch;
     try {
       await _initDailyClaimedKeys();
       final prefs = await SharedPreferences.getInstance();
       final cachedStr = prefs.getString(key);
       if (cachedStr != null && cachedStr.isNotEmpty) {
         final decoded = jsonDecode(cachedStr);
-        if (decoded is Map &&
+        final snapshot = _WelfareSnapshot.fromDecoded(
+          decoded,
+          rootOf: _root,
+          sectionOf: _section,
+          tasksOf: _extractTasks,
+        );
+        if (snapshot != null &&
             mounted &&
             !_networkLoaded &&
             _home == null &&
-            _error == null &&
             key == _cacheKey &&
-            revision == LKClient.sessionRev.value) {
-          final map = Map<String, dynamic>.from(decoded);
-          final root = _root(map);
-          final tasks = _orderTasks(_visibleTasks(_extractTasks(root)));
-          final homeEarnCoin = _section(
-              root, const ['earn_coin', 'earnCoin', 'welfare_earn_coin']);
-          final homeTreasure = _section(
-              root, const ['treasure', 'treasure_box', 'daily_treasure_box']);
+            revision == LKClient.sessionRev.value &&
+            cacheEpoch == LKStore.contentCacheEpoch) {
           setState(() {
-            _home = map;
-            _tasks = tasks;
-            _earnCoin = homeEarnCoin;
-            if (homeTreasure.isNotEmpty) _treasure = homeTreasure;
+            _applySnapshotState(snapshot);
             _loading = false;
           });
-          _syncSkeletonAnimation();
+          _writeMemorySnapshot(
+            snapshot,
+            uid: uid,
+            client: client,
+            revision: revision,
+            securityKey: securityKey,
+            cacheEpoch: cacheEpoch,
+          );
+          _syncSleepClockFrom(_sleep);
         }
       }
     } catch (_) {}
   }
 
   Future<void> _saveCache(
-      Map<String, dynamic> data, String key, int revision) async {
+      _WelfareSnapshot snapshot, String key, int revision) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       if (key != _cacheKey || revision != LKClient.sessionRev.value) return;
-      await prefs.setString(key, jsonEncode(data));
+      await prefs.setString(key, jsonEncode(snapshot.toJson()));
     } catch (_) {}
   }
 
@@ -288,8 +329,12 @@ class _WelfarePageState extends State<WelfarePage>
   Future<void> _load({bool forceTaskList = false}) async {
     if (!LKClient.shared.session.isLoggedIn) return;
     final serial = ++_loadSerial;
+    final uid = LKClient.shared.session.uid;
     final key = _cacheKey;
     final revision = LKClient.sessionRev.value;
+    final client = LKApi.client;
+    final securityKey = LKClient.shared.session.securityKey;
+    final cacheEpoch = LKStore.contentCacheEpoch;
     bool isCurrent() =>
         mounted &&
         serial == _loadSerial &&
@@ -297,83 +342,137 @@ class _WelfarePageState extends State<WelfarePage>
         revision == LKClient.sessionRev.value;
     if (mounted) {
       setState(() {
-        if (_home == null) _loading = true;
+        if (_home == null) {
+          _loading = true;
+        } else {
+          _refreshing = true;
+        }
         _error = null;
       });
-      _syncSkeletonAnimation();
     }
-    // 页面先显示缓存；阅读奖励详情等待增量确认后再查询。
+
+    // 全部独立接口并发启动；阅读奖励详情仍需等阅读时长增量确认后查询。
+    final dailyClaimsFuture = _initDailyClaimedKeys();
     final readingSync = _checkAndSyncReadingProgress();
+    final homeFuture = LKApi.welfareHome();
+    final signDetailFuture = _safeDetail(LKApi.welfareSignDetail());
+    final sleepDetailFuture = _safeDetail(LKApi.welfareSleepDetail());
+    final earnCoinFuture = _safeDetail(() async {
+      await readingSync;
+      if (!isCurrent()) return <String, dynamic>{};
+      return LKApi.welfareEarnCoinDetail();
+    }());
+    final treasureFuture = _safeDetail(() async {
+      await readingSync;
+      if (!isCurrent()) return <String, dynamic>{};
+      return LKApi.welfareTreasureBoxDetail();
+    }());
 
     try {
-      await _initDailyClaimedKeys();
-      final home = await LKApi.welfareHome();
-      final root = _root(home);
+      final home = await homeFuture;
       if (!isCurrent()) return;
-      _networkLoaded = true;
-      unawaited(_saveCache(home, key, revision));
-      setState(() {
-        _home = home;
-        _loading = false;
-        _error = null;
-      });
-      _syncSkeletonAnimation();
-
-      final detailsFuture = Future.wait<Map<String, dynamic>>([
-        _safeDetail(LKApi.welfareSignDetail()),
-        _safeDetail(() async {
-          await readingSync;
-          if (!isCurrent()) return <String, dynamic>{};
-          return LKApi.welfareEarnCoinDetail();
-        }()),
-        _safeDetail(LKApi.welfareSleepDetail()),
-        _safeDetail(() async {
-          await readingSync;
-          if (!isCurrent()) return <String, dynamic>{};
-          return LKApi.welfareTreasureBoxDetail();
-        }()),
-      ]);
+      final root = _root(home);
       var tasks = _extractTasks(root);
+      Future<List<Map<String, dynamic>>>? taskListFuture;
       if (forceTaskList || _visibleTasks(tasks).length < 2) {
-        try {
-          final refreshedTasks =
-              _extractTasks(_root(await LKApi.welfareTaskList()));
-          if (refreshedTasks.isNotEmpty) {
-            tasks = [...tasks, ...refreshedTasks];
+        taskListFuture = () async {
+          try {
+            return _extractTasks(_root(await LKApi.welfareTaskList()));
+          } catch (_) {
+            // 主页数据已经足够展示时，任务列表接口失败不影响其他模块。
+            return const <Map<String, dynamic>>[];
           }
-        } catch (_) {
-          // 主页数据已经足够展示时，任务列表接口失败不影响其他模块。
-        }
+        }();
       }
-      tasks = _orderTasks(_visibleTasks(tasks));
-      final details = await detailsFuture;
-      final signDetail = details[0];
+
+      final details = await Future.wait<Map<String, dynamic>>([
+        signDetailFuture,
+        earnCoinFuture,
+        sleepDetailFuture,
+        treasureFuture,
+      ]);
+      final refreshedTasks = taskListFuture != null
+          ? await taskListFuture
+          : const <Map<String, dynamic>>[];
+      await dailyClaimsFuture;
+      if (!isCurrent()) return;
+
+      if (refreshedTasks.isNotEmpty) {
+        tasks = [...tasks, ...refreshedTasks];
+      }
+      final orderedTasks = _orderTasks(_visibleTasks(tasks));
+
+      final homeSign = _section(root, const [
+        'sign',
+        'sign_module',
+        'welfare_sign',
+        'daily_sign',
+        'seven_day_sign',
+        'sign_7day',
+        'new_user_7day_sign_v1',
+        'sign_in',
+        'free_sign',
+      ]);
+      final signDetail = details[0].isNotEmpty
+          ? details[0]
+          : (homeSign.isNotEmpty ? const <String, dynamic>{} : _signDetail);
+
       final homeEarnCoin =
           _section(root, const ['earn_coin', 'earnCoin', 'welfare_earn_coin']);
-      final earnCoin = details[1].isNotEmpty ? details[1] : homeEarnCoin;
-      final sleep = details[2];
+      final earnCoin = details[1].isNotEmpty
+          ? details[1]
+          : (homeEarnCoin.isNotEmpty ? homeEarnCoin : _earnCoin);
+
+      final homeSleep =
+          _section(root, const ['sleep', 'sleep_detail', 'welfare_sleep']);
+      final sleep = details[2].isNotEmpty
+          ? details[2]
+          : (homeSleep.isNotEmpty ? homeSleep : _sleep);
+
       final homeTreasure = _section(
           root, const ['treasure', 'treasure_box', 'daily_treasure_box']);
-      final treasure = details[3].isNotEmpty ? details[3] : homeTreasure;
-      if (!isCurrent()) return;
-      final seconds = _sleepRemainingSecondsFrom(sleep);
-      _sleepCountdownExpired = false;
+      final treasure = details[3].isNotEmpty
+          ? details[3]
+          : (homeTreasure.isNotEmpty ? homeTreasure : _treasure);
+
+      _networkLoaded = true;
+      final snapshot = _WelfareSnapshot(
+        home: home,
+        signDetail: signDetail,
+        earnCoin: earnCoin,
+        sleep: sleep,
+        treasure: treasure,
+        tasks: orderedTasks,
+      );
+      _writeMemorySnapshot(
+        snapshot,
+        uid: uid,
+        client: client,
+        revision: revision,
+        securityKey: securityKey,
+        cacheEpoch: cacheEpoch,
+      );
+      unawaited(_saveCache(snapshot, key, revision));
+
       setState(() {
+        _home = home;
         _signDetail = signDetail;
         _earnCoin = earnCoin;
         _sleep = sleep;
         _treasure = treasure;
-        _tasks = tasks;
+        _tasks = orderedTasks;
         _loading = false;
+        _refreshing = false;
+        _error = null;
       });
-      _sleepClock.start(_sleepClaimed || _sleepClaimable ? 0 : seconds);
+      _syncSleepClockFrom(sleep);
     } catch (e) {
       if (isCurrent()) {
         setState(() {
           _loading = false;
+          _refreshing = false;
           _error = e.toString();
         });
-        _syncSkeletonAnimation();
       }
     }
   }
@@ -2413,14 +2512,16 @@ class _WelfarePageState extends State<WelfarePage>
       body: MotionRefreshIndicator(
         onRefresh: _load,
         child: _loading && _home == null
-            ? _buildWelfareSkeleton(context)
+            ? const ScrollableStatus(child: LkLoadingIndicator())
             : _error != null && _home == null
                 ? _buildErrorView(context)
-                : ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: EdgeInsets.fromLTRB(
-                        12, 12, 12, 24 + MediaQuery.paddingOf(context).bottom),
+                : Stack(
                     children: [
+                      ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: EdgeInsets.fromLTRB(
+                            12, 12, 12, 24 + MediaQuery.paddingOf(context).bottom),
+                        children: [
                       if (_error != null) ...[
                         Card(
                           color: scheme.errorContainer,
@@ -2494,6 +2595,15 @@ class _WelfarePageState extends State<WelfarePage>
                                   .colorScheme
                                   .onSurfaceVariant,
                               fontSize: 12)),
+                        ],
+                      ),
+                      if (_refreshing)
+                        const Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: MotionLinearProgressIndicator(minHeight: 2),
+                        ),
                     ],
                   ),
       ),
@@ -3689,245 +3799,6 @@ class _WelfarePageState extends State<WelfarePage>
     );
   }
 
-  Widget _buildWelfareSkeleton(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return AnimatedBuilder(
-      animation: _animController,
-      builder: (context, _) {
-        final alpha = 0.28 + _animController.value * 0.42;
-        final shimmerColor =
-            scheme.surfaceContainerHighest.withValues(alpha: alpha);
-
-        return ListView(
-          physics: const NeverScrollableScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(
-              12, 12, 12, 24 + MediaQuery.paddingOf(context).bottom),
-          children: [
-            // Balance card skeleton
-            Card(
-              elevation: 0,
-              color: scheme.surfaceContainerLow,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                          color: shimmerColor, shape: BoxShape.circle),
-                    ),
-                    const SizedBox(width: 14),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                            width: 60,
-                            height: 14,
-                            decoration: BoxDecoration(
-                                color: shimmerColor,
-                                borderRadius: BorderRadius.circular(4))),
-                        const SizedBox(height: 8),
-                        Container(
-                            width: 90,
-                            height: 22,
-                            decoration: BoxDecoration(
-                                color: shimmerColor,
-                                borderRadius: BorderRadius.circular(6))),
-                      ],
-                    ),
-                    const Spacer(),
-                    Container(
-                        width: 68,
-                        height: 32,
-                        decoration: BoxDecoration(
-                            color: shimmerColor,
-                            borderRadius: BorderRadius.circular(16))),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            // Sign in card skeleton
-            Card(
-              elevation: 0,
-              color: scheme.surfaceContainerLow,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Container(
-                            width: 90,
-                            height: 18,
-                            decoration: BoxDecoration(
-                                color: shimmerColor,
-                                borderRadius: BorderRadius.circular(4))),
-                        Container(
-                            width: 76,
-                            height: 32,
-                            decoration: BoxDecoration(
-                                color: shimmerColor,
-                                borderRadius: BorderRadius.circular(16))),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                        width: 160,
-                        height: 12,
-                        decoration: BoxDecoration(
-                            color: shimmerColor,
-                            borderRadius: BorderRadius.circular(4))),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      height: 70,
-                      child: Row(
-                        children: List.generate(
-                          5,
-                          (i) => Expanded(
-                            child: Container(
-                              margin: EdgeInsets.only(right: i < 4 ? 8 : 0),
-                              decoration: BoxDecoration(
-                                  color: shimmerColor,
-                                  borderRadius: BorderRadius.circular(10)),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            // 15-min reading skeleton
-            Card(
-              elevation: 0,
-              color: scheme.surfaceContainerLow,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Container(
-                            width: 100,
-                            height: 18,
-                            decoration: BoxDecoration(
-                                color: shimmerColor,
-                                borderRadius: BorderRadius.circular(4))),
-                        Container(
-                            width: 76,
-                            height: 32,
-                            decoration: BoxDecoration(
-                                color: shimmerColor,
-                                borderRadius: BorderRadius.circular(16))),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                        width: double.infinity,
-                        height: 8,
-                        decoration: BoxDecoration(
-                            color: shimmerColor,
-                            borderRadius: BorderRadius.circular(4))),
-                    const SizedBox(height: 8),
-                    Container(
-                        width: 120,
-                        height: 12,
-                        decoration: BoxDecoration(
-                            color: shimmerColor,
-                            borderRadius: BorderRadius.circular(4))),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            // Task list skeleton
-            Card(
-              elevation: 0,
-              color: scheme.surfaceContainerLow,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                        width: 80,
-                        height: 18,
-                        decoration: BoxDecoration(
-                            color: shimmerColor,
-                            borderRadius: BorderRadius.circular(4))),
-                    const SizedBox(height: 12),
-                    for (int i = 0; i < 3; i++) ...[
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Row(
-                          children: [
-                            Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                    color: shimmerColor,
-                                    shape: BoxShape.circle)),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Container(
-                                      width: 110,
-                                      height: 14,
-                                      decoration: BoxDecoration(
-                                          color: shimmerColor,
-                                          borderRadius:
-                                              BorderRadius.circular(4))),
-                                  const SizedBox(height: 6),
-                                  Container(
-                                      width: 150,
-                                      height: 11,
-                                      decoration: BoxDecoration(
-                                          color: shimmerColor,
-                                          borderRadius:
-                                              BorderRadius.circular(4))),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Container(
-                                width: 68,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                    color: shimmerColor,
-                                    borderRadius: BorderRadius.circular(16))),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Widget _buildErrorView(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -4585,4 +4456,109 @@ class _WelfareCoinRecordsPageState extends State<_WelfareCoinRecordsPageBody> {
       ),
     );
   }
+}
+
+class _WelfareSnapshot {
+  const _WelfareSnapshot({
+    required this.home,
+    required this.signDetail,
+    required this.earnCoin,
+    required this.sleep,
+    required this.treasure,
+    required this.tasks,
+  });
+
+  final Map<String, dynamic> home;
+  final Map<String, dynamic> signDetail;
+  final Map<String, dynamic> earnCoin;
+  final Map<String, dynamic> sleep;
+  final Map<String, dynamic> treasure;
+  final List<Map<String, dynamic>> tasks;
+
+  Map<String, dynamic> toJson() => {
+        'snapshot_v': 2,
+        'cached_at': DateTime.now().millisecondsSinceEpoch,
+        'home': home,
+        'sign_detail': signDetail,
+        'earn_coin': earnCoin,
+        'sleep': sleep,
+        'treasure': treasure,
+        'tasks': tasks,
+      };
+
+  static _WelfareSnapshot? fromDecoded(
+    dynamic decoded, {
+    required Map<String, dynamic> Function(Map<String, dynamic>) rootOf,
+    required Map<String, dynamic> Function(Map<String, dynamic>, List<String>)
+        sectionOf,
+    required List<Map<String, dynamic>> Function(Map<String, dynamic>) tasksOf,
+  }) {
+    if (decoded is! Map) return null;
+    final map = Map<String, dynamic>.from(decoded);
+    if (map['snapshot_v'] == 2 && map['home'] is Map) {
+      final home = Map<String, dynamic>.from(map['home'] as Map);
+      final signDetail = map['sign_detail'] is Map
+          ? Map<String, dynamic>.from(map['sign_detail'] as Map)
+          : const <String, dynamic>{};
+      final earnCoin = map['earn_coin'] is Map
+          ? Map<String, dynamic>.from(map['earn_coin'] as Map)
+          : const <String, dynamic>{};
+      final sleep = map['sleep'] is Map
+          ? Map<String, dynamic>.from(map['sleep'] as Map)
+          : const <String, dynamic>{};
+      final treasure = map['treasure'] is Map
+          ? Map<String, dynamic>.from(map['treasure'] as Map)
+          : const <String, dynamic>{};
+      final rawTasks = map['tasks'];
+      final tasks = rawTasks is List
+          ? rawTasks
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false)
+          : tasksOf(rootOf(home));
+      return _WelfareSnapshot(
+        home: home,
+        signDetail: signDetail,
+        earnCoin: earnCoin,
+        sleep: sleep,
+        treasure: treasure,
+        tasks: tasks,
+      );
+    }
+
+    final root = rootOf(map);
+    return _WelfareSnapshot(
+      home: map,
+      signDetail: const <String, dynamic>{},
+      earnCoin: sectionOf(
+        root,
+        const ['earn_coin', 'earnCoin', 'welfare_earn_coin'],
+      ),
+      sleep: sectionOf(
+        root,
+        const ['sleep', 'sleep_detail', 'welfare_sleep'],
+      ),
+      treasure: sectionOf(
+        root,
+        const ['treasure', 'treasure_box', 'daily_treasure_box'],
+      ),
+      tasks: tasksOf(root),
+    );
+  }
+}
+
+class _WelfareMemoryEntry {
+  const _WelfareMemoryEntry({
+    required this.client,
+    required this.sessionRev,
+    required this.securityKey,
+    required this.cacheEpoch,
+    required this.snapshot,
+  });
+
+  final LKClient client;
+  final int sessionRev;
+  final String securityKey;
+  final int cacheEpoch;
+  final _WelfareSnapshot snapshot;
 }
